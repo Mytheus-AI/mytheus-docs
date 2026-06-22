@@ -1,6 +1,6 @@
-# Reprise AI — Architecture Documentation (`reprise-docs`)
+# Reprise AI - Architecture Documentation (`reprise-docs`)
 
-The complete production architecture set for **Reprise AI** — an intelligent meeting-orchestration platform built as a multi-tenant SaaS for millions of users across thousands of paying tenant organizations.
+The complete production architecture set for **Reprise AI** - an intelligent meeting-orchestration platform built as a multi-tenant SaaS for millions of users across thousands of paying tenant organizations.
 
 ---
 
@@ -23,19 +23,19 @@ These are the **frozen naming contract**. Renaming them would break the canon an
 
 Read top-to-bottom for the narrative; the rest is reference you dip into.
 
-1. [00 Executive Summary](00-executive-summary.md) — what Reprise AI is and why the architecture looks the way it does.
-2. [01 Architecture Overview & Principles](01-architecture-overview-and-principles.md) — the principles every other doc obeys.
-3. [02 System Context](02-system-context.md) → [03 Container Architecture](03-container-architecture.md) — C4 zoom from external actors to deployable containers.
-4. [04 Service Catalog](04-service-catalog.md) — the spine: every microservice, its data ownership, event contracts.
-5. [05 Data](05-data-architecture.md) → [06 Tenancy](06-multi-tenancy.md) → [07 Events](07-event-architecture.md) — how state, isolation, and events fit together.
-6. [08 Agents](08-ai-agent-architecture.md) → [09 RAG](09-rag-and-inference-serving.md) → [10 Real-time](10-realtime-and-transcription.md) — the intelligence and live-meeting tiers.
+1. [00 Executive Summary](00-executive-summary.md) - what Reprise AI is and why the architecture looks the way it does.
+2. [01 Architecture Overview & Principles](01-architecture-overview-and-principles.md) - the principles every other doc obeys.
+3. [02 System Context](02-system-context.md) → [03 Container Architecture](03-container-architecture.md) - C4 zoom from external actors to deployable containers.
+4. [04 Service Catalog](04-service-catalog.md) - the spine: every microservice, its data ownership, event contracts.
+5. [05 Data](05-data-architecture.md) → [06 Tenancy](06-multi-tenancy.md) → [07 Events](07-event-architecture.md) - how state, isolation, and events fit together.
+6. [08 Agents](08-ai-agent-architecture.md) → [09 RAG](09-rag-and-inference-serving.md) → [10 Real-time](10-realtime-and-transcription.md) - the intelligence and live-meeting tiers.
 7. [11](11-security-architecture.md)–[17](17-cost-and-finops.md) cross-cutting concerns: security, compliance, scalability, reliability, observability, deployment, cost.
 8. [18 Business](18-saas-business-architecture.md) → [19 API](19-api-architecture.md) → [20 Frontend](20-frontend-architecture.md) → [21 Integrations](21-integration-architecture.md).
 9. [22 Roadmap](22-roadmap-and-phasing.md) → [23 Risks](23-risk-register.md).
 
 ---
 
-## Table of contents — core documents (00–24)
+## Table of contents - core documents (00–24)
 
 | # | Document | Description |
 |---|---|---|
@@ -63,7 +63,7 @@ Read top-to-bottom for the narrative; the rest is reference you dip into.
 | 21 | [Integration Architecture](21-integration-architecture.md) | Google Calendar, Slack, and Jira/Linear OAuth + bidirectional sync, gated by guardrail R8. |
 | 22 | [Roadmap & Phasing](22-roadmap-and-phasing.md) | The phase plan mapped onto the SaaS architecture and the pre-authorized descopes. |
 | 23 | [Risk Register](23-risk-register.md) | PDF risks R1–R8 plus SaaS-scale risks, with owners, mitigations, and triggers. |
-| 24 | [Glossary & Naming](24-glossary-and-naming.md) | The canonical naming authority — every agent, entity, service, topic, Avro schema, and AGE node/edge label, with any renames flagged. |
+| 24 | [Glossary & Naming](24-glossary-and-naming.md) | The canonical naming authority - every agent, entity, service, topic, Avro schema, and AGE node/edge label, with any renames flagged. |
 
 ---
 
@@ -71,7 +71,7 @@ Read top-to-bottom for the narrative; the rest is reference you dip into.
 
 | Document | Description |
 |---|---|
-| [Coverage Traceability Matrix](coverage-traceability-matrix.md) | Maps every PDF requirement and every locked SaaS decision to the document(s) and ADR(s) that realize it — the no-gaps proof for the set. |
+| [Coverage Traceability Matrix](coverage-traceability-matrix.md) | Maps every PDF requirement and every locked SaaS decision to the document(s) and ADR(s) that realize it - the no-gaps proof for the set. |
 
 ---
 
@@ -122,13 +122,13 @@ The ADRs record *why* each load-bearing decision was made.
 
 ## The `_canon/` folder
 
-`_canon/` is the **frozen, internal source of truth** for the whole set. It is not a reader document and is intentionally absent from the reading order above. Every other doc derives its service names, table/column names, event-topic names, capacity numbers, and locked decisions from these files — no document may introduce an alternative name for anything defined here.
+`_canon/` is the **frozen, internal source of truth** for the whole set. It is not a reader document and is intentionally absent from the reading order above. Every other doc derives its service names, table/column names, event-topic names, capacity numbers, and locked decisions from these files - no document may introduce an alternative name for anything defined here.
 
-- [`_canon/01-service-catalog.md`](_canon/01-service-catalog.md) — the single naming authority for microservices, data ownership, event contracts, sync-API ownership, and scaling families.
-- [`_canon/02-data-model.md`](_canon/02-data-model.md) — the frozen data-naming authority across PostgreSQL tables, Qdrant collections, the AGE `nexus_knowledge` graph, Redis namespaces, and object-storage buckets.
-- [`_canon/03-event-taxonomy.md`](_canon/03-event-taxonomy.md) — the frozen event-naming authority: every Redpanda topic with its producer/consumers, Avro schema, partition key, retention, and delivery/idempotency contract.
-- [`_canon/05-capacity-math.md`](_canon/05-capacity-math.md) — the closed, self-reconciling capacity model; every load and cost number is imported from here by reference.
-- [`_canon/06-tech-decisions.md`](_canon/06-tech-decisions.md) — the frozen lock list of every technology and architecture decision with its origin and rationale.
+- [`_canon/01-service-catalog.md`](_canon/01-service-catalog.md) - the single naming authority for microservices, data ownership, event contracts, sync-API ownership, and scaling families.
+- [`_canon/02-data-model.md`](_canon/02-data-model.md) - the frozen data-naming authority across PostgreSQL tables, Qdrant collections, the AGE `nexus_knowledge` graph, Redis namespaces, and object-storage buckets.
+- [`_canon/03-event-taxonomy.md`](_canon/03-event-taxonomy.md) - the frozen event-naming authority: every Redpanda topic with its producer/consumers, Avro schema, partition key, retention, and delivery/idempotency contract.
+- [`_canon/05-capacity-math.md`](_canon/05-capacity-math.md) - the closed, self-reconciling capacity model; every load and cost number is imported from here by reference.
+- [`_canon/06-tech-decisions.md`](_canon/06-tech-decisions.md) - the frozen lock list of every technology and architecture decision with its origin and rationale.
 
 The published, reader-facing companion to this folder is [24 Glossary & Naming](24-glossary-and-naming.md). If a number, name, or decision needs to change, it changes in `_canon/` first and propagates outward; reader docs and ADRs cite canon, never the reverse.
 
@@ -146,7 +146,7 @@ The published, reader-facing companion to this folder is [24 Glossary & Naming](
 | 13 Scalability · 16 Deployment · 14 Reliability · 15 Observability (platform/IaC) | `reprise-platform` |
 | 07 Event-driven architecture (Redpanda topics, Avro schemas, outbox/inbox) | `reprise-events` |
 
-Service, table, topic, and store names in these repos MUST match the canon verbatim — including the frozen identifiers `nexus_knowledge`, `transcript_chunks`, the `nexus:{org_id}:` Redis prefix, and the Redpanda topic names.
+Service, table, topic, and store names in these repos MUST match the canon verbatim - including the frozen identifiers `nexus_knowledge`, `transcript_chunks`, the `nexus:{org_id}:` Redis prefix, and the Redpanda topic names.
 
 ---
 

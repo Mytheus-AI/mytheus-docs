@@ -1,4 +1,4 @@
-# `reprise-docs` — Operating Document
+# `reprise-docs` - Operating Document
 
 This is the meta/operating guide for the documentation repository itself. It describes how the set is organized, who owns what, and how it changes.
 
@@ -6,7 +6,7 @@ This is the meta/operating guide for the documentation repository itself. It des
 
 ## Purpose
 
-`reprise-docs` is the **single source of architectural truth** for Reprise AI. It is the canonical home of the full architecture documentation set (codename NEXUS). Every other repository — `reprise-ui`, `reprise-mobile`, `reprise-backend`, `reprise-intelligence`, `reprise-realtime`, `reprise-platform`, `reprise-events` — cites this repo rather than redefining architecture, names, or numbers locally.
+`reprise-docs` is the **single source of architectural truth** for Reprise AI. It is the canonical home of the full architecture documentation set (codename NEXUS). Every other repository - `reprise-ui`, `reprise-mobile`, `reprise-backend`, `reprise-intelligence`, `reprise-realtime`, `reprise-platform`, `reprise-events` - cites this repo rather than redefining architecture, names, or numbers locally.
 
 ---
 
@@ -15,11 +15,11 @@ This is the meta/operating guide for the documentation repository itself. It des
 The set has a strict authority order. Higher levels bind lower levels.
 
 1. **The frozen `_canon/` files are authoritative.** They define every name, number, and decision.
-   - [`_canon/01-service-catalog.md`](_canon/01-service-catalog.md) — microservices, data ownership, event contracts, sync-API ownership, scaling families.
-   - [`_canon/02-data-model.md`](_canon/02-data-model.md) — PostgreSQL tables, Qdrant collections, the AGE `nexus_knowledge` graph, Redis namespaces, object-storage buckets.
-   - [`_canon/03-event-taxonomy.md`](_canon/03-event-taxonomy.md) — every Redpanda topic with producer/consumers, Avro schema, partition key, retention, delivery/idempotency contract.
-   - [`_canon/05-capacity-math.md`](_canon/05-capacity-math.md) — the closed, self-reconciling capacity model; every load and cost number is imported from here.
-   - [`_canon/06-tech-decisions.md`](_canon/06-tech-decisions.md) — the frozen lock list of every technology/architecture decision with origin and rationale.
+   - [`_canon/01-service-catalog.md`](_canon/01-service-catalog.md) - microservices, data ownership, event contracts, sync-API ownership, scaling families.
+   - [`_canon/02-data-model.md`](_canon/02-data-model.md) - PostgreSQL tables, Qdrant collections, the AGE `nexus_knowledge` graph, Redis namespaces, object-storage buckets.
+   - [`_canon/03-event-taxonomy.md`](_canon/03-event-taxonomy.md) - every Redpanda topic with producer/consumers, Avro schema, partition key, retention, delivery/idempotency contract.
+   - [`_canon/05-capacity-math.md`](_canon/05-capacity-math.md) - the closed, self-reconciling capacity model; every load and cost number is imported from here.
+   - [`_canon/06-tech-decisions.md`](_canon/06-tech-decisions.md) - the frozen lock list of every technology/architecture decision with origin and rationale.
 2. **Reader docs `00`–`24` derive from the canon.** They explain, expand, and narrate, but they never invent a name or number the canon does not already define.
 3. **ADRs (`adr/0001`–`0015`) record the WHY.** Each load-bearing decision has an ADR documenting context, options, decision, and consequences.
 4. **Diagrams (`diagrams/01`–`12`) visualize.** Standalone Mermaid sources that picture what the docs describe.
@@ -48,7 +48,7 @@ Service, table, topic, and store names used in `reprise-backend`, `reprise-intel
 
 To propose a change to architecture, a name, a number, or a decision:
 
-1. **Edit `_canon/`** — change the authoritative file(s).
+1. **Edit `_canon/`** - change the authoritative file(s).
 2. **Add or supersede an ADR** in `adr/` recording the WHY. Never silently rename; record an explicit `old → new` entry and supersede via ADR.
 3. **Propagate to reader docs** `00`–`24` so they stay consistent with the canon.
 4. **Update the Glossary** [`24-glossary-and-naming.md`](24-glossary-and-naming.md) (and diagrams if affected).
@@ -68,7 +68,7 @@ To propose a change to architecture, a name, a number, or a decision:
 
 ## Contributing
 
-- **Canon owners** review any change to `_canon/` and to `24-glossary-and-naming.md` — these carry the naming authority.
+- **Canon owners** review any change to `_canon/` and to `24-glossary-and-naming.md` - these carry the naming authority.
 - **Domain owners** review the reader doc(s) for their area (data, events, agents, real-time, security, business, etc.).
 - **ADR authors** own the decision record they introduce or supersede.
 - Review gate: a PR touching a name/number/decision must update `_canon/` + ADR + affected reader docs + Glossary together, or it does not merge.
