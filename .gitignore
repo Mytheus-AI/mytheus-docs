@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Node tooling (e.g. Mermaid CLI / markdown linters)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Rendered / exported output
+*.html
+*.pdf
+/site/
+/build/
+/dist/
+
+# Local env
+.env
+.env.local
