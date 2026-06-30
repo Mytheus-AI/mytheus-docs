@@ -1,4 +1,4 @@
-# `reprise-docs` - Operating Document
+# `mytheus-docs` - Operating Document
 
 This is the meta/operating guide for the documentation repository itself. It describes how the set is organized, who owns what, and how it changes.
 
@@ -6,7 +6,7 @@ This is the meta/operating guide for the documentation repository itself. It des
 
 ## Purpose
 
-`reprise-docs` is the **single source of architectural truth** for Reprise AI. It is the canonical home of the full architecture documentation set (codename NEXUS). Every other repository - `reprise-ui`, `reprise-mobile`, `reprise-backend`, `reprise-intelligence`, `reprise-realtime`, `reprise-platform`, `reprise-events` - cites this repo rather than redefining architecture, names, or numbers locally.
+`mytheus-docs` is the **single source of architectural truth** for Mytheus. It is the canonical home of the full architecture documentation set (codename NEXUS). Every other repository - `mytheus-ui`, `mytheus-mobile`, `mytheus-backend`, `mytheus-intelligence`, `mytheus-realtime`, `mytheus-platform`, `mytheus-events` - cites this repo rather than redefining architecture, names, or numbers locally.
 
 ---
 
@@ -32,7 +32,7 @@ The set has a strict authority order. Higher levels bind lower levels.
 - No document or code repo may introduce an **alternative name** for anything defined in `_canon/`.
 - If a name, number, or decision must change, it changes in **`_canon/` first**, then propagates outward to the reader docs, ADRs, Glossary, and finally the implementation repos.
 - Reader docs and ADRs **cite canon, never the reverse.** Canon does not reference reader docs as authority.
-- The frozen identifiers are kept verbatim and are never renamed to "reprise": the AGE graph `nexus_knowledge`, the table `transcript_chunks`, the Redis prefix `nexus:{org_id}:`, the Redpanda topic names, the six agent class names, and the AGE edge labels (`ATTENDED` / `PRODUCED` / `ASSIGNED_TO` / `RELATES_TO` / `FOLLOWS_FROM`). These constitute the frozen naming contract; renaming them would break the canon and every dependent repo.
+- The frozen identifiers are kept verbatim and are never renamed to "mytheus": the AGE graph `nexus_knowledge`, the table `transcript_chunks`, the Redis prefix `nexus:{org_id}:`, the Redpanda topic names, the six agent class names, and the AGE edge labels (`ATTENDED` / `PRODUCED` / `ASSIGNED_TO` / `RELATES_TO` / `FOLLOWS_FROM`). These constitute the frozen naming contract; renaming them would break the canon and every dependent repo.
 - **The `[SaaS-scale adjustment]` callout convention:** anything these documents add or change relative to the original execution plan (the PDF) to make the product a production multi-tenant SaaS is flagged inline with a blockquote in this exact form:
   > [SaaS-scale adjustment] &lt;what changed relative to the PDF, and why&gt;
 
@@ -40,7 +40,7 @@ The set has a strict authority order. Higher levels bind lower levels.
 
 ## How code repos consume these docs
 
-Service, table, topic, and store names used in `reprise-backend`, `reprise-intelligence`, `reprise-realtime`, and `reprise-events` **MUST match the canon verbatim**. A migration name, Kafka/Redpanda topic, Qdrant collection, Redis key, or AGE label that disagrees with `_canon/` is a bug in the code repo, not in the docs. When in doubt, the canon and the Glossary ([`24-glossary-and-naming.md`](24-glossary-and-naming.md)) win.
+Service, table, topic, and store names used in `mytheus-backend`, `mytheus-intelligence`, `mytheus-realtime`, and `mytheus-events` **MUST match the canon verbatim**. A migration name, Kafka/Redpanda topic, Qdrant collection, Redis key, or AGE label that disagrees with `_canon/` is a bug in the code repo, not in the docs. When in doubt, the canon and the Glossary ([`24-glossary-and-naming.md`](24-glossary-and-naming.md)) win.
 
 ---
 
@@ -77,4 +77,4 @@ To propose a change to architecture, a name, a number, or a decision:
 
 ## Status & versioning
 
-This set is the canonical, frozen-contract version of the Reprise AI architecture. The `_canon/` files are the version anchor; the reader docs, ADRs, diagrams, and Glossary are versioned together with them. Changes are tracked via PRs following the change process above. Commits in this project do **not** include a Co-Authored-By footer.
+This set is the canonical, frozen-contract version of the Mytheus architecture. The `_canon/` files are the version anchor; the reader docs, ADRs, diagrams, and Glossary are versioned together with them. Changes are tracked via PRs following the change process above. Commits in this project do **not** include a Co-Authored-By footer.

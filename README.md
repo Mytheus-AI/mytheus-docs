@@ -1,21 +1,21 @@
-# Reprise AI - Architecture Documentation (`reprise-docs`)
+# Mytheus - Architecture Documentation (`mytheus-docs`)
 
-The complete production architecture set for **Reprise AI** - an intelligent meeting-orchestration platform built as a multi-tenant SaaS for millions of users across thousands of paying tenant organizations.
+The complete production architecture set for **Mytheus** - an intelligent meeting-orchestration platform built as a multi-tenant SaaS for millions of users across thousands of paying tenant organizations.
 
 ---
 
 ## About the codename
 
-The documents in this repository are internally codenamed **NEXUS**. **Reprise AI** is the product name; NEXUS is the architecture codename you will see throughout the copied docs, and that is intentional.
+The documents in this repository are internally codenamed **NEXUS**. **Mytheus** is the product name; NEXUS is the architecture codename you will see throughout the copied docs, and that is intentional.
 
-Certain frozen canon identifiers are kept **verbatim** and are deliberately **not** renamed to "reprise":
+Certain frozen canon identifiers are kept **verbatim** and are deliberately **not** renamed to "mytheus":
 
 - the AGE knowledge graph `nexus_knowledge`
 - the table `transcript_chunks`
 - the Redis key prefix `nexus:{org_id}:`
 - the Redpanda topic names (`transcript-chunks`, `agent-requests`, `agent-responses`, `usage-events`, and the rest of the topic taxonomy)
 
-These are the **frozen naming contract**. Renaming them would break the canon and every implementation repo that depends on it, so they stay as-is. New product-facing surfaces use the name "Reprise AI"; the frozen internal identifiers stay NEXUS. See [`system.md`](system.md) and [`24-glossary-and-naming.md`](24-glossary-and-naming.md) for the full naming authority.
+These are the **frozen naming contract**. Renaming them would break the canon and every implementation repo that depends on it, so they stay as-is. New product-facing surfaces use the name "Mytheus"; the frozen internal identifiers stay NEXUS. See [`system.md`](system.md) and [`24-glossary-and-naming.md`](24-glossary-and-naming.md) for the full naming authority.
 
 ---
 
@@ -23,7 +23,7 @@ These are the **frozen naming contract**. Renaming them would break the canon an
 
 Read top-to-bottom for the narrative; the rest is reference you dip into.
 
-1. [00 Executive Summary](00-executive-summary.md) - what Reprise AI is and why the architecture looks the way it does.
+1. [00 Executive Summary](00-executive-summary.md) - what Mytheus is and why the architecture looks the way it does.
 2. [01 Architecture Overview & Principles](01-architecture-overview-and-principles.md) - the principles every other doc obeys.
 3. [02 System Context](02-system-context.md) → [03 Container Architecture](03-container-architecture.md) - C4 zoom from external actors to deployable containers.
 4. [04 Service Catalog](04-service-catalog.md) - the spine: every microservice, its data ownership, event contracts.
@@ -138,13 +138,13 @@ The published, reader-facing companion to this folder is [24 Glossary & Naming](
 
 | Doc area | Implementation repo |
 |---|---|
-| 20 Frontend (Next.js 14, meeting room, agent sidebar) | `reprise-ui` |
-| Mobile clients | `reprise-mobile` |
-| 04 Service Catalog · 05 Data · 06 Tenancy · 18 Business · 19 API (CRUD/control plane) | `reprise-backend` |
-| 08 Agents · 09 RAG & inference serving | `reprise-intelligence` |
-| 10 Real-time & transcription (`realtime-gateway`, transcription, fan-out) | `reprise-realtime` |
-| 13 Scalability · 16 Deployment · 14 Reliability · 15 Observability (platform/IaC) | `reprise-platform` |
-| 07 Event-driven architecture (Redpanda topics, Avro schemas, outbox/inbox) | `reprise-events` |
+| 20 Frontend (Next.js 14, meeting room, agent sidebar) | `mytheus-ui` |
+| Mobile clients | `mytheus-mobile` |
+| 04 Service Catalog · 05 Data · 06 Tenancy · 18 Business · 19 API (CRUD/control plane) | `mytheus-backend` |
+| 08 Agents · 09 RAG & inference serving | `mytheus-intelligence` |
+| 10 Real-time & transcription (`realtime-gateway`, transcription, fan-out) | `mytheus-realtime` |
+| 13 Scalability · 16 Deployment · 14 Reliability · 15 Observability (platform/IaC) | `mytheus-platform` |
+| 07 Event-driven architecture (Redpanda topics, Avro schemas, outbox/inbox) | `mytheus-events` |
 
 Service, table, topic, and store names in these repos MUST match the canon verbatim - including the frozen identifiers `nexus_knowledge`, `transcript_chunks`, the `nexus:{org_id}:` Redis prefix, and the Redpanda topic names.
 
@@ -152,4 +152,4 @@ Service, table, topic, and store names in these repos MUST match the canon verba
 
 ## License
 
-Proprietary © Reprise AI. All rights reserved.
+Proprietary © Mytheus. All rights reserved.

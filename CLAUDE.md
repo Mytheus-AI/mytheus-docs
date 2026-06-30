@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This repo, `reprise-docs`, is the architecture documentation set and the naming authority for the product Reprise AI (architecture codename NEXUS). The single most important rule: the frozen `_canon/` folder is the source of truth, and every change flows in one direction only - canon first, then the ADR that records why, then the reader docs (00-24), then the Glossary (doc 24). Never the reverse. If you edit a reader doc to introduce or alter a name, number, or decision without changing canon first, the change is wrong by construction.
+This repo, `mytheus-docs`, is the architecture documentation set and the naming authority for the product Mytheus (architecture codename NEXUS). The single most important rule: the frozen `_canon/` folder is the source of truth, and every change flows in one direction only - canon first, then the ADR that records why, then the reader docs (00-24), then the Glossary (doc 24). Never the reverse. If you edit a reader doc to introduce or alter a name, number, or decision without changing canon first, the change is wrong by construction.
 
 ## Repo at a glance
 
@@ -83,15 +83,15 @@ These docs are the contract for the implementation repos. Service, table, topic,
 
 | Doc area | Implementation repo |
 |---|---|
-| 20 Frontend (Next.js 14, meeting room, agent sidebar) | `reprise-ui` |
-| Mobile clients | `reprise-mobile` |
-| 04 Service Catalog, 05 Data, 06 Tenancy, 18 Business, 19 API (CRUD/control plane) | `reprise-backend` |
-| 08 Agents, 09 RAG and inference serving | `reprise-intelligence` |
-| 10 Real-time and transcription (`realtime-gateway`, transcription, fan-out) | `reprise-realtime` |
-| 13 Scalability, 14 Reliability, 15 Observability, 16 Deployment (platform/IaC) | `reprise-platform` |
-| 07 Event-driven architecture (Redpanda topics, Avro schemas, outbox/inbox) | `reprise-events` |
+| 20 Frontend (Next.js 14, meeting room, agent sidebar) | `mytheus-ui` |
+| Mobile clients | `mytheus-mobile` |
+| 04 Service Catalog, 05 Data, 06 Tenancy, 18 Business, 19 API (CRUD/control plane) | `mytheus-backend` |
+| 08 Agents, 09 RAG and inference serving | `mytheus-intelligence` |
+| 10 Real-time and transcription (`realtime-gateway`, transcription, fan-out) | `mytheus-realtime` |
+| 13 Scalability, 14 Reliability, 15 Observability, 16 Deployment (platform/IaC) | `mytheus-platform` |
+| 07 Event-driven architecture (Redpanda topics, Avro schemas, outbox/inbox) | `mytheus-events` |
 
-`reprise-backend`, `reprise-intelligence`, `reprise-realtime`, and `reprise-events` are bound most tightly to canon. A doc change that renames anything is a breaking change for these repos: it must be coordinated with them, not landed unilaterally. A migration name, topic, collection, Redis key, or AGE label in those repos that disagrees with `_canon/` is a bug in the code repo, not in the docs.
+`mytheus-backend`, `mytheus-intelligence`, `mytheus-realtime`, and `mytheus-events` are bound most tightly to canon. A doc change that renames anything is a breaking change for these repos: it must be coordinated with them, not landed unilaterally. A migration name, topic, collection, Redis key, or AGE label in those repos that disagrees with `_canon/` is a bug in the code repo, not in the docs.
 
 ## Pitfalls
 
