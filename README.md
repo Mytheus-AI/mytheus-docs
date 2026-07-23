@@ -75,6 +75,15 @@ Read top-to-bottom for the narrative; the rest is reference you dip into.
 
 ---
 
+## Execution and progress
+
+| Folder | Description |
+|---|---|
+| [`plan/`](plan/README.md) | The execution layer: eight band files (Plan 0 through Plan 14) turning these documents into an ordered, buildable program of work. Says *what to build, in what order*. |
+| [`work-done-till-now/`](work-done-till-now/README.md) | The single, program-wide record of what has actually been *built*, one file per band. Start at [00-status-overview.md](work-done-till-now/00-status-overview.md) for the band-by-repo matrix and the live gap list. No code repo keeps its own progress log; they all record here. |
+
+---
+
 ## Architecture Decision Records (`adr/`)
 
 The ADRs record *why* each load-bearing decision was made.

@@ -12,6 +12,8 @@ This is documentation only. There is no build, no test suite, no application cod
 - `adr/` - 15 ADRs (`0001`-`0015`) recording the WHY behind each load-bearing decision: context, options, decision, consequences.
 - `diagrams/` - 12 standalone, copy-pasteable Mermaid sources (`01`-`12`).
 - `coverage-traceability-matrix.md` - maps every PDF requirement and every locked SaaS decision to the doc(s) and ADR(s) that realize it. The no-gaps proof for the set.
+- `plan/` - the execution layer: eight band files (Plan 0 through Plan 14) turning the reader docs into an ordered, buildable program of work, plus the index and the two `00-` orientation files.
+- `work-done-till-now/` - the single, program-wide record of what has actually been BUILT, one file per band. See the section below.
 
 ## How to navigate
 
@@ -76,6 +78,16 @@ Handling a rename: a rename is never silent. Record the change as an explicit `o
 - Relative links between docs, for example `[Service Catalog](04-service-catalog.md)` and `[_canon/02-data-model.md](_canon/02-data-model.md)`, so the set stays portable.
 - Frozen identifiers are written verbatim and in code spans.
 - Plain-text headers. No emojis. Use a hyphen, a colon, or a restructured sentence instead of em-dashes or en-dashes.
+
+## Progress documentation - this repo is the single home
+
+`work-done-till-now/` is where every code repo records what it built. `plan/` says what to build; `work-done-till-now/` says what exists. No code repo keeps its own progress log any more, and each of their `CLAUDE.md` files now points here.
+
+- One file per plan band, numbered in band order, covering every repo that band touches. `00-status-overview.md` is the program-wide status matrix and the live gap list.
+- `work-done-till-now/README.md` holds the required structure for a band file and is read before writing one.
+- The folder **records**; it never **defines**. It introduces no name, number, or decision. The canon-first propagation order above is unchanged: a session that changed a name or a decision lands the `_canon/` edit and the ADR first, then cites them from the band file.
+- The document conventions below apply to it in full: plain-text headers, no emojis, no em-dashes or en-dashes, frozen identifiers verbatim in code spans, relative links.
+- Canonical repo names (`mytheus-backend`, `mytheus-ui`, and so on) are used in prose. The on-disk clone folders carry a legacy `reprise-` prefix; that prefix never appears in a document except in the repo-name mapping table in `work-done-till-now/00-status-overview.md`.
 
 ## How code repos depend on this
 
