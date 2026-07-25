@@ -83,14 +83,14 @@ flowchart TB
 | --- | --- | --- | --- | --- |
 | Architecture style | Event-driven microservices with an explicit modular-monolith → services evolution path | locked | SaaS-add | Agent/inference tier scales and costs differently from the CRUD tier; events decouple them and let each scale independently. |
 | Inference/CRUD separation | Agent + inference tier scales and is billed separately from the CRUD tier | locked | SaaS-add | GPU-bound, bursty inference must never be throttled by, or throttle, request/s-bound API serving. |
-| Compute platform | Kubernetes (EKS/GKE) + Terraform IaC; Railway/Render only for early-stage build | locked | PDF→SaaS | PDF chose Railway/Render for the build; K8s + IaC is the production substrate for autoscaling, multi-region, and reproducibility. |
+| Compute platform | Kubernetes (EKS/GKE) + Terraform IaC; a self-hosted single-node VPS running Docker Compose is the MVP substrate | locked | PDF→SaaS | PDF chose Railway/Render; the MVP runs the whole backend on an already-owned VPS instead (ADR-0016, superseding the PaaS fast path in ADR-0014). K8s + IaC remains the production substrate for autoscaling, multi-region, and reproducibility. |
 | Region strategy | Multi-region active-passive, evolving to active-active | locked | SaaS-add | Meets latency, residency, and availability targets without paying full active-active complexity on day one. |
 | Hosting (edge/CDN) | Cloudflare CDN + WAF, custom domain | locked | PDF→SaaS | PDF specified Cloudflare CDN; WAF and gateway role added for SaaS edge security. |
 | Service framework | FastAPI (Python 3.11+) | locked | PDF | Async-native, Pydantic-integrated, the team's chosen backend stack. |
 | Workflow engine | Temporal Cloud | locked | PDF | Durable execution for MeetingLifecycleWorkflow and ActionFollowUpWorkflow without bespoke retry/timer logic. |
 | Real-time fan-out | Redis pub/sub backbone for Socket.io across backend instances | locked | PDF | PDF Phase 11; required so agent outputs and presence fan out across horizontally scaled API pods. |
 
-> [SaaS-scale adjustment] Kubernetes + Terraform and the multi-region posture replace the PDF's Railway/Render-only hosting (R-class build tooling kept for the early build). Railway/Render remain the sanctioned fast path until the first paying tenants land.
+> [SaaS-scale adjustment] Kubernetes + Terraform and the multi-region posture replace the PDF's Railway/Render-only hosting. The MVP substrate is not a PaaS at all: the whole backend (FastAPI modular monolith, outbox relay, Temporal worker) plus every stateful store (PostgreSQL, Redis, Redpanda, Temporal) runs self-hosted on a single VPS under Docker Compose, fronted by Caddy for TLS. Railway and Render are struck: they are not the fast path and not a fallback (ADR-0016). The VPS is the sanctioned substrate until a real load signal forces the K8s move (Plan 14).
 
 ### 2.2 Multi-tenancy & isolation
 
@@ -325,7 +325,7 @@ Of the 103 locked rows above, **65 are carried over verbatim from the PDF**, **2
 | Origin | What it means | Examples |
 | --- | --- | --- |
 | **PDF** | Carried over verbatim from NEXUS Execution Plan v2.1. Names and numbers are frozen as-is. | FastAPI, Deepgram, `transcript_chunks`, `nexus_knowledge`, the six agents, confidence thresholds. |
-| **PDF→SaaS** | The PDF made a choice; the SaaS posture extended or hardened it **without renaming**. | Apache AGE (+ Neptune/Aura exit), LiveKit pick behind the existing transport adapter, Railway/Render→K8s, per-user→per-tenant quotas, shift-left security. |
+| **PDF→SaaS** | The PDF made a choice; the SaaS posture extended or hardened it **without renaming**. | Apache AGE (+ Neptune/Aura exit), LiveKit pick behind the existing transport adapter, self-hosted VPS→K8s, per-user→per-tenant quotas, shift-left security. |
 | **SaaS-add** | Wholly new for production multi-tenant scale; absent from the PDF. | Multi-tenancy/RLS/cells, agent-to-agent authz, compliance suite, the entire SaaS business platform, outbox/inbox + DLQ delivery. |
 
 ---

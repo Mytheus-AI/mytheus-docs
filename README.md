@@ -105,6 +105,7 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0013](adr/0013-agent-to-agent-authorization.md) | Deny-by-default, org/role-scoped, audited authorization for `agent-requests`/`agent-responses`. |
 | [ADR-0014](adr/0014-kubernetes-compute-platform.md) | EKS/GKE + Terraform IaC for production; Railway/Render for the early build. |
 | [ADR-0015](adr/0015-observability-stack.md) | OpenTelemetry + Prometheus/Grafana + Sentry with structured JSON logs. |
+| [ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md) | MVP backend on a self-hosted single-node VPS (Docker Compose); supersedes the Railway/Render fast path in ADR-0014. |
 
 ---
 

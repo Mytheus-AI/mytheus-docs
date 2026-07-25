@@ -1,6 +1,6 @@
 # Deployment & Infrastructure
 
-How NEXUS runs in production: the Kubernetes (EKS/GKE) topology, Terraform IaC, GitHub Actions CI/CD, family-aware rollout strategy, secrets injection, the dev/staging/prod environment matrix, and the explicit path from the early Railway/Render modular monolith to multi-region Kubernetes.
+How NEXUS runs in production: the Kubernetes (EKS/GKE) topology, Terraform IaC, GitHub Actions CI/CD, family-aware rollout strategy, secrets injection, the dev/staging/prod environment matrix, and the explicit path from the MVP single-node VPS modular monolith to multi-region Kubernetes.
 
 ## Related documents
 
@@ -37,7 +37,7 @@ Per the cardinal rule of this set, **every load figure cited is a frozen symbol,
 | `EM2` | Embeddings/sec (peak) | ~525 | `embedding-service` GPU pool floor |
 | `EM4` | Query embeddings/sec (peak) | ~700 | Query-embed GPU headroom |
 
-> [SaaS-scale adjustment] The PDF deployed a single application built by a 4-person team onto **Railway/Render**, with no Kubernetes, no Terraform, no multi-region story, and a `2 orgs × 10 users × 5 meetings` seeder. This document re-casts the compute substrate as **Kubernetes (EKS/GKE) + Terraform IaC, multi-region active-passive evolving to active-active**, with Railway/Render preserved only as the sanctioned early-stage fast path ([Tech Decisions §2.1](_canon/06-tech-decisions.md)). The PDF's CI/CD stack (GitHub Actions, staging-on-merge, Sentry, Prometheus + Grafana, structured JSON logs, Docker Compose) survives verbatim and is the foundation the K8s pipeline extends.
+> [SaaS-scale adjustment] The PDF deployed a single application built by a 4-person team onto **Railway/Render**, with no Kubernetes, no Terraform, no multi-region story, and a `2 orgs × 10 users × 5 meetings` seeder. This document re-casts the compute substrate as **Kubernetes (EKS/GKE) + Terraform IaC, multi-region active-passive evolving to active-active**. The MVP substrate is **not** a PaaS: the whole backend and all four stores run self-hosted on a **single VPS under Docker Compose** ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md), [Tech Decisions §2.1](_canon/06-tech-decisions.md)). Railway and Render are struck entirely. The PDF's CI/CD stack (GitHub Actions, staging-on-merge, Sentry, Prometheus + Grafana, structured JSON logs, Docker Compose) survives verbatim and is the foundation the K8s pipeline extends.
 
 ---
 
@@ -374,13 +374,13 @@ flowchart LR
 
 ---
 
-## 11. Railway/Render → Kubernetes migration
+## 11. VPS → Kubernetes migration
 
-The seams between services are real from day one, but the early-stage build runs them as a **modular monolith on Railway/Render** ([Architecture Overview §2](01-architecture-overview-and-principles.md)). Migration to K8s peels services off in the **frozen Wave 1–4 order** from [Service Catalog §7](_canon/01-service-catalog.md) — not a new sequence.
+The seams between services are real from day one, but the MVP build runs them as a **modular monolith on a single self-hosted VPS under Docker Compose** ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md), [Architecture Overview §2](01-architecture-overview-and-principles.md)). Migration to K8s peels services off in the **frozen Wave 1–4 order** from [Service Catalog §7](_canon/01-service-catalog.md) — not a new sequence.
 
 ```mermaid
 flowchart TB
-  M["Modular monolith<br/>(Railway/Render, early stage)"]
+  M["Modular monolith<br/>(single-node VPS, Docker Compose)"]
   M --> W1["Wave 1 — GPU + real-time + workers<br/>embedding-service · reranker-service · agent-runtime-service ·<br/>transcription-service · realtime-gateway · workflow-service"]
   M --> W2["Wave 2 — CRUD core<br/>core-api · identity-tenant-service"]
   M --> W3["Wave 3 — SaaS business<br/>billing-metering-service · integration-service · admin-ops-service"]
@@ -390,7 +390,7 @@ flowchart TB
 
 | Wave | Extracted | Migration trigger | Why first/last |
 | --- | --- | --- | --- |
-| 1 | GPU inference, real-time, Temporal workers | GPU cost separation, connection scaling, durable-execution needs | Different runtime/scaling from the start; Railway/Render cannot offer GPU pools or KEDA-on-connections |
+| 1 | GPU inference, real-time, Temporal workers | GPU cost separation, connection scaling, durable-execution needs | Different runtime/scaling from the start; a single VPS has no GPU pool, no horizontal scale, and no KEDA-on-connections |
 | 2 | `core-api`, `identity-tenant-service` | CRUD req/s pressure | The relational heart and control plane outgrow the shared deployable |
 | 3 | `billing-metering-service`, `integration-service`, `admin-ops-service` | SaaS-business load (metering ingest, webhook bursts) | Bursty, monetization-critical; extract once paying tenants land |
 | 4 | `knowledge-graph-service`, `search-service` | When AGE/FTS each warrant dedicated ops | Start as libraries inside `rag-service`; split last — they share read models with `core-api` |
@@ -403,7 +403,7 @@ Each wave moves with the **strangler-fig** pattern, and because every service is
 2. **Repoint sync calls** from in-process to gRPC/REST via the service's stable path prefix ([Service Catalog §6](_canon/01-service-catalog.md)).
 3. **Run both, drain the monolith's copy**, then delete the module.
 
-> [SaaS-scale adjustment] The migration *path* (Railway/Render → K8s) honors PDF Phase-13 production hardening, but the *ordering* (Wave 1–4) and the strangler-fig mechanics are SaaS-scale. The PDF never decomposed, so it had nothing to extract; the wave order exists because each wave is a single scaling family and a single ownership boundary, so no extraction re-cuts a domain seam.
+> [SaaS-scale adjustment] The migration *path* (single-node VPS → K8s) honors PDF Phase-13 production hardening, but the *ordering* (Wave 1–4) and the strangler-fig mechanics are SaaS-scale. The PDF never decomposed, so it had nothing to extract; the wave order exists because each wave is a single scaling family and a single ownership boundary, so no extraction re-cuts a domain seam.
 
 ---
 

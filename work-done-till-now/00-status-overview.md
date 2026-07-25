@@ -1,12 +1,24 @@
 # 00 Status Overview
 
-Program state as of 2026-07-22. Scope: all eight repos in the Mytheus (NEXUS) program.
+Program state as of 2026-07-23. Scope: all eight repos in the Mytheus (NEXUS) program.
+
+## Decisions resolved 2026-07-23
+
+All three items that gated Plan 1-2 entry are now settled and recorded.
+
+| Decision | Outcome | Recorded in |
+|---|---|---|
+| Tenant claim shape (Plan 1-2 §8 #1) | Clerk's **native `org_id`**, resolved at the edge to our `org_id` via `organizations.clerk_org_id`, Redis-cached. The lookup is the authorization checkpoint (org exists, not suspended, not soft-deleted), not overhead. SSO/SAML/SCIM deferred. | [plan/plan-1-2 §8](../plan/plan-1-2-foundation-and-tenancy.md), [plan/README.md](../plan/README.md) |
+| RBAC tier vs `users.role` (Plan 1-2 §8 #2) | **Separate stores.** `rbac_grants.tier` is the only thing authorization reads; `users.role` + `skills[]` stays a profile attribute. | [plan/plan-1-2 §8](../plan/plan-1-2-foundation-and-tenancy.md), [plan/README.md](../plan/README.md) |
+| MVP compute substrate | **Self-hosted single-node VPS**, Docker Compose, whole backend plus all four stores. Railway and Render struck entirely. | [ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md), `_canon/06-tech-decisions.md` §2.1 |
+
+Also settled: **`web-app` = `mytheus-ui`**, canon unchanged. `mytheus-web` is a reference-only Next.js draft of the meeting UI - not a build target, not deployed, not in CI. Its `meeting-gap-notes.md` feeds Plan 3-4.
 
 ## Band status
 
 | Band | Plan file | Status | Note |
 |---|---|---|---|
-| Plan 0 Scaffold | [plan-0-scaffold-and-contracts.md](../plan/plan-0-scaffold-and-contracts.md) | **DONE WITH GAPS** | Backend, events, intelligence, realtime complete. UI, mobile, platform incomplete. See [01-plan-0-scaffold-and-contracts.md](01-plan-0-scaffold-and-contracts.md). |
+| Plan 0 Scaffold | [plan-0-scaffold-and-contracts.md](../plan/plan-0-scaffold-and-contracts.md) | **DONE WITH GAPS** | Backend, events, intelligence, realtime, **platform** complete. UI and mobile incomplete, both deliberately. See [01-plan-0-scaffold-and-contracts.md](01-plan-0-scaffold-and-contracts.md). |
 | Plan 1-2 Foundation and Tenancy | [plan-1-2-foundation-and-tenancy.md](../plan/plan-1-2-foundation-and-tenancy.md) | **NOT STARTED** (partially pre-empted) | Plan 0 already landed several P2 items early: the Clerk revert, RLS `FORCE` on 11 tables, the outbox relay, gRPC `GetUserContext`. Section "Plan 1-2 pre-empted work" below. |
 | Plan 3-4 Meeting and Transcription | [plan-3-4-meeting-and-transcription.md](../plan/plan-3-4-meeting-and-transcription.md) | NOT STARTED | |
 | Plan 5-6 Org Context and AI Infra | [plan-5-6-org-context-and-ai-infra.md](../plan/plan-5-6-org-context-and-ai-infra.md) | NOT STARTED | |
@@ -16,22 +28,19 @@ Program state as of 2026-07-22. Scope: all eight repos in the Mytheus (NEXUS) pr
 
 ## Repo inventory
 
-Eight repos. The on-disk clone folders use a legacy `reprise-` prefix that predates the Mytheus rename; the canonical repo name is always the `mytheus-` form and is the only form used in prose.
+Eight repos in the program, plus one reference-only repo. Most on-disk clones sit inside a `Mytheus-*` wrapper folder and still carry a legacy `reprise-` inner name that predates the Mytheus rename. The canonical repo name is always the `mytheus-` form and is the only form used in prose.
 
-| Canonical repo | GitHub | On-disk folder | Plan 0 state |
+| Canonical repo | GitHub | On-disk path | Plan 0 state |
 |---|---|---|---|
-| `mytheus-docs` | `Reprise-AI/reprise-docs` | `reprise-docs/reprise-docs` | Canon, ADRs, diagrams, and the eight band plans complete. |
-| `mytheus-backend` | `Reprise-AI/reprise-backend` | `reprise-backend/reprise-backend` | Complete (Phases 0B, 0C). |
-| `mytheus-events` | `Reprise-AI/reprise-events` | `reprise-events/reprise-events` | Complete (Phase 0A). |
-| `mytheus-intelligence` | `Reprise-AI/reprise-intelligence` | `reprise-intelligence/reprise-intelligence` | Complete (Phase 0D). |
-| `mytheus-realtime` | `Reprise-AI/reprise-realtime` | `reprise-realtime/reprise-realtime` | Complete (Phase 0E, realtime half). |
-| `mytheus-ui` | `Reprise-AI/reprise-ui` | `reprise-ui/reprise-ui` | **Not done.** Phase 0E web half was deliberately skipped. Large mock-data UI exists instead. |
-| `mytheus-mobile` | `Reprise-AI/reprise-mobile` | `reprise-mobile/reprise-mobile` | **Not done.** No Clerk SDK, no `httpClient`, no `REALIGN.md`. |
-| `mytheus-platform` | not cloned | `reprise-platform/` holds a second clone of `reprise-events` | **Unknown.** Phase 0F cannot be verified until the real repo is cloned. |
-
-### Clone hygiene issue
-
-`reprise-platform/` contains a duplicate clone of `mytheus-events`, not `mytheus-platform`. Two consequences: `mytheus-platform` Phase 0F is unverifiable locally, and an edit made in the duplicate diverges silently from the real `mytheus-events` working copy. Resolve by removing the duplicate and cloning the real platform repo (or confirming it does not exist yet).
+| `mytheus-docs` | `Reprise-AI/reprise-docs` | `Mytheus-docs/reprise-docs` | Canon, 16 ADRs, diagrams, eight band plans complete. |
+| `mytheus-backend` | `Reprise-AI/reprise-backend` | `Mytheus-backend/reprise-backend` | Complete (Phases 0B, 0C). |
+| `mytheus-events` | `Reprise-AI/reprise-events` | `Mytheus-events/reprise-events` | Complete (Phase 0A). |
+| `mytheus-intelligence` | `Reprise-AI/reprise-intelligence` | `Mytheus-intelligence/reprise-intelligence` | Complete (Phase 0D). |
+| `mytheus-realtime` | `Reprise-AI/reprise-realtime` | `Mytheus-realtime/reprise-realtime` | Complete (Phase 0E, realtime half). |
+| `mytheus-platform` | `Mytheus-AI/mytheus-platform` | `Mytheus-platform/mytheus-platform` | **Complete** (Phases 0F, 0G). Cloned 2026-07-23; previously unverifiable. |
+| `mytheus-ui` | `Reprise-AI/reprise-ui` | `Mytheus-UI/reprise-ui` | **Not done, deliberately.** Phase 0E web half skipped while active UI work was in flight. Large mock-data site exists instead. Canonical `web-app`. |
+| `mytheus-mobile` | `Reprise-AI/reprise-mobile` | `Mytheus-mobile/reprise-mobile` | **Not done.** No Clerk SDK, no `httpClient`, no `REALIGN.md`. |
+| `mytheus-web` (reference only) | `Mytheus-AI/mytheus-web` | `Mytheus-Web/mytheus-web` | **Not a program repo.** Next.js 16 / React 19 draft of the meeting UI, `(call)` and `(shell)` route groups. Not a build target, not deployed, not in CI, not in canon. Its `meeting-gap-notes.md` is a docs-versus-draft gap analysis feeding Plan 3-4. |
 
 ## Plan 1-2 pre-empted work
 
@@ -50,11 +59,13 @@ Plan 1-2 section 1 states its entry preconditions assuming Plan 0 left "zero DDL
 
 ## Live gap list
 
-Ordered by what blocks the most downstream work.
+Ordered by what blocks the most downstream work. Items 1, 7, and 8 from the 2026-07-22 list are closed: `mytheus-platform` is cloned and Phase 0F/0G is complete, the deploy decision has [ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md), and both `DECISION-REQUIRED` items are resolved.
 
-1. **`mytheus-platform` is unaccounted for.** Phase 0F (CI workflow, deploy descriptor, `.env` templates) is unverified. Blocks the Plan 1-2 section 3.11 CI security gates, which assume workflow files exist.
-2. **`mytheus-ui` has no Clerk and no generated API client.** Blocks Plan 1-2 section 3.10 entirely. The repo instead holds a large mock-data marketing site and app shell that must be reconciled with, not discarded by, the section 3.10 scaffold.
-3. **`mytheus-mobile` realign has not begun.** No Clerk Expo SDK, no `src/api/client.ts`, no `REALIGN.md`. Blocks Plan 1-2 section 7.
-4. **No `rbac_grants` and no `audit_logs`.** Both are Plan 1-2 tables (sections 3.4 and 3.7). `audit_logs` is the harder one: it is append-only, range-partitioned, and must be live the moment RLS is, so it cannot be deferred past the first authz denial.
+1. **`mytheus-ui` has no Clerk and no generated API client.** Blocks Plan 1-2 section 3.10 entirely. The repo holds a 56-page mock-data marketing site plus an app shell whose route groups already match doc 20 exactly. Section 3.10 says "scaffold net-new" and instructs `create-next-app@14` in that directory, which would destroy real work: it must be read as a reconciliation, not a scaffold.
+2. **`mytheus-mobile` realign has not begun.** No Clerk Expo SDK, no `src/api/client.ts`, no `REALIGN.md`. Blocks Plan 1-2 section 7.
+3. **No `rbac_grants` and no `audit_logs`.** Both are Plan 1-2 tables (sections 3.4 and 3.7). `audit_logs` is the harder one: it is append-only, range-partitioned, and must be live the moment RLS is, so it cannot be deferred past the first authz denial. `grpc_server.py` hardcodes `_DEFAULT_TIER = "member"` until `rbac_grants` exists.
+4. **`organizations.clerk_org_id` does not exist.** Required by the resolved tenant-claim decision: it is the join table the edge resolves Clerk's org id through. Specified in section 3.3, not built in Plan 0.
 5. **Every service is route-less.** All nine HTTP services boot `/healthz` through `create_app()` and carry a `TODO` where their routers go. No `/api/v1` surface exists yet.
-6. **Both Plan 1-2 `DECISION-REQUIRED` items are open.** The Clerk `org_id` claim shape and the RBAC-tier vs `users.role` split. The first blocks the `api-gateway` edge extraction and both client repos.
+6. **Stale Railway/Render references remain outside the spine.** Canon, ADR-0016, doc 16, `plan/README.md`, and Plan 1-2 are corrected. Still carrying the struck PaaS: reader docs 00, 01, 03, 04, 13, 22, and plan bands 0, 3-4, 5-6, 10-13, 14. Plan 14 needs more than a substitution - its premise is a Railway/Render-to-Kubernetes migration and the source is now the VPS.
+7. **Fictional repo maps in four repos.** The "Related repos" sections in `mytheus-intelligence`, `mytheus-realtime`, and `mytheus-platform` (README and CLAUDE.md) and `mytheus-mobile` list repos that do not exist (`mytheus-core`, `mytheus-control-plane`, `mytheus-core-api`, `mytheus-gateway`, `mytheus-workflows`, `mytheus-sdk`, `mytheus-infra`) and disagree with each other on what the CRUD repo is called. The authoritative list is the table in `mytheus-docs/CLAUDE.md`.
+8. **The live VPS deploy has not run.** Artifacts and runbook are ready in `mytheus-platform/deploy/`; pushing to the box was held as an outward-facing action awaiting explicit go. Back up PostgreSQL off-box and rehearse a restore before any real tenant data lands.

@@ -5,9 +5,9 @@
 | Band | Plan 0, pre-P1 bootstrap |
 | Plan file | [plan/plan-0-scaffold-and-contracts.md](../plan/plan-0-scaffold-and-contracts.md) |
 | Status | **DONE WITH GAPS** |
-| Complete | `mytheus-events` (0A), `mytheus-backend` (0B, 0C), `mytheus-intelligence` (0D), `mytheus-realtime` (0E realtime half) |
-| Incomplete | `mytheus-ui` (0E web half), `mytheus-mobile` (0G), `mytheus-platform` (0F, unverifiable) |
-| Last verified | 2026-07-22, by file inspection of every clone |
+| Complete | `mytheus-events` (0A), `mytheus-backend` (0B, 0C), `mytheus-intelligence` (0D), `mytheus-realtime` (0E realtime half), `mytheus-platform` (0F, 0G) |
+| Incomplete | `mytheus-ui` (0E web half, deliberately skipped), `mytheus-mobile` (0G) |
+| Last verified | 2026-07-23, by file inspection of every clone |
 
 Provenance note: this file consolidates records that previously lived in `mytheus-backend/PREVIOUS.md` (three sessions), `mytheus-intelligence/PREVIOUS.md`, `mytheus-realtime/PREVIOUS.md`, and `mytheus-ui/PROGRESS.md`. Those files are historical from this point forward. Everything below marked **verified** was confirmed by reading the current tree; everything marked **reported** is inherited from a session log and has not been re-run here.
 
@@ -82,9 +82,31 @@ What Plan 0 asked for and is missing: the Clerk provider and the API-client plac
 
 The repo holds a polished single-device "Meeting Pod" prototype on 100 percent mock data (`src/data/mock.ts`), rebuilt around a brand redesign. Plan 0 asked for the Clerk SDK, an `httpClient`, an env base URL, and a `REALIGN.md` backlog. None are present: `@clerk/clerk-expo` is not in `package.json`, and there is no `REALIGN.md`.
 
-### 1.7 `mytheus-platform` (Phase 0F) - UNVERIFIABLE
+### 1.7 `mytheus-platform` (Phases 0F, 0G) - complete
 
-The repo is not cloned. The `reprise-platform/` folder holds a second clone of `mytheus-events` instead. Phase 0F asked for a CI workflow (lint, test, gitleaks, dependency scan, Avro compatibility, docker build), a Railway or Render modular-monolith deploy descriptor, `.env` templates, and explicitly no Kubernetes or Terraform. None of this can be confirmed until the correct repo is cloned.
+Cloned 2026-07-23, previously unverifiable. Verified by file inspection.
+
+**The key adaptation: self-host on a VPS, not Railway or Render.** Phase 0F's deploy target was rewritten from the plan's `render.yaml` / `railway.json` to a Docker Compose deploy of the modular monolith plus self-hosted PostgreSQL, Redis, and Redpanda on an already-owned Hostinger VPS (8 vCPU / 32 GB / 400 GB, Ubuntu 24.04). Everything else in 0F is unchanged in spirit. Kubernetes and Terraform remain out of scope until Plan 14. This decision is now recorded in [ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md); it had no ADR when it was made, which is why it appeared as a gap on 2026-07-22.
+
+Phase 0F:
+
+- `.github/workflows/ci.yml` - the canonical CI template. Jobs: `python` (uv sync, ruff, black, mypy, pytest), `authz-check` (backend), `avro-compat` (events, BACKWARD gate against a Schema Registry service), `security` (gitleaks + pip-audit), `docker` (build the backend image). Jobs self-select by repo via `if: contains(github.repository, ...)`. `actionlint`-clean. `mytheus-ui` is intentionally out of scope; it owns its own Next.js CI.
+- `scripts/check_authz.py` - the shift-left authz gate. AST-walks `services/**` and fails if a FastAPI route declares no auth and is not explicitly public. Recognizes router-level and decorator-level `dependencies=[Depends(...)]`, per-parameter `Depends`/`Security`, a PUBLIC allowlist (health, webhooks, oauth), and a `# authz: public` marker. A runnable copy ships in `mytheus-backend/scripts/`, where its CI runs; this is the reference copy.
+- `deploy/compose.prod.yml` - nine services: self-hosted `postgres`, `redis`, `redpanda` (Kafka plus Schema Registry), `temporal`; one backend image running three roles (`web` = uvicorn, `relay` = outbox drain, `workflow` = Temporal worker); a one-shot `migrate` running `alembic upgrade head` that `web` waits on; and `caddy` for automatic HTTPS.
+- `deploy/Caddyfile`, `deploy/deploy.sh` (idempotent bring-up), `deploy/README.md` (first-time runbook).
+- `env/{dev,staging,prod}.env.example` plus `env/README.md`. Only `.example` files are committed. Documents the per-store split: `DATABASE_URL` alone chooses self-hosted PostgreSQL versus managed Supabase.
+- `mytheus-backend/Dockerfile` and `.dockerignore` - multi-stage (uv builder resolving from the lockfile, slim `python:3.12-slim` runtime, non-root `appuser` uid 10001, `tini` as PID 1). One image, role selected by the compose `command`.
+
+Phase 0F verification, reported: the backend image built and booted, answering `/healthz` with `200 {"status":"ok","service":"core-api"}` as non-root. `actionlint` clean, `docker compose config` valid, `check_authz.py` passing (it correctly flagged the SCIM stubs until they were guarded with a router-level `Depends(verify_token)`).
+
+**Deliberately not done:** the live deploy to the production VPS. Artifacts and runbook are ready; pushing to the running box was held as an outward-facing, hard-to-reverse action awaiting explicit go.
+
+Phase 0G, cross-repo conventions:
+
+- Uniform `make` targets (`install`, `lint`, `typecheck`, `test`, `ci`) in all five code repos, including a new repo-level `mytheus-realtime/Makefile` delegating to both its Node and Python services.
+- `.pre-commit-config.yaml` in all five: local ruff/black/mypy plus gitleaks; events adds `make validate`, backend adds the authz check, realtime scopes Python hooks to `transcription-service` plus a gateway `tsc` hook, platform runs gitleaks plus actionlint.
+- `CONTRIBUTING.md` in all five, each stating: names come from `_canon/` and are renamed only via Glossary plus ADR; every PR includes an `org_id` authz review; Conventional Commits, trunk-based, no `Co-Authored-By` footer; the repo's CI gate and `pre-commit install`.
+- Canon-location decision recorded: canon authority lives in `mytheus-docs`, and for MVP the contract-binding repos consume it as a sibling checkout (all repos cloned under one parent). Revisit submodules or vendoring post-W36.
 
 ---
 
@@ -100,11 +122,11 @@ Against section 10 of [plan-0-scaffold-and-contracts.md](../plan/plan-0-scaffold
 | `mytheus-intelligence`: 7 skeletons plus shared lib plus Ray placeholder build; `ruff` and `mypy` clean | **MET** (reported clean) | Seven service packages, shared `libs/`, guarded Ray import. |
 | `mytheus-ui`: `next build`, lint, and `tsc` clean; Clerk provider and API client placeholders wired | **PARTIAL** | Build gates reported clean. The Clerk provider and API client placeholders are absent; Phase 0E web half was deliberately skipped. |
 | `mytheus-realtime`: both skeletons boot `/healthz` | **MET** (reported green) | Both services present with `/healthz`; `transcription-service` also carries `/internal/audio`. |
-| `mytheus-platform`: CI workflow valid; deploy descriptor present; `.env` templates; no Kubernetes or Terraform | **NOT VERIFIABLE** | Repo not cloned. |
+| `mytheus-platform`: CI workflow valid; deploy descriptor present; `.env` templates; no Kubernetes or Terraform | **MET** | `ci.yml` (`actionlint` clean), `deploy/compose.prod.yml` (9 services, `docker compose config` valid), three env templates, no K8s or Terraform. Deploy target is the VPS, not Railway or Render (ADR-0016). |
 | `mytheus-mobile`: builds; Clerk SDK, `httpClient`, env base URL added; screens still on mock; `REALIGN.md` written | **NOT MET** | Builds and is on mock data, but the Clerk SDK, `httpClient`, and `REALIGN.md` are all absent. |
-| Conventions: uniform `make ci`, pre-commit, `CONTRIBUTING.md`, canon-location decision recorded | **PARTIAL** | Present in `mytheus-backend`, `mytheus-events`, `mytheus-intelligence`, `mytheus-realtime`. Absent in `mytheus-ui` and `mytheus-mobile`; unverifiable in `mytheus-platform`. |
+| Conventions: uniform `make ci`, pre-commit, `CONTRIBUTING.md`, canon-location decision recorded | **MET** for the five code repos | Present in `mytheus-backend`, `mytheus-events`, `mytheus-intelligence`, `mytheus-realtime`, `mytheus-platform`, with the canon-location decision recorded in each `CONTRIBUTING.md`. Absent in `mytheus-ui` and `mytheus-mobile`, both of which are excluded from 0G by the same decision that skipped 0E. |
 
-Five of nine met, two partial, one not met, one unverifiable.
+Seven of nine met, one partial (`mytheus-ui`), one not met (`mytheus-mobile`). Both shortfalls are the two client repos, and both were deliberate.
 
 ---
 
