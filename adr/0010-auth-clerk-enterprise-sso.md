@@ -78,6 +78,19 @@ sequenceDiagram
     SVC-->>U: tenant-scoped response
 ```
 
+**D2 amendment (2026-07-26): the claim carries Clerk's native organization id, and the resolution IS the checkpoint.**
+
+The session token carries **Clerk's** organization id (an opaque `org_...` string), not our `org_id`. `api-gateway` resolves it to our `org_id` through `organizations.clerk_org_id`, a unique and immutable mapping ([Data Model §2.1](../_canon/02-data-model.md)). We rejected a custom Clerk JWT template injecting our `org_id` directly: under that option the token asserts tenancy with nothing to validate it against, so any drift in Clerk metadata (a manual dashboard edit, a restore, a botched migration) becomes a silent cross-tenant read, which is the failure mode that cannot be detected afterward. It also keeps our `org_id` out of a vendor metadata blob and avoids a create-in-Clerk, insert-our-row, patch-Clerk write-back sync needing its own reconciliation.
+
+The lookup is therefore not overhead. It is the point where **org exists, `status` is not `suspended`, and `deleted_at` is null** are enforced. Four requirements follow:
+
+1. **Claim-absent is an explicit state.** Clerk emits the organization claim only when the session has an active organization. A user with no active org, or one mid-switch, gets no claim, and that MUST return `401 AUTH_REQUIRED` with an RFC 7807 body, never a `500`. Multi-org users need a token refresh on organization switch. The claim is an opaque string and MUST NOT be parsed as a UUID.
+2. **Cache the mapping, never the verdict.** `clerk_org_id` to `org_id` is immutable and safely cacheable in Redis. The liveness verdict is **not**: `status` and `deleted_at` change. An unbounded cache of a positive verdict lets a suspended or erased tenant keep authenticating indefinitely, and the right-to-be-forgotten workflow's `nexus:{org_id}:*` flush cannot match a key written before `org_id` was known. Cache the mapping under a short TTL and re-check liveness, or delete the mapping key explicitly on suspend, delete, and RTBF.
+3. **All three negative outcomes return one byte-identical response.** Unknown organization, suspended organization, and soft-deleted organization MUST be indistinguishable to the caller, or the edge becomes an existence oracle over the customer base. Unique-constraint violations on `slug` and `clerk_org_id` must likewise be mapped to a generic `409` that echoes neither the constraint name nor the value.
+4. **The webhook verifies before it resolves.** `POST /clerk/webhook` MUST verify the Svix signature before any resolution, so an unauthenticated caller with a chosen body can never use it as an oracle.
+
+`organizations` is not `tenant_isolation`-policied ([ADR-0002](0002-multi-tenancy-model.md) D3), so this resolution is a plain query by the application role through a single sanctioned accessor, with no privileged construct.
+
 ### D3 — Enterprise SSO/SAML/SCIM fronted by Clerk, configured per tenant
 
 > [SaaS-scale adjustment] Enterprise SSO/SAML/SCIM is wholly added vs the PDF; it is table-stakes for the Enterprise tier ([Tech Decisions §2.11/§2.12](../_canon/06-tech-decisions.md)) and plan-gated by `features.sso_saml`/`features.scim_provisioning` ([SaaS Business §2.3](../18-saas-business-architecture.md)).
@@ -141,7 +154,7 @@ Two role concepts are kept in separate stores by design:
 | Concept | Field / store | Purpose |
 |---|---|---|
 | **Domain role** | `users.role` + `users.skills text[]` ([Data Model §2.1](../_canon/02-data-model.md)) | Job/domain identity; feeds role→topics taxonomy and `get_user_context(user_id)` so `PersonalListenerAgent` filters chunks by relevance. **No permission meaning.** |
-| **RBAC permission tier** | RBAC roles/grants store in `identity-tenant-service` | `owner` / `admin` / `member` — what a user may *do* (billing, member management, integration install, data export/erasure). |
+| **RBAC permission tier** | `rbac_grants.tier` in `identity-tenant-service` ([Data Model §2.2](../_canon/02-data-model.md)) | `owner` / `admin` / `member` — what a user may *do* (billing, member management, integration install, data export/erasure). |
 
 The three tiers (full table in [Security §3.1](../11-security-architecture.md)): `owner` (everything `admin` can plus billing, ownership transfer, tenant deletion → RTBF, data-residency approval); `admin` (members + RBAC grants, integration install/revoke, `tenant_settings` including SSO, export/erasure requests, audit-log read); `member` (create/join meetings, own worklogs/decisions/actions, agents and RAG, own notifications and Save-for-later). The middleware **fails closed**: an unset `org_id`, unknown route, or missing tier raises `403` — paired with RLS, where an unset `app.current_org` matches **zero rows**, so an authz bug degrades to "user sees nothing," never "user sees everything."
 

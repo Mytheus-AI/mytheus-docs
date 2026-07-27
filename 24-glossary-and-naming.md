@@ -83,7 +83,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
-| `organizations` | entity | The tenant root (`id` = `org_id`); name, slug, plan_id. Never partitioned away; deletion cascades a right-to-be-forgotten workflow. Owned by `identity-tenant-service`. | — |
+| `organizations` | entity | The tenant root (`id` = `org_id`); `clerk_org_id`, name, slug, plan_id, `status` (active/suspended). Never partitioned away; deletion cascades a right-to-be-forgotten workflow. Not a tenant-scoped row and deliberately **not** `tenant_isolation`-policied (it carries no `org_id` column). Owned by `identity-tenant-service`. | — |
 | `users` | entity | Org member: `clerk_user_id`, `email`, `role`, `skills text[]`, `bio`, `avatar_url`. RLS by `org_id`. Owned by `identity-tenant-service`. | — |
 | `teams` | entity | Named team within a department. RLS by `org_id`. Owned by `identity-tenant-service`. | — |
 | `team_members` | entity | Join table `(team_id, user_id)` with role. Owned by `identity-tenant-service`. | — |
@@ -100,7 +100,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `chat_messages` | entity | In-meeting chat (non-AV via Socket.io). Range-partition by `created_at`. Owned by `core-api`. | — |
 | `document_chunks` | entity | unstructured.io typed elements: document_id, element_id, element_type, text, position. Mirrors the Qdrant `document_chunks` payload. Owned by `rag-service`. | — |
 
-### 4.2 SaaS-scale entities (10, wholly added vs PDF)
+### 4.2 SaaS-scale entities (11, wholly added vs PDF)
 
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
@@ -114,6 +114,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `tenant_settings` | entity | Per-tenant config: locale, `agent_confidence_overrides`, retention days, pii_redaction_enabled, sso_config. Owned by `identity-tenant-service` (the tenant control plane; data-model labels this `tenant-service` — see §10). | added (SaaS) |
 | `data_residency` | entity | Pins a tenant to region/cell (us/eu/ap), db_cell, qdrant_region, object_bucket_region; immutable after `locked_at`. Owned by `identity-tenant-service` (data-model labels this `tenant-service` — see §10). | added (SaaS) |
 | `agent_budgets` | entity | Per (tenant, month) token budget: token_quota, tokens_consumed, hard_cap, 80/95% alert flags, state (ok/throttled/blocked). Enforces R4 budgets. Owned by `billing-metering-service` (data-model labels this `budget-service` — see §10). | added (SaaS) |
+| `rbac_grants` | entity | The authorization store: `tier` (owner/admin/member) per (org_id, user_id), plus `granted_by`. The **only** thing the authz middleware reads. Strictly distinct from `users.role`, which is a job/domain attribute with no permission meaning. Owned by `identity-tenant-service`. | added (SaaS) |
 
 ---
 
@@ -221,6 +222,9 @@ Cross-cutting concepts referenced across the set. PDF-original concepts are dash
 |---|---|---|---|
 | `nexus_knowledge` | concept | The single Apache AGE graph (Cypher-over-Postgres), org-partitioned. | — |
 | `get_user_context(user_id)` | concept | Utility returning role/skills/team/recent meetings/topics; Redis-cached 5-min TTL; per-user personalization source. | — |
+| `clerk_org_id` | concept | The unique, immutable mapping from a Clerk organization to our tenant root, held on `organizations`. The edge resolves the token's native Clerk organization claim through it, and that resolution is the authorization checkpoint where org-exists, not-suspended, and not-soft-deleted are enforced. Our `org_id` is never written into Clerk metadata. | added (SaaS) |
+| `mytheus_app` / `mytheus_relay` / `mytheus_admin` | concept | The three PostgreSQL roles. None holds `BYPASSRLS`. `mytheus_app` is the request path; `mytheus_relay` drains `outbox` across tenants through one permissive policy on that one table; `mytheus_admin` owns the tables and runs migrations and RTBF purges, unreachable from request handlers. | added (SaaS) |
+| Tenant-root exemption | concept | `organizations` and `plans` are the two un-tenanted tables. Because `organizations` has no `org_id` column, the canonical RLS policy is not expressible on it and it is deliberately unpolicied, which makes the rule "every table with an `org_id` column carries `tenant_isolation`" exceptionless and machine-checkable in CI. | added (SaaS) |
 | RRF (Reciprocal Rank Fusion) | concept | The fusion method combining Qdrant vector + Postgres FTS + AGE topic-relation results in the `RAGService` hybrid retrieval. | — |
 | `RAGService` | concept | The fixed five-stage retrieval pipeline expand → retrieve → rerank → assemble → cite. | — |
 | `BaseAgent` | concept | Shared LangGraph lifecycle (spawn/process/terminate) for all six agents. | — |

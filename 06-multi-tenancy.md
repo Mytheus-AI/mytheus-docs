@@ -109,7 +109,11 @@ CREATE POLICY tenant_isolation ON transcript_chunks
   WITH CHECK (org_id = current_setting('app.current_org')::uuid);
 ```
 
-The `USING` clause filters reads/updates/deletes; the `WITH CHECK` clause prevents a tenant from inserting or moving a row into another `org_id`. The session GUC `app.current_org` is set per request, inside the transaction, from the injected context (see §4):
+The `USING` clause filters reads/updates/deletes; the `WITH CHECK` clause prevents a tenant from inserting or moving a row into another `org_id`.
+
+> [SaaS-scale adjustment] Two refinements to the literal form above, both frozen in [ADR-0002](adr/0002-multi-tenancy-model.md) D3. First, the implemented predicate wraps the GUC read as `org_id = NULLIF(current_setting('app.current_org', true), '')::uuid`: the bare form **raises** when the GUC is unset, whereas the wrapped form yields NULL, so the predicate is false and the query returns **zero rows**. Fail-closed by returning nothing is stricter than fail-closed by erroring under a pooled connection. Second, the mandate is scoped to tables that actually carry `org_id`. The tenant root `organizations` has no such column (its `id` **is** the `org_id`) and is deliberately unpolicied, alongside the global `plans`. That exemption is what makes the rule exceptionless and enforceable by machine rather than by memory: **every table with an `org_id` column MUST carry a `tenant_isolation` policy**, asserted in CI over `information_schema.columns` and `pg_policies`, together with an assertion that no request-path role holds `rolsuper` or `rolbypassrls`.
+
+The session GUC `app.current_org` is set per request, inside the transaction, from the injected context (see §4):
 
 ```sql
 -- Set by the data layer at the start of every request transaction

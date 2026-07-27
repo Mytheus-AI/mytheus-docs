@@ -105,7 +105,7 @@ This is the single most important correctness rule in NEXUS authorization, and i
 | Concept | Field / store | Purpose | Owner |
 |---|---|---|---|
 | **Domain role** | `users.role` + `users.skills text[]` ([Data Model §2.1](_canon/02-data-model.md)) | Job/domain identity (e.g. "Backend Engineer", "PM"). Feeds the **role→topics taxonomy** and `get_user_context(user_id)` so the `PersonalListenerAgent` filters chunks by relevance. **Has nothing to do with permissions.** | `identity-tenant-service` (`users` table) |
-| **RBAC permission tier** | RBAC roles/grants store ([Service Catalog §3](_canon/01-service-catalog.md): "RBAC roles/grants") | `owner` / `admin` / `member` — what a user may *do* in the tenant (billing, member management, integration install, data export/erasure). | `identity-tenant-service` (RBAC grants, distinct from `users.role`) |
+| **RBAC permission tier** | `rbac_grants.tier` ([Data Model §2.2](_canon/02-data-model.md)) | `owner` / `admin` / `member` — what a user may *do* in the tenant (billing, member management, integration install, data export/erasure). | `identity-tenant-service` (`rbac_grants`, distinct from `users.role`) |
 
 > [SaaS-scale adjustment] The PDF had only `users.role` (a domain/skills attribute for agent relevance) and no permission model. The `owner`/`admin`/`member` RBAC tier is a SaaS-add ([Tech Decisions §2.11](_canon/06-tech-decisions.md)) stored as **RBAC grants in `identity-tenant-service`, never as `users.role`**. Overloading `users.role` with permissions would silently couple agent relevance filtering to authorization — a tenant renaming a job title could grant or revoke access. They are kept in separate stores by design.
 

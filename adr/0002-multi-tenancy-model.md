@@ -83,6 +83,20 @@ SELECT set_config('app.current_org', :org_id_from_jwt, true);
 
 Cells reduce blast radius and remove noisy neighbors; they **do not** replace RLS. A missed app-layer scope still returns **zero rows**, never another tenant's data. The application role has **no `BYPASSRLS`**; migrations and the RTBF purge run as a separate elevated role unreachable from request handlers.
 
+**Hardened predicate (amended 2026-07-26).** The implemented policy wraps the GUC read: `org_id = NULLIF(current_setting('app.current_org', true), '')::uuid`. The bare form above **raises** when the GUC is unset; the wrapped form yields NULL, so the predicate is false and the query returns **zero rows**. Fail-closed by returning nothing is stricter and more useful under a pooled connection than fail-closed by erroring, and it is the form every tenant table uses. Callers MUST pass a validated UUID: a malformed GUC value still raises `22P02` on the cast.
+
+**Scope of the mandate: tenant-scoped tables only (amended 2026-07-26).** `organizations` is the tenant **root**, not a tenant-scoped row. It carries no `org_id` column, so the canonical policy is not expressible on it, and it is deliberately **not** `tenant_isolation`-policied. This is what makes the mandate exceptionless and therefore enforceable by machine rather than by memory: **every table with an `org_id` column MUST carry a `tenant_isolation` policy**, asserted in CI. A self-referential policy on the root would have required a hardcoded exception in that assertion, and hardcoded exceptions rot. It would also have left the edge with no executable path for the pre-tenant Clerk-organization lookup that [ADR-0010](0010-auth-clerk-enterprise-sso.md) makes the authorization checkpoint, since `FORCE` subjects even a `SECURITY DEFINER` function's owner to the policy. `organizations` is protected instead by column-level grants, a single sanctioned accessor in the shared tenancy library, and a build gate that fails any other read of it. It holds directory metadata only; tenant-confidential per-tenant state lives in `tenant_settings` and `data_residency`, which are policied. `plans` is the other un-tenanted table. See [Data Model §7 rule 7](../_canon/02-data-model.md).
+
+**The three database roles (amended 2026-07-26).** Named here so no repo invents a fourth convention:
+
+| Role | Used by | `BYPASSRLS` | Reach |
+|---|---|---|---|
+| `mytheus_app` | Every request handler and HTTP service | **No** | Tenant tables, row-scoped by `tenant_isolation`. Column-level grants on `organizations`. No `UPDATE`/`DELETE` on `audit_logs`. |
+| `mytheus_relay` | The transactional-outbox relay worker only | **No** | `SELECT` plus `UPDATE (published_at, attempts)` on `outbox` **only**, admitted by a dedicated permissive `outbox_relay_drain` policy. |
+| `mytheus_admin` | Alembic migrations and the RTBF purge | **No** | Owns the tables. Unreachable from request handlers. |
+
+The relay is a worker, not a request path, and it must read every tenant's `outbox` rows to drain them. It gets that reach through **one permissive policy on one table**, never through `BYPASSRLS`, which would expose every row of every table. Roles are created out of band (they are cluster-global, and a migration must not need `CREATEROLE`); grants and policies are database-local and ship in the migration.
+
 > [SaaS-scale adjustment] The GUC is set **transaction-locally** (`set_config(..., true)`) precisely because PgBouncer runs in transaction-pooling mode ([Data Architecture §3.5](../05-data-architecture.md)). A session `SET` would bleed one tenant's `org_id` into the next lease of the same connection — the single most important RLS operational rule at SaaS scale, absent from the single-tenant PDF.
 
 ### D4 — Isolation at every layer, all keyed on `org_id`
