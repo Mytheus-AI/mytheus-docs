@@ -1,0 +1,196 @@
+openapi: 3.1.0
+
+# P1 design artifact (Plan 1-2 section 3.1 step 4). Frozen contract for bff.
+# Authority: _canon/01-service-catalog.md (bff owns /bff/*), 20-frontend-architecture.md
+# (the dashboard screen), 04-service-catalog.md section 3.3 (partial degradation).
+
+info:
+  title: bff
+  version: 1.0.0
+  description: |
+    Backend-for-frontend. Screen-shaped read aggregation for `web-app` and
+    `mytheus-mobile`. Owns no domain data and holds only a short read-through cache under
+    `nexus:{org_id}:`; the owning service is always the write authority.
+
+    `bff` is READ-ONLY by contract. A mutation belongs on the owning service's `/api/v1`
+    surface, never here.
+
+    Partial degradation is a feature: if one downstream arm is slow, the resolved arms are
+    returned and the slow one is marked degraded. A slow panel must never fail the screen.
+
+servers:
+  - url: https://api.mytheus.ai
+    description: Production, behind api-gateway
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: screens
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      tags: [screens]
+      security: []   # authz: public
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  service: { type: string }
+
+  /bff/dashboard:
+    get:
+      operationId: getDashboard
+      summary: The user dashboard composite
+      description: |
+        One payload for the whole dashboard screen.
+
+        In Plan 1-2 only `upcoming_meetings` carries real data. `action_items`, `worklogs`,
+        and `decisions` return as stable EMPTY arrays with their shapes frozen, so the
+        screen does not change when the agent and decision bands populate them. This is
+        deliberate: a shaped-empty arm is a contract, not a placeholder.
+      tags: [screens]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max items per arm.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200":
+          description: The dashboard composite, possibly with degraded arms
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Clerk RS256 session JWT, re-verified in the service tier.
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        detail: { type: string }
+        instance: { type: string }
+        trace_id: { type: string }
+
+    ErrorCode:
+      type: string
+      enum:
+        - MALFORMED_BODY
+        - INVALID_CURSOR
+        - AUTH_REQUIRED
+        - TOKEN_EXPIRED
+        - FORBIDDEN_ROLE
+        - CROSS_TENANT_DENIED
+        - NOT_FOUND
+        - IDEMPOTENCY_KEY_REUSED
+        - VERSION_CONFLICT
+        - VALIDATION_FAILED
+        - RATE_LIMITED
+        - QUOTA_EXCEEDED
+        - INTERNAL
+        - DEPENDENCY_UNAVAILABLE
+
+    ArmStatus:
+      type: string
+      enum: [ok, degraded, empty]
+      description: |
+        `ok` means the arm resolved. `degraded` means the downstream timed out and the
+        client should render a retry affordance rather than an empty state. `empty` means
+        the arm resolved and genuinely has no rows, or is not yet implemented in this band.
+
+    Dashboard:
+      type: object
+      required: [upcoming_meetings, action_items, worklogs, decisions, arms]
+      properties:
+        upcoming_meetings:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardMeeting" }
+        action_items:
+          type: array
+          description: Shape frozen; populated in the actions band.
+          items: { $ref: "#/components/schemas/DashboardActionItem" }
+        worklogs:
+          type: array
+          description: Shape frozen; populated in the agent band.
+          items: { $ref: "#/components/schemas/DashboardWorklog" }
+        decisions:
+          type: array
+          description: Shape frozen; populated in the decisions band.
+          items: { $ref: "#/components/schemas/DashboardDecision" }
+        arms:
+          type: object
+          description: Per-arm resolution status, so the client can tell empty from broken.
+          required: [upcoming_meetings, action_items, worklogs, decisions]
+          properties:
+            upcoming_meetings: { $ref: "#/components/schemas/ArmStatus" }
+            action_items: { $ref: "#/components/schemas/ArmStatus" }
+            worklogs: { $ref: "#/components/schemas/ArmStatus" }
+            decisions: { $ref: "#/components/schemas/ArmStatus" }
+
+    DashboardMeeting:
+      type: object
+      required: [id, title, status]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        scheduled_start: { type: [string, "null"], format: date-time }
+        scheduled_end: { type: [string, "null"], format: date-time }
+        status: { type: string, enum: [scheduled, live, ended, cancelled] }
+        participant_count: { type: integer }
+
+    DashboardActionItem:
+      type: object
+      required: [id, content, status]
+      properties:
+        id: { type: string, format: uuid }
+        content: { type: string }
+        due_date: { type: [string, "null"], format: date }
+        status: { type: string }
+        meeting_id: { type: [string, "null"], format: uuid }
+
+    DashboardWorklog:
+      type: object
+      required: [id, content]
+      properties:
+        id: { type: string, format: uuid }
+        content: { type: string }
+        meeting_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+
+    DashboardDecision:
+      type: object
+      required: [id, content, status]
+      properties:
+        id: { type: string, format: uuid }
+        content: { type: string }
+        rationale: { type: [string, "null"] }
+        status: { type: string }
+        meeting_id: { type: [string, "null"], format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Missing, expired, or invalid JWT, or no active organization in the token
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }

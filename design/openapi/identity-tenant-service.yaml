@@ -1,0 +1,325 @@
+openapi: 3.1.0
+
+# P1 design artifact (Plan 1-2 section 3.1 step 4). Frozen contract for identity-tenant-service.
+# Authority: _canon/01-service-catalog.md (prefix ownership), ADR-0010 (identity),
+# _canon/02-data-model.md (field names).
+
+info:
+  title: identity-tenant-service
+  version: 1.0.0
+  description: |
+    Identity and tenancy control plane. Owns `organizations`, `users`, `tenant_settings`,
+    `data_residency`, and `rbac_grants`. Clerk is the source of truth for identity; this
+    service mirrors it.
+
+    Two role concepts, deliberately in separate stores:
+      - `rbac_grants.tier` (owner/admin/member) is the ONLY thing authorization reads.
+      - `users.role` plus `users.skills` is job identity feeding agent relevance and
+        `get_user_context`. It is NEVER consulted for permissions.
+
+servers:
+  - url: https://api.mytheus.ai
+    description: Production, behind api-gateway
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: context
+  - name: orgs
+  - name: webhooks
+  - name: scim
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      tags: [context]
+      security: []   # authz: public
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  service: { type: string }
+
+  /clerk/webhook:
+    post:
+      operationId: clerkWebhook
+      summary: Clerk user-sync webhook
+      description: |
+        Svix-signed. Authentication is the HMAC signature, not a bearer token, so this route
+        is declared with no security scheme and is on the gateway's public allowlist.
+
+        ORDERING IS LOAD-BEARING: verify the Svix signature FIRST, resolve the organization
+        SECOND. Resolving before verifying would turn this endpoint into an existence oracle
+        over the customer base for any unauthenticated caller with a chosen body.
+
+        After verification the handler dedupes on the Clerk `event_id` via the `inbox` table
+        plus `nexus:{org_id}:dedupe:user-sync-events:{event_id}`, then applies the upsert or
+        soft delete to `users` in one transaction.
+      tags: [webhooks]
+      security: []   # authz: public (Svix HMAC verified in-handler)
+      parameters:
+        - { name: svix-id, in: header, required: true, schema: { type: string } }
+        - { name: svix-timestamp, in: header, required: true, schema: { type: string } }
+        - { name: svix-signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Opaque Clerk event envelope. Verified before it is parsed.
+      responses:
+        "200":
+          description: Applied, or a no-op if this event_id was already consumed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok, duplicate] }
+        "401":
+          description: Missing or invalid Svix signature
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /api/v1/context/{user_id}:
+    get:
+      operationId: getUserContext
+      summary: The `get_user_context` read surface
+      description: |
+        Source of record for role, skills, and team membership. Cached at
+        `nexus:{org_id}:user_ctx:{user_id}` with a 300 second TTL. The gRPC
+        `GetUserContext` method returns the same shape over the internal mesh, with
+        `org_id` in metadata and never in the message body.
+
+        In Plan 1-2 `recent_meeting_ids` is a stable empty array; it populates once
+        `meeting_participants` carries data.
+      tags: [context]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The user context
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserContext" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/orgs:
+    post:
+      operationId: provisionOrg
+      summary: Provision a tenant (DEFERRED in Plan 1-2)
+      description: |
+        DEFERRED. Not implemented in Plan 1-2 and returns `501`.
+
+        Reason: tenant provisioning happens when the caller has no organization, but the
+        resolved tenant-claim decision returns `401 AUTH_REQUIRED` whenever the org claim is
+        absent. The gateway therefore needs a third state, authenticated-but-org-exempt,
+        which is a live design question rather than an implementation detail. Until it is
+        settled, organizations are created by an operator seed script running as
+        `mytheus_admin`, which also writes the `tenant-events` provisioned outbox row.
+
+        When implemented, this endpoint writes `organizations`, `tenant_settings`,
+        `data_residency`, the owner `rbac_grants` row, and a `tenant-events` outbox row in
+        ONE transaction. It is the only place a tenant root is born.
+      tags: [orgs]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                slug: { type: string, pattern: "^[a-z0-9][a-z0-9-]{1,62}$" }
+                clerk_org_id: { type: string }
+      responses:
+        "501":
+          description: Deferred in this band
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: |
+            Slug or clerk_org_id already taken. The body deliberately echoes NEITHER the
+            constraint name NOR the submitted value: a unique-violation that leaks either
+            is an existence oracle over the customer base, and unique indexes are not
+            subject to RLS.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /scim/v2/Users:
+    get:
+      operationId: scimListUsers
+      summary: SCIM 2.0 user list (DEFERRED)
+      description: |
+        Enterprise SSO, SAML, and SCIM are deferred to a later Enterprise band. The routes
+        are present and guarded at the router level so the authz CI gate sees a declared
+        auth requirement, and they return `501` with an RFC 7807 body rather than raising.
+      tags: [scim]
+      responses:
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: scimProvisionUser
+      summary: SCIM 2.0 user provisioning (DEFERRED)
+      tags: [scim]
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema: { type: object }
+      responses:
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /scim/v2/Users/{user_id}:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: scimUpdateUser
+      summary: SCIM 2.0 user update (DEFERRED)
+      tags: [scim]
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema: { type: object }
+      responses:
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      operationId: scimDeprovisionUser
+      summary: SCIM 2.0 deactivation (DEFERRED)
+      tags: [scim]
+      responses:
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /scim/v2/Groups:
+    get:
+      operationId: scimListGroups
+      summary: SCIM 2.0 group list (DEFERRED)
+      tags: [scim]
+      responses:
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Clerk RS256 session JWT. The token carries CLERK's native organization id, an opaque
+        `org_...` string. It is resolved to our `org_id` via `organizations.clerk_org_id`
+        and MUST NOT be parsed as a UUID. A token with no active organization has no claim
+        at all, which is an explicit state returning `401 AUTH_REQUIRED`, never `500`.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, maxLength: 255 }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        detail: { type: string }
+        instance: { type: string }
+        trace_id: { type: string }
+
+    ErrorCode:
+      type: string
+      enum:
+        - MALFORMED_BODY
+        - INVALID_CURSOR
+        - AUTH_REQUIRED
+        - TOKEN_EXPIRED
+        - FORBIDDEN_ROLE
+        - CROSS_TENANT_DENIED
+        - NOT_FOUND
+        - IDEMPOTENCY_KEY_REUSED
+        - VERSION_CONFLICT
+        - VALIDATION_FAILED
+        - RATE_LIMITED
+        - QUOTA_EXCEEDED
+        - INTERNAL
+        - DEPENDENCY_UNAVAILABLE
+        - NOT_IMPLEMENTED
+
+    UserContext:
+      type: object
+      required: [user_id, org_id, rbac_tier, skills, team_ids, recent_meeting_ids]
+      properties:
+        user_id: { type: string, format: uuid }
+        org_id:
+          type: string
+          format: uuid
+          description: |
+            Present in this response body only because the caller is already authenticated
+            for this tenant. It is never ACCEPTED from a client on any request.
+        email: { type: [string, "null"], format: email }
+        role:
+          type: [string, "null"]
+          description: Job or domain attribute. NOT a permission tier.
+        skills:
+          type: array
+          items: { type: string }
+        rbac_tier:
+          type: string
+          enum: [owner, admin, member]
+          description: The only field authorization reads.
+        team_ids:
+          type: array
+          items: { type: string, format: uuid }
+        recent_meeting_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Missing, expired, or invalid JWT, or no active organization in the token
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: Absent OR in another tenant. Deliberately indistinguishable.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotImplemented:
+      description: Deferred to a later band; returns an RFC 7807 body, never a raw error
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }

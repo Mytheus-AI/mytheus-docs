@@ -1,0 +1,433 @@
+openapi: 3.1.0
+
+# P1 design artifact (Plan 1-2 section 3.1 step 4). Frozen contract for core-api.
+# Authority: 19-api-architecture.md (shape), _canon/01-service-catalog.md (prefix ownership),
+# _canon/02-data-model.md (field names). This spec gates the generated TypeScript client
+# (section 3.10 step 7) and the Spectral + oasdiff CI gates (section 3.11 step 5).
+
+info:
+  title: core-api
+  version: 1.0.0
+  description: |
+    The relational heart. Domain CRUD for meetings and the organization hierarchy.
+
+    Invariants this spec encodes:
+      - `org_id` is NEVER a path or query parameter. It is derived from the verified
+        Clerk JWT at `api-gateway` and re-verified in the service tier.
+      - A resource belonging to another tenant returns `404`, never `403`. Existence is
+        tenant-confidential.
+      - Every mutating POST accepts `Idempotency-Key`. A replay with a different body is
+        `409 IDEMPOTENCY_KEY_REUSED`.
+      - Every write returns the canonical persisted resource, never a partial echo.
+      - List endpoints are cursor-paginated. No OFFSET.
+
+servers:
+  - url: https://api.mytheus.ai
+    description: Production, behind api-gateway
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: meetings
+  - name: org-hierarchy
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      tags: [meetings]
+      security: []   # authz: public
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  service: { type: string }
+
+  /api/v1/meetings:
+    get:
+      operationId: listMeetings
+      summary: List meetings for the caller's organization
+      tags: [meetings]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [scheduled, live, ended, cancelled]
+        - name: from
+          in: query
+          required: false
+          description: Lower bound on scheduled_start, inclusive.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          description: Upper bound on scheduled_start, exclusive.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: A page of meetings, ordered by scheduled_start DESC with id as tiebreaker
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Meeting" }
+                  page: { $ref: "#/components/schemas/PageMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createMeeting
+      summary: Create a meeting
+      description: |
+        Writes the `meetings` row, an `audit_logs` row (`meeting.created`), and a
+        `meeting-events` outbox row in ONE transaction. The relay publishes the outbox row
+        to Redpanda keyed by `org_id`.
+      tags: [meetings]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeetingCreate" }
+      responses:
+        "201":
+          description: The canonical persisted meeting
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meeting" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/meetings/{meeting_id}:
+    parameters:
+      - name: meeting_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getMeeting
+      summary: Fetch one meeting
+      description: |
+        A meeting belonging to another tenant is RLS-invisible and returns `404`, not `403`.
+        This is asserted in the band's acceptance tests.
+      tags: [meetings]
+      responses:
+        "200":
+          description: The meeting
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meeting" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateMeeting
+      summary: Update a meeting
+      tags: [meetings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeetingUpdate" }
+      responses:
+        "200":
+          description: The canonical persisted meeting
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meeting" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/teams:
+    get:
+      operationId: listTeams
+      summary: List teams in the caller's organization
+      description: |
+        NOTE: the plan text sketched `GET /api/v1/orgs/{id}/teams`. That form puts a tenant
+        identifier in the path and violates the `org_id`-never-in-path invariant
+        (19-api-architecture.md section 2.1). The scoping is implicit in the JWT.
+      tags: [org-hierarchy]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of teams
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Team" }
+                  page: { $ref: "#/components/schemas/PageMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createTeam
+      summary: Create a team
+      tags: [org-hierarchy]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                department_id: { type: [string, "null"], format: uuid }
+      responses:
+        "201":
+          description: The canonical persisted team
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/departments:
+    get:
+      operationId: listDepartments
+      summary: List departments in the caller's organization
+      tags: [org-hierarchy]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of departments
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Department" }
+                  page: { $ref: "#/components/schemas/PageMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createDepartment
+      summary: Create a department
+      tags: [org-hierarchy]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                parent_id: { type: [string, "null"], format: uuid }
+      responses:
+        "201":
+          description: The canonical persisted department
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Department" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Clerk RS256 session JWT. Pre-validated at `api-gateway` against cached JWKS, then
+        RE-VERIFIED in the service tier. The gateway is a DDoS shield, not a trust delegation.
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque base64 keyset cursor. Clients never construct it.
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Replay-safe key for a mutating request. A replay with the SAME body returns the
+        original response. A replay with a DIFFERENT body returns `409 IDEMPOTENCY_KEY_REUSED`.
+        The server namespaces the key by `org_id`; it is never global.
+      schema: { type: string, maxLength: 255 }
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 7807 problem detail. `code` is a stable machine-readable enum.
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        detail: { type: string }
+        instance: { type: string }
+        trace_id: { type: string }
+        errors:
+          type: array
+          description: Present only on 422.
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              code: { type: string }
+              message: { type: string }
+
+    ErrorCode:
+      type: string
+      description: Frozen enum. Never change a published value.
+      enum:
+        - MALFORMED_BODY
+        - INVALID_CURSOR
+        - AUTH_REQUIRED
+        - TOKEN_EXPIRED
+        - FORBIDDEN_ROLE
+        - CROSS_TENANT_DENIED
+        - NOT_FOUND
+        - IDEMPOTENCY_KEY_REUSED
+        - VERSION_CONFLICT
+        - VALIDATION_FAILED
+        - RATE_LIMITED
+        - QUOTA_EXCEEDED
+        - INTERNAL
+        - DEPENDENCY_UNAVAILABLE
+
+    PageMeta:
+      type: object
+      required: [limit, has_more]
+      properties:
+        limit: { type: integer }
+        next_cursor:
+          type: [string, "null"]
+          description: Null when has_more is false.
+        has_more: { type: boolean }
+
+    Meeting:
+      type: object
+      required: [id, title, status, created_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        scheduled_start: { type: [string, "null"], format: date-time }
+        scheduled_end: { type: [string, "null"], format: date-time }
+        livekit_room:
+          type: [string, "null"]
+          description: Null until the real-time band mints a room. Never an empty-string sentinel.
+        status: { type: string, enum: [scheduled, live, ended, cancelled] }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      # org_id is deliberately ABSENT from the wire representation.
+
+    MeetingCreate:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 500 }
+        scheduled_start: { type: [string, "null"], format: date-time }
+        scheduled_end: { type: [string, "null"], format: date-time }
+        participant_user_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    MeetingUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 500 }
+        scheduled_start: { type: [string, "null"], format: date-time }
+        scheduled_end: { type: [string, "null"], format: date-time }
+        status: { type: string, enum: [scheduled, live, ended, cancelled] }
+
+    Team:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        department_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+
+    Department:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        parent_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+
+  responses:
+    BadRequest:
+      description: Malformed request or bad cursor
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: Missing, expired, or invalid JWT, or no active organization in the token
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: Authenticated but the RBAC tier does not permit this route
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: |
+        Resource absent OR belonging to another tenant. These are deliberately
+        indistinguishable: existence is tenant-confidential.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: Idempotency-Key replayed with a different body, or a concurrent edit
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    ValidationFailed:
+      description: Validation failed; errors[] is populated
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }

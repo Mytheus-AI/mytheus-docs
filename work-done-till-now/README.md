@@ -20,6 +20,7 @@ This exists because progress was previously scattered across four repos in three
 |---|---|
 | `00-status-overview.md` | Program status at a glance: the band-by-repo matrix, the repo inventory, and the live gap list. |
 | `01-plan-0-scaffold-and-contracts.md` | Plan 0 (`plan/plan-0-scaffold-and-contracts.md`): what landed per repo, the Definition-of-Done audit, and the four open gaps. |
+| `02-plan-1-2-foundation-and-tenancy.md` | Plan 1-2 (`plan/plan-1-2-foundation-and-tenancy.md`): P1 complete (canon amendments plus the design pack), P2 not started, the `organizations` RLS decision, and fifteen open gaps. |
 
 ## How to write a band file
 

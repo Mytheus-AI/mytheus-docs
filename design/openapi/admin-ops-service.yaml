@@ -1,0 +1,200 @@
+openapi: 3.1.0
+
+# P1 design artifact (Plan 1-2 section 3.1 step 4). Frozen contract for admin-ops-service.
+# Only the audit_logs surface lands in this band; the tenant-admin and internal-ops
+# consoles are later bands.
+# Authority: _canon/02-data-model.md (audit_logs), 11-security-architecture.md section 8.3.
+
+info:
+  title: admin-ops-service
+  version: 1.0.0
+  description: |
+    Tenant-admin and internal-ops surface. In Plan 1-2 it owns exactly one thing:
+    `audit_logs`, stood up at P2 rather than P13 so that RLS and authorization events are
+    recorded from the moment RLS goes live.
+
+    `audit_logs` is APPEND-ONLY for the request path: `UPDATE` and `DELETE` are revoked
+    from `mytheus_app`, so there is no write-back API and never will be. It is range-
+    partitioned monthly by `occurred_at`.
+
+    Scope note on the word "tamper-evident". Revoking `UPDATE` and `DELETE` from
+    `mytheus_app` makes the table append-only FOR THE REQUEST PATH. It does not make it
+    tamper-EVIDENT: `mytheus_admin` owns the table and can still modify it or drop a
+    partition. Genuine tamper-evidence needs a per-row hash chain or write-once export to
+    `nexus-audit-archive`, neither of which is built in this band. The claim is scoped
+    here deliberately rather than overstated.
+
+servers:
+  - url: https://api.mytheus.ai
+    description: Production, behind api-gateway
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: audit
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      tags: [audit]
+      security: []   # authz: public
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  service: { type: string }
+
+  /api/v1/audit-logs:
+    get:
+      operationId: listAuditLogs
+      summary: Read the tenant's audit trail
+      description: |
+        Requires the `admin` or `owner` RBAC tier. A `member` receives `403 FORBIDDEN_ROLE`,
+        and that denial itself writes an `authz.deny` row into this same table.
+
+        Read-only by design. There is no POST, PATCH, or DELETE on this resource in this or
+        any future band; services append through the shared `libs/shared/audit.py` helper
+        inside their own transaction, never over HTTP.
+      tags: [audit]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque base64 keyset cursor over (occurred_at, id).
+          schema: { type: string }
+        - name: action
+          in: query
+          required: false
+          description: Exact-match filter, for example `meeting.created` or `authz.deny`.
+          schema: { type: string }
+        - name: actor_type
+          in: query
+          required: false
+          schema: { type: string, enum: [user, agent, system] }
+        - name: from
+          in: query
+          required: false
+          description: Lower bound on occurred_at, inclusive. Prunes partitions.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          description: Upper bound on occurred_at, exclusive.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: A page of audit rows, newest first, with id as tiebreaker
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditLog" }
+                  page: { $ref: "#/components/schemas/PageMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Clerk RS256 session JWT, re-verified in the service tier.
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        detail: { type: string }
+        instance: { type: string }
+        trace_id: { type: string }
+
+    ErrorCode:
+      type: string
+      enum:
+        - MALFORMED_BODY
+        - INVALID_CURSOR
+        - AUTH_REQUIRED
+        - TOKEN_EXPIRED
+        - FORBIDDEN_ROLE
+        - CROSS_TENANT_DENIED
+        - NOT_FOUND
+        - IDEMPOTENCY_KEY_REUSED
+        - VERSION_CONFLICT
+        - VALIDATION_FAILED
+        - RATE_LIMITED
+        - QUOTA_EXCEEDED
+        - INTERNAL
+        - DEPENDENCY_UNAVAILABLE
+
+    PageMeta:
+      type: object
+      required: [limit, has_more]
+      properties:
+        limit: { type: integer }
+        next_cursor: { type: [string, "null"] }
+        has_more: { type: boolean }
+
+    AuditLog:
+      type: object
+      required: [id, actor_type, action, occurred_at]
+      properties:
+        id: { type: string, format: uuid }
+        actor_id:
+          type: [string, "null"]
+          format: uuid
+          description: Null for system actors.
+        actor_type: { type: string, enum: [user, agent, system] }
+        action:
+          type: string
+          description: |
+            Dotted verb. Seeded in this band with `org.provisioned`, `user.synced`,
+            `meeting.created`, `meeting.updated`, and `authz.deny`.
+        target_type: { type: [string, "null"] }
+        target_id: { type: [string, "null"] }
+        metadata:
+          type: object
+          description: Free-form context. Must never contain secrets, tokens, or T4 content.
+        ip: { type: [string, "null"] }
+        occurred_at: { type: string, format: date-time }
+
+  responses:
+    BadRequest:
+      description: Malformed request or bad cursor
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: Missing, expired, or invalid JWT, or no active organization in the token
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: |
+        Authenticated but the RBAC tier does not permit audit-log read. Writes an
+        `authz.deny` row into this same table.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }

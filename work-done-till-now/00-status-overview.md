@@ -1,6 +1,6 @@
 # 00 Status Overview
 
-Program state as of 2026-07-23. Scope: all eight repos in the Mytheus (NEXUS) program.
+Program state as of 2026-07-27. Scope: all eight repos in the Mytheus (NEXUS) program.
 
 ## Decisions resolved 2026-07-23
 
@@ -19,7 +19,7 @@ Also settled: **`web-app` = `mytheus-ui`**, canon unchanged. `mytheus-web` is a 
 | Band | Plan file | Status | Note |
 |---|---|---|---|
 | Plan 0 Scaffold | [plan-0-scaffold-and-contracts.md](../plan/plan-0-scaffold-and-contracts.md) | **DONE WITH GAPS** | Backend, events, intelligence, realtime, **platform** complete. UI and mobile incomplete, both deliberately. See [01-plan-0-scaffold-and-contracts.md](01-plan-0-scaffold-and-contracts.md). |
-| Plan 1-2 Foundation and Tenancy | [plan-1-2-foundation-and-tenancy.md](../plan/plan-1-2-foundation-and-tenancy.md) | **NOT STARTED** (partially pre-empted) | Plan 0 already landed several P2 items early: the Clerk revert, RLS `FORCE` on 11 tables, the outbox relay, gRPC `GetUserContext`. Section "Plan 1-2 pre-empted work" below. |
+| Plan 1-2 Foundation and Tenancy | [plan-1-2-foundation-and-tenancy.md](../plan/plan-1-2-foundation-and-tenancy.md) | **IN PROGRESS. P1 COMPLETE, P2 NOT STARTED.** | P1 landed 2026-07-27: canon amendments plus the seventeen-file design pack. **No code written.** Plan 0 also pre-empted several P2 items: the Clerk revert, RLS `FORCE` on 11 tables, the outbox relay, gRPC `GetUserContext`. See [02-plan-1-2-foundation-and-tenancy.md](02-plan-1-2-foundation-and-tenancy.md) and the section "Plan 1-2 pre-empted work" below. |
 | Plan 3-4 Meeting and Transcription | [plan-3-4-meeting-and-transcription.md](../plan/plan-3-4-meeting-and-transcription.md) | NOT STARTED | |
 | Plan 5-6 Org Context and AI Infra | [plan-5-6-org-context-and-ai-infra.md](../plan/plan-5-6-org-context-and-ai-infra.md) | NOT STARTED | |
 | Plan 7-9 Agents and Monetization | [plan-7-9-agents-and-monetization.md](../plan/plan-7-9-agents-and-monetization.md) | NOT STARTED | |
@@ -56,6 +56,20 @@ Plan 1-2 section 1 states its entry preconditions assuming Plan 0 left "zero DDL
 | 3.4 step 5 gRPC `GetUserContext` | Done as a stub. `services/identity_tenant_service/grpc_server.py` reads `org_id` from gRPC metadata, fails closed with `UNAUTHENTICATED`, sets `app.current_org`, returns a typed context with a default tier. |
 | 3.5 step 3 outbox relay | Done. `libs/shared/relay.py` (`FOR UPDATE SKIP LOCKED`, flush-then-mark) plus `services/relay/main.py` (confluent-kafka Avro producer, `acks=all`, idempotent). |
 | 3.6 `meetings` / `meeting_participants` tables | Tables exist as P2 stubs with RLS. No CRUD routes. |
+
+## Blocking defects, found 2026-07-27
+
+These are defects in code that already exists, each confirmed by reading the named source. **None appears in any plan file.** They are the first work of Plan 1-2 P2, ahead of any feature, because until they are fixed nothing in the program can be honestly verified. Full detail in [02-plan-1-2-foundation-and-tenancy.md](02-plan-1-2-foundation-and-tenancy.md) section 5 and [threat-model/stride.md](../threat-model/stride.md) section 5.
+
+| # | Defect | Consequence |
+|---|---|---|
+| D1 | **The application connects to PostgreSQL as the superuser** in every environment, including the deployed one. All `env/*.env.example` files use `postgres:`, and `compose.prod.yml` shares one `env_file` across `migrate`, `web`, `relay`, and `workflow`. | Superusers bypass RLS unconditionally, so the entire fail-closed foundation is inert. Every check that claims to prove isolation proves it only for `app_rls`, a role the application never uses. |
+| D2 | **`libs/shared/idempotency.py` is not tenant-namespaced.** It keys the response cache on the client-supplied `Idempotency-Key` header alone, on all nine services. | A live cross-tenant leak of full response bodies that never touches the database, so RLS cannot mitigate it. Also violates the frozen `nexus:{org_id}:` prefix. |
+| D3 | **`grpc_server.py` fails open.** A bare `except Exception` returns a well-formed context echoing the caller's asserted `org_id` with a default tier. | Becomes "database unreachable therefore grant access" the moment it reads `rbac_grants`. |
+| D4 | **The outbox relay will drain nothing, silently**, once correct roles are wired: it queries `outbox` with no `app.current_org` set, the fail-closed policy returns zero rows, and `run()` reads that as an empty queue. | Total event loss with no error, no log, and no metric distinguishing it from idle. Same root cause as D1. |
+| D5 | **One poison outbox row crash-loops the relay forever.** No per-row error handling, `attempts` never written, no produce-side DLQ. | Head-of-line block across every tenant. |
+| D6 | **Seven tenant tables have no foreign key to `organizations`**, because `TenantMixin` adds the column without one. | Orphan `org_id` values are insertable, so right-to-be-forgotten by `org_id` cannot be trusted to find everything. |
+| D7 | **`docker-compose.yml` publishes 5432 and 6379; `tests/conftest.py` expects 5433 and 6380.** | Every database test skips silently and reports green. The Plan 0 record's "`make ci` green" is reported, not observed, and was almost certainly skipping. |
 
 ## Live gap list
 

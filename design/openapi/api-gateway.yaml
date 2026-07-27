@@ -1,0 +1,161 @@
+openapi: 3.1.0
+
+# P1 design artifact (Plan 1-2 section 3.1 step 4). The api-gateway aggregate contract.
+# Authority: 19-api-architecture.md, ADR-0010 (the two JWT verification points),
+# _canon/01-service-catalog.md section 6 (routing table).
+
+info:
+  title: api-gateway
+  version: 1.0.0
+  description: |
+    The single public ingress. It owns NO data and NO business logic, so this document is
+    not a resource contract. It is the aggregate edge contract: the security scheme every
+    downstream route inherits, the error shapes the edge itself emits, and the routing map.
+
+    ## What the gateway does, in order
+
+    1. Terminate TLS, apply the per-tenant rate limit.
+    2. Verify the Clerk JWT against cached JWKS: signature, `exp`, `nbf`, `iss`. Reject
+       malformed or expired with `401` before any service worker is touched. A JWKS
+       outage fails CLOSED with `401`, never `500`.
+    3. Extract the tenant claim. It is CLERK's native organization id, an opaque `org_...`
+       string, NOT our `org_id` and NOT a UUID.
+    4. Resolve it to our `org_id` through `organizations.clerk_org_id`. This resolution IS
+       the authorization checkpoint: org exists, `status` is not `suspended`, `deleted_at`
+       is null. Redis caches the mapping only, never the verdict.
+    5. Attach `org_id` and the Clerk user id as SIGNED internal headers.
+    6. Route to `bff` for screen-shaped reads, or to the owning service by prefix.
+
+    ## What the gateway does NOT do
+
+    It does not delegate trust. The service tier RE-VERIFIES the JWT and re-resolves the
+    RBAC tier. The gateway is a DDoS shield. A forged internal header must not bypass auth.
+
+    ## The claim-absent state
+
+    Clerk emits the organization claim ONLY when the session has an active organization. A
+    user with no active org, or one mid-switch between orgs, has no claim. That is an
+    explicit state returning `401 AUTH_REQUIRED` with an RFC 7807 body. It is never a
+    `500`, and it is never treated as "no tenant, allow through".
+
+    Unknown organization, suspended organization, and soft-deleted organization all return
+    the SAME byte-identical `401`. Distinguishing them would make the edge an existence
+    oracle over the customer base.
+
+servers:
+  - url: https://api.mytheus.ai
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: edge
+
+paths:
+  /healthz:
+    get:
+      operationId: gatewayHealthz
+      summary: Liveness probe
+      tags: [edge]
+      security: []   # authz: public
+      responses:
+        "200":
+          description: Gateway is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  service: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Clerk RS256 session JWT. Verified twice: pre-validated here against cached JWKS,
+        re-verified in the owning service.
+
+  headers:
+    XMytheusOrg:
+      description: |
+        INTERNAL ONLY. The resolved `org_id`, signed by the gateway. Never accepted from a
+        client; the gateway strips any inbound copy. The receiving service verifies the
+        signature before trusting it.
+      schema: { type: string }
+    XMytheusUser:
+      description: INTERNAL ONLY. The Clerk user id, signed by the gateway.
+      schema: { type: string }
+    RetryAfter:
+      description: Seconds to wait. Always present on 429 and 503.
+      schema: { type: integer }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        detail: { type: string }
+        instance: { type: string }
+        trace_id:
+          type: string
+          description: W3C trace context id. The handle support uses to find the request.
+
+    ErrorCode:
+      type: string
+      description: |
+        The frozen program-wide enum. Every service emits from this list and no other.
+        Never change a published value; add, never repurpose.
+      enum:
+        - MALFORMED_BODY
+        - INVALID_CURSOR
+        - AUTH_REQUIRED
+        - TOKEN_EXPIRED
+        - FORBIDDEN_ROLE
+        - CROSS_TENANT_DENIED
+        - NOT_FOUND
+        - IDEMPOTENCY_KEY_REUSED
+        - VERSION_CONFLICT
+        - VALIDATION_FAILED
+        - RATE_LIMITED
+        - QUOTA_EXCEEDED
+        - INTERNAL
+        - DEPENDENCY_UNAVAILABLE
+        - NOT_IMPLEMENTED
+
+  responses:
+    Unauthorized:
+      description: |
+        No token, malformed token, expired token, JWKS unreachable, no active organization
+        in the token, or the organization did not resolve. All identical to the caller.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    RateLimited:
+      description: Per-tenant or global rate limit
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  # Routing map, per _canon/01-service-catalog.md section 6. No two services share a prefix.
+  # x-mytheus-routes is documentation, not an OpenAPI construct.
+  x-mytheus-routes:
+    - { prefix: /bff/*, service: bff, note: "screen-shaped reads only, no mutations" }
+    - { prefix: /api/v1/meetings, service: core-api }
+    - { prefix: /api/v1/teams, service: core-api }
+    - { prefix: /api/v1/departments, service: core-api }
+    - { prefix: /api/v1/orgs, service: identity-tenant-service, note: "deferred, returns 501" }
+    - { prefix: /api/v1/context, service: identity-tenant-service }
+    - { prefix: /api/v1/rbac, service: identity-tenant-service }
+    - { prefix: /scim/v2, service: identity-tenant-service, note: "deferred, returns 501" }
+    - { prefix: /clerk/webhook, service: identity-tenant-service, note: "public, Svix-verified" }
+    - { prefix: /api/v1/audit-logs, service: admin-ops-service }
