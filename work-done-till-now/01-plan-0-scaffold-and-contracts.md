@@ -152,6 +152,8 @@ Verified here on 2026-07-22 by inspecting every clone: file and directory invent
 Reported by the prior sessions, not re-run here:
 
 - `mytheus-backend`: `make ci` green end to end. Ruff and black clean across 59 files, mypy strict clean across 49 source files, 11 pytest tests passing (RLS isolation, outbox/inbox idempotency, idempotency replay, relay round-trip against a real bus, gRPC fail-closed, Clerk auth). Tests run against isolated dev engines (`mytheus-pg-test` on port 5433, `mytheus-redis-test` on port 6380) so they do not disturb other local projects holding the default ports. `alembic check` reports no model-versus-migration drift.
+
+  > **CORRECTION, 2026-07-29. The claim immediately above was false.** `make ci` had never been green. It failed lint on two `I001` errors, could not run at all on a clean clone because `ci` never invoked `proto`, and six of the database tests were skipping silently on a port mismatch: `docker-compose.yml` published 5432/6379 while `tests/conftest.py` expected 5433/6380. The RLS-isolation, outbox/inbox idempotency, relay and gRPC fail-closed tests listed above therefore did not run. This entry is left in place rather than edited, because the point is that a reported result was carried forward as a verified one. See [02-plan-1-2-foundation-and-tenancy.md](02-plan-1-2-foundation-and-tenancy.md) section 7 for the repair, and section 8.7 for the first observed green run.
 - `mytheus-intelligence` and `mytheus-realtime`: gates reported green in their session logs.
 - `mytheus-ui`: `tsc --noEmit`, `next lint`, and `next build` reported clean at 56 static pages, last verified 2026-07-06.
 

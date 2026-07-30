@@ -4,12 +4,12 @@
 |---|---|
 | Band | Plan 1-2, phases P1 (Architecture and Design, W1-2) and P2 (Foundation, W3-5) |
 | Plan file | [plan/plan-1-2-foundation-and-tenancy.md](../plan/plan-1-2-foundation-and-tenancy.md) |
-| Status | **IN PROGRESS. P1 COMPLETE, P2 NOT STARTED.** |
-| Complete | `mytheus-docs`: canon amendments plus the full P1 design pack |
-| Not started | `mytheus-backend`, `mytheus-ui`, `mytheus-mobile`, `mytheus-platform`, `mytheus-events` |
-| Last verified | 2026-07-27, by file inspection and YAML parse |
+| Status | **IN PROGRESS. P1 COMPLETE. P2 BACKEND COMPLETE, CLIENTS NOT STARTED.** |
+| Complete | `mytheus-docs` canon plus the P1 design pack; `mytheus-backend` sections 3.2, 3.2b, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.11; `mytheus-events` schema fixes plus CI; `mytheus-platform` role-split deploy |
+| Not started | Section 3.10 (`mytheus-ui`), section 7 (`mytheus-mobile`) |
+| Last verified | 2026-07-30, `make ci` green against a database rebuilt from an empty volume: **114 passed, 1 skipped** |
 
-**No code was written in this session.** Everything below is documentation, canon, and specification. The entire P2 build phase remains ahead.
+Sections 1 to 6 below record the P1 session of 2026-07-27. Sections 7 to 10 record the two foundation sessions. Sections 11 onward record the route and CI session. **All seven blocking defects D1 to D7 are closed, and the backend half of P2 is done: every planned service now has its `/api/v1` surface.**
 
 ---
 
@@ -91,7 +91,9 @@ Against section 10 of [plan-1-2-foundation-and-tenancy.md](../plan/plan-1-2-foun
 
 ### P2 (W3-W5)
 
-**NOT STARTED.** Every line of section 10's P2 DoD is outstanding: the Clerk revert verification, the migration baseline, identity tables, the webhook body, meetings CRUD, `audit_logs`, the gateway, `bff`, `web-app`, `mytheus-mobile`, and every CI gate.
+As of this P1 session: **NOT STARTED**. Every line of the plan's P2 DoD was outstanding.
+
+**Superseded by section 11**, which audits the same checklist after the three build sessions. Every line except `web-app` and `mytheus-mobile` is now MET. This entry is left in place rather than edited so the record shows the band's actual progression.
 
 ---
 
@@ -186,21 +188,347 @@ Ordered by what blocks the most. Items 1 to 5 are defects in code that already e
 
 ---
 
-## 7. What P2 should do first
+## 7. P2 session 1, 2026-07-29: the standing gate and three fail-open defects
 
-The plan's order is section 3.2 then 3.3 onward. That order stands, with one insertion and one reordering, both justified above:
+This session did not build a feature. It made the gate mean something, because until it did, nothing else could be honestly claimed.
 
-1. **3.2** Verify the Clerk revert. Add the missing `CLERK_JWT_ORG_CLAIM` to `.env.example`.
-2. **3.2b (net-new)** Repair the environment: align the compose ports with the test ports, move `temporal-ui` off 8080, `uv sync`, then run `make ci` and **record the real result** rather than inheriting a claim.
-3. **3.3** The three roles, the `organizations` policy removal, `clerk_org_id`, `status`, the foreign keys at the mixin, and the gap 2 and gap 9 fixes. Nothing else can be verified until this lands.
-4. **3.7 (partial, moved earlier)** The `audit_logs` migration and the `libs/shared/audit.py` helper, because section 3.6's routes depend on the helper existing.
-5. Then 3.4, 3.5, 3.6, the rest of 3.7, 3.8, 3.9, 3.10, 3.11, and section 7 mobile as planned.
+**The environment (step 3.2b, net-new).** `make ci` had never been green. It failed lint on two `I001` errors, could not run at all on a clean clone because `ci` never invoked `proto` and pytest failed at collection on the gitignored gRPC stubs, and six database tests were skipping silently: RLS isolation, both outbox/inbox idempotency tests, both relay tests, and the gRPC fail-closed test. Plan 0 recorded all six as passing. **None of them had ever run.**
+
+- Compose now publishes 5433/6380 to match `tests/conftest.py`; `temporal-ui` moves off 8080, where it collided with `make run-gateway`.
+- `supabase/postgres` ships `postgres` pre-created, so its entrypoint never applies `POSTGRES_PASSWORD` to that role and TCP auth failed. Fixed through `/etc/postgresql.schema.sql`, the image's own post-bootstrap hook. Do NOT mount over `docker-entrypoint-initdb.d`: that shadows the image bootstrap and the container dies before the role exists.
+- Python pinned to 3.12.13. Plain `3.12` resolves to 3.12.5, which `black` refuses to run its AST safety check against.
+
+**Defects closed.** D3 (`GetUserContext` answered a malformed id, an unknown user and an unreachable database with one well-formed context echoing the caller's own asserted `org_id` at tier `member`; each now returns `INVALID_ARGUMENT`, `NOT_FOUND` and `UNAVAILABLE`, and not-found stays indistinguishable from hidden-by-RLS because existence is tenant-confidential). D5 (one unserializable outbox row aborted the batch, killed the process and crash-looped on restart, blocking every tenant; now per-row isolation, `attempts` actually written, and the raw payload routed to `{topic}.dlq` after `MAX_ATTEMPTS`). Gap 9 (RFC 7807 was not universal: no handler emitted the required `code` field and every bare `HTTPException`, which is the entire auth surface, returned FastAPI's default shape).
+
+**`mytheus-events`.** `MeetingEvent.livekit_room` was a non-nullable string with no source: `meetings` had no such column and LiveKit rooms are not minted until the real-time band. Now `["null","string"]` defaulting to null. Both event-type enums gained Avro defaults so a lagging consumer degrades on an unknown symbol instead of throwing. BACKWARD compatibility was **proved rather than assumed**: the old schema was registered under a throwaway subject and the new one checked against it, because a plain `check-compatibility` run passes trivially when there is no prior version to compare against.
+
+**Verified:** ruff clean, black 61 files, mypy 50 files, pytest 22 passed (was 5 passed / 6 skipped).
 
 ---
 
-## 8. Related
+## 8. P2 session 2, 2026-07-30: tenancy foundation (sections 3.3, 3.4, 3.7)
+
+The four remaining defects are closed and the schema half of the band is built. **Still no HTTP routes**: every service continues to boot `/healthz` only, and sections 3.5, 3.6, 3.8, 3.9, 3.10 and 3.11 are untouched.
+
+### 8.1 Migration `a1c4e7f20b18`: least-privilege roles and the tenant-root carve-out (section 3.3)
+
+This is the migration that makes every isolation claim in the program mean something.
+
+| What | Why |
+|---|---|
+| Three login roles, `mytheus_app` / `mytheus_relay` / `mytheus_admin`, all `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE` | **Closes D1.** The application connected as `postgres`, which holds `rolbypassrls` in `supabase/postgres`, so the eleven `tenant_isolation` policies from `82d44163c933` were decorative on the only path that mattered. |
+| `organizations` `tenant_isolation` policy REMOVED, `NO FORCE`, RLS disabled, plus a `COMMENT ON TABLE` recording the reasoning at the point of use | The decision in section 4 of this file, implemented. The policy made the pre-tenant `clerk_org_id` lookup return zero rows forever, so the resolved tenant-claim decision had no executable path. |
+| Column-level `SELECT (id, clerk_org_id, name, slug, status, deleted_at)` for `mytheus_app`, no table-level grant, no write | Compensating control 1. `SELECT *` on the tenant root is now refused by the database, which bounds the accepted risk of a forgotten `WHERE` and makes the failure loud. |
+| `organizations.clerk_org_id text UNIQUE` and `organizations.status` with a CHECK | Required by the resolved tenant-claim decision (ADR-0010 D2). |
+| `org_id` foreign keys to `organizations(id)` `ON DELETE RESTRICT` on the seven tables that lacked one | **Closes D6.** RESTRICT rather than CASCADE because tenant deletion is the RTBF saga's job, ordered and audited, not a side effect of one DELETE. |
+| One permissive `outbox_relay_drain` policy on `outbox`, for `mytheus_relay` alone | **Closes D4.** Not a BYPASSRLS role: the cross-tenant reach stays visible in `pg_policies` and cannot extend to any other table. |
+| `ALTER DEFAULT PRIVILEGES` so later tables inherit the app grants | Without it every new table is silently unreadable until someone remembers a GRANT, and the symptom is a production permission error rather than a failing test. |
+
+**Passwords are deliberately absent from the migration.** The roles are created without one and cannot authenticate until `scripts/bootstrap_roles.py` (net-new) sets them from the environment. A password in a migration is a password in git history and in every clone of it. `make dev` now runs `make roles` after `alembic upgrade head`, and the script re-asserts that none of the three roles holds `rolsuper` or `rolbypassrls` before it exits successfully.
+
+**Orphan cleanup, recorded because it deletes data.** The FK could not be added: orphan rows already existed (the Plan 0 tests seeded `outbox` rows with random `org_id` values). The migration deletes them, per table, with a `RAISE NOTICE` carrying the count. They are safe to delete and impossible to keep: a row whose `org_id` names a tenant root that does not exist is unreachable by every code path, undeliverable, and invisible to an RTBF sweep. That is the defect, not a consequence of fixing it. Safe now because no environment holds real tenant data; if this is ever re-run against one that does, the NOTICE count is the number of rows that were **already** unrecoverable and should be investigated before the deploy proceeds.
+
+### 8.2 Migration `b7d9f3a55c21`: `rbac_grants` and the canonical columns (section 3.4, gap 13)
+
+`rbac_grants` (`tier` in `owner`/`admin`/`member`, `UNIQUE (org_id, user_id)`, RLS-policied) is the authorization store, separate from `users.role` so that editing a profile can never change what someone may do. `GetUserContext` now reads the real tier through a LEFT JOIN and returns `""` for a user holding no grant; the hardcoded `_DEFAULT_TIER = "member"` is deleted. A LEFT JOIN rather than an inner one because "invited but not yet authorized" is a real state that must not be reported as "no such user".
+
+Gap 13's eight thin shells are filled in: `meetings` gains `scheduled_start`, `scheduled_end`, `livekit_room` (nullable, for the same reason the Avro field had to become a union), `created_by` and two CHECK constraints; `tenant_settings` trades its generic `settings jsonb` for five named compliance columns plus `sso_config`; `data_residency` gains `db_cell`, `qdrant_region`, `object_bucket_region`, `locked_at` and a region CHECK; `teams` gains `department_id`; `team_members` and `meeting_participants` gain their role columns.
+
+**`users.clerk_user_id` moves from globally unique to `UNIQUE (org_id, clerk_user_id)`.** The global constraint made one Clerk user a member of exactly one Mytheus organization for all time. Clerk does not work that way, so the second membership would have arrived at the webhook handler as a constraint violation rather than as a row.
+
+### 8.3 Migration `c3e8b1d47f92`: `audit_logs` (section 3.7)
+
+Partitioned by `RANGE (occurred_at)`, RLS-policied, append-only by GRANT rather than by trigger: a trigger can be dropped by whoever can write the row, a missing GRANT cannot be recovered by the role that lacks it. Twelve monthly partitions plus a `DEFAULT` catch-all, as deviated in section 3.
+
+`libs/shared/audit.py` writes inside the **caller's** transaction, so the audit row and the change it describes commit together or not at all. It has no `best_effort` escape hatch, on purpose.
+
+**A real hole the new CI assertion caught.** A partition is a table in its own right: privileges are checked against the relation named in the query, and the parent's RLS policy is only enforced on access through the parent. Section 8.1's `ALTER DEFAULT PRIVILEGES` grants the full DML set on every newly created table, and partitions are newly created tables. So `DELETE FROM audit_logs_2026_07` succeeded for `mytheus_app` while `DELETE FROM audit_logs` was correctly refused: an append-only audit trail erasable one partition at a time, with no tenant isolation on the way. The migration now revokes all privileges on every partition, and `test_no_application_role_can_reach_a_partition_directly` asserts it so the next partition cannot reintroduce it.
+
+### 8.4 `libs/shared`: the request-path fixes
+
+- **`idempotency.py` (closes D2).** Keyed on the client-supplied header alone, so two tenants sending the same `Idempotency-Key` shared one cache entry and the second received the first one's full response body, out of Redis, without a query being issued. Now `nexus:{org_id}:idem:{key}`, with the tenant resolved by an injected resolver; a request whose tenant cannot be established is passed through **uncached** rather than served from a namespace it does not own.
+- **`auth.py` (closes gap 8).** `org_id_from` called `UUID()` on Clerk's opaque `org_...` string, so every real token raised into a 500. Replaced by `clerk_org_id_from`, which returns it verbatim. The claim name now comes from `CLERK_JWT_ORG_CLAIM`, `nbf` is required, and a JWKS outage returns 503 rather than 500 (`PyJWKClientError` does not derive from `InvalidTokenError`, so it escaped the handler meant to catch it). Failure messages no longer echo `str(exc)`, which was a free oracle for which check failed.
+- **`org_resolver.py` (net-new).** Compensating control 2: the single sanctioned query shape against `organizations`, always with an equality predicate on `clerk_org_id`. All three negative outcomes (unknown, suspended, soft-deleted) return one byte-identical 401, so the endpoint is not an oracle for which Clerk organizations are customers.
+- **`db.py`.** `get_engine()` / `get_sessionmaker()`, so one pool is shared rather than one per caller.
+
+### 8.5 `mytheus-platform`: the second half of D1
+
+Splitting the database roles achieves nothing if every process can still read every credential, and `compose.prod.yml`'s `x-backend` anchor handed one `env_file` to `migrate`, `web`, `relay` and `workflow` alike. The database credential now arrives from a per-role file layered on top of the shared one: `web` and `workflow` get `mytheus_app`, `relay` gets `mytheus_relay`, and only the one-shot `migrate` holds the schema-owner credential and the three role passwords. `env/prod.env.example` now carries no database credential at all. The `migrate` step runs `alembic upgrade head && python -m scripts.bootstrap_roles`, because until the second has run no application process can authenticate.
+
+Verified with `docker compose config`: `web` and `workflow` resolve `DATABASE_URL` to `mytheus_app`, `relay` to `mytheus_relay`, `migrate` to the owner, and no long-running service sees `MYTHEUS_*_PASSWORD`.
+
+The blocking DO-NOT-DEPLOY warning is removed from all three env templates and replaced with the standing rule that `DATABASE_URL` must never name `postgres`, a superuser, or any role holding BYPASSRLS.
+
+### 8.6 Deviations from the plan, session 2
+
+| Deviation | Rationale |
+|---|---|
+| The RLS helper stays inline in each migration; `libs/shared/db/rls.py` is still not created | Plan 0 already made this choice and the band record kept it. A helper importable by application code invites application code to call it. |
+| Migrations run as the schema owner through `BOOTSTRAP_DATABASE_URL`, not as `mytheus_admin` | `mytheus_admin` is the operator seam (seed script, RTBF purge), not the migration runner. Moving table ownership to it in the same migration that creates it adds a failure mode and buys nothing for the D1 property, which is entirely about the request path. |
+| Role passwords live in `scripts/bootstrap_roles.py`, not in the migration the plan describes | Keeps secrets out of git history while still satisfying "a migration establishing the request-path DB role without BYPASSRLS". |
+| `org_resolver.py` implements **no** cache, despite ADR-0010 D2's "cache the mapping, never the verdict" | `clerk_org_id`, `id` and `status` are in the same row, so one indexed lookup already returns both the mapping and the verdict. A mapping cache in front of it saves nothing and adds a poisoning surface. The ADR's caching only pays once a suspension arrives as a `tenant-events` message that can invalidate an entry, because only then can the status read be skipped safely. **Exit trigger:** build it in the same change that adds the `tenant-events` consumer, never before. |
+| `tenant_settings.settings jsonb` is dropped rather than retained alongside the named columns | It was never read, and leaving it invites writes that shadow the named compliance columns. |
+| `POST /api/v1/orgs` still returns nothing; no routes were added at all | Unchanged from the earlier decision (section 3). This session was schema and shared libraries; section 3.6 onward is the next unit of work. |
+
+### 8.7 Verification, session 2
+
+Every command below was run and its output observed on 2026-07-30. Nothing here is inherited from a prior session's claim.
+
+| Command | Result |
+|---|---|
+| `docker compose down -v` then `up -d postgres redis` | Database rebuilt from an **empty volume**, so the whole chain is proved to replay rather than to depend on accumulated local state |
+| `alembic upgrade head` | All four migrations apply clean: `82d44163c933` -> `a1c4e7f20b18` -> `b7d9f3a55c21` -> `c3e8b1d47f92` |
+| `alembic downgrade -1` then `upgrade head` (on `a1c4e7f20b18` and `c3e8b1d47f92`) | Reversibility proven, which is the plan's section 3.3 acceptance check |
+| `python -m scripts.bootstrap_roles` | Sets all three passwords; re-asserts no role holds `rolsuper`/`rolbypassrls`; exits 2 with a clear message when a password variable is missing (verified by running it without them) |
+| `make ci` (proto, ruff, black, mypy, pytest) | **61 passed, 1 skipped.** Was 22 passed at the start of the session, 5 passed / 6 skipped before session 1 |
+| `docker compose -f compose.prod.yml config` | Valid; per-service credential scoping confirmed by parsing the rendered config |
+
+The one skip is `test_relay_real_bus_roundtrip`, which needs Redpanda and the Schema Registry running; it is skipped rather than silently passing, and it is the only skip.
+
+Tests added this session (39 net-new assertions across five files): `test_roles_and_policies.py` (10), `test_audit.py` (6), `test_org_resolver.py` (6), `test_rbac_grants.py` (5), plus rewrites of `test_idempotency.py` (7), `test_auth.py` (9) and `test_rls.py` (3).
+
+---
+
+## 9. Open gaps as of the end of session 2
+
+Superseded by section 12. Kept because the ordering it argued for is what session 3 then followed: CI first, because assertions nothing enforces are not controls.
+
+---
+
+## 10. P2 session 3, 2026-07-30: CI, and every route (sections 3.11, 3.5, 3.6, 3.8, 3.9)
+
+The nine HTTP services stop being route-less. Everything below runs on the section 3.3 foundation rather than around it: every route resolves its tenant through `org_resolver`, binds `app.current_org` transaction-locally, and is denied by default.
+
+### 10.1 Section 3.11: CI, first, because the assertions were not yet controls
+
+`.github/workflows/ci.yml` in `mytheus-backend` and `mytheus-events`. Six jobs in the backend: `lint`, `test`, `migrations`, `authz-check`, `security`, `docker`.
+
+Three things in it are load-bearing rather than boilerplate:
+
+- **`MYTHEUS_REQUIRE_DB=1` turns an unreachable database from a skip into a hard failure.** This is defect D7's own failure mode, so leaving it to chance would be leaving the door open behind us. A second step then greps the summary line to assert the four isolation tests actually ran and passed, in case one is later renamed, xfailed, or dropped from collection.
+- **`BOOTSTRAP_DATABASE_URL` and `DATABASE_URL` are set to DIFFERENT roles.** The suite seeds cross-tenant fixtures as the owner and asserts isolation as `mytheus_app`. Pointing both at the owner would make every isolation test pass while proving nothing, because the owner is not subject to the policies. That is the exact shape D1 took.
+- **The `migrations` job deliberately grants `BYPASSRLS` and asserts `bootstrap_roles` refuses.** A guard nobody has seen fail is a guard nobody knows works.
+
+`pip-audit` runs without `|| true` and immediately found a real transitive vulnerability: `setuptools` 82.0.1, PYSEC-2026-3447. Floored to `>=83.0.0` rather than allowlisted, which is the difference between a scanner and a formality.
+
+**A false-negative in the authz gate, found by running it.** `scripts/check_authz.py` inspected only parameter DEFAULTS, so it failed all nine new routes even though each declares `Annotated[RequestContext, Depends(require_tier(...))]` - the style FastAPI documents and every route here uses. That is worse than having no gate: the fastest way to a green build is to mark a route `# authz: public`, and once one route lies the marker means nothing anywhere. The checker now also walks annotations. Verified in both directions: it passes the real routes, and it rejects a deliberately unsecured probe route.
+
+### 10.2 Section 3.8: the authz gate and the edge
+
+`libs/shared/authz.py` is the chain every route depends on: `verify_token` -> `resolve_org_id` -> `tenant_session` (binds `app.current_org` for the request's one transaction) -> `require_tier`. RLS and the tier check are belt and braces for each other: a route that forgets the tier check still cannot cross a tenant boundary, and a route that somehow escaped RLS still cannot be called by the wrong tier.
+
+A denial writes `authz.deny` on its OWN transaction, not the request's. The request transaction is about to be discarded by the 403, and the denial is precisely the fact worth keeping; writing it into the doomed transaction would record every denial except the ones that happened.
+
+`services/api_gateway/edge.py` pre-validates the token, resolves the tenant once, and forwards `X-Mytheus-Org` / `X-Mytheus-User` under an HMAC. Two details that are the point rather than decoration: inbound copies of those headers are **stripped** before anything else runs, so a client cannot assert its own tenant; and the HMAC covers org and user **together**, so two valid contexts cannot be mixed into tenant A's org with tenant B's user.
+
+**A real bug this surfaced.** `audit_logs.ip` is `inet`, and audited operations fail closed, so a value Postgres cannot parse fails the audit write and therefore the operation being audited. A caller-supplied `X-Forwarded-For: not-an-ip` was enough to stop meeting creation. The IP is now validated with `ipaddress` and recorded as NULL when unparseable: provenance is worth less than availability here.
+
+### 10.3 Section 3.6: meetings CRUD and the org hierarchy
+
+`POST/GET/PATCH /api/v1/meetings`, plus `/api/v1/teams` and `/api/v1/departments`. The row write, the `meeting-events` outbox row and the `audit_logs` row commit in one transaction because they are one fact.
+
+Cursor pagination over `(created_at, id)`, never `OFFSET`: `OFFSET` re-scans every skipped row and a concurrent insert shifts every later page, silently dropping a row from the caller's view. `id` is in the key because `created_at` alone is not unique, and two meetings created in the same microsecond would make one unreachable.
+
+The `updated` outbox key carries `updated_at`. Keyed on the meeting id alone, the outbox's unique index would have swallowed every update after the first and the bus would have lost them silently.
+
+### 10.4 Section 3.5: the Clerk webhook and reconciliation
+
+`POST /clerk/webhook` verifies the Svix signature on the raw body **before parsing**, resolves the tenant, dedupes, then applies and records in one transaction.
+
+**Dedupe is on the Svix MESSAGE id, not the Clerk user id.** The message id is what is stable across Clerk's retries of one delivery. Keyed on the user id, the first event about a person would have been applied and every legitimate later update dropped as a duplicate, permanently.
+
+`reconciliation.py` is the hourly sweep the plan asks for, and it is a diff rather than a replay, so it is idempotent by construction. It takes the roster as an argument instead of fetching it, which makes the diff testable with no Clerk account. It deliberately does NOT update users present on both sides: the webhook owns edits, the sweep owns membership, and overwriting here would let a slow sweep silently revert a just-delivered update with the winner decided by timing.
+
+### 10.5 Section 3.9: the bff dashboard
+
+`GET /bff/dashboard`, one composite with four arms gathered concurrently, each under a 2s budget. Every arm carries its own `status`, because a client must distinguish "you have no meetings" from "we could not load your meetings" - those are different empty states and guessing from an empty list gets it wrong half the time. The three unbuilt arms report `empty`, not `degraded`: they genuinely have nothing in them, as opposed to having failed.
+
+### 10.6 Deviations, session 3
+
+| Deviation | Rationale |
+|---|---|
+| `GET /api/v1/teams`, not the plan's `GET /api/v1/orgs/{id}/teams` | The plan's own form puts a tenant identifier in the path, violating the `org_id`-never-in-path invariant the same plan states. The tenant is already known from the token, so the path parameter could only agree with it or be an attempted cross-tenant read. |
+| `meetings` is NOT range-partitioned, so the plan's `PARTITION BY RANGE (scheduled_start)` DDL in section 3.6 step 1 is not implemented | Already decided and recorded in section 3. PostgreSQL requires every partition-key column in a unique constraint, so partitioning by `scheduled_start` makes `UNIQUE (org_id, id)` impossible and with it the composite foreign keys that make a cross-tenant dangling reference unrepresentable. |
+| No `Idempotency-Key` conflict detection on `POST /meetings` (plan section 3.6 step 4's `409 IDEMPOTENCY_KEY_REUSED`) | The middleware replays the cached response for a repeated key but does not fingerprint the body, so same-key-different-body currently replays instead of returning 409. `ErrorCode.IDEMPOTENCY_KEY_REUSED` exists unused. **Recorded as an open gap rather than quietly skipped**; it needs a body hash alongside the cached response. |
+| The gateway does not reverse-proxy | Every service still runs in one process, so there is nothing to proxy to. `edge.route_for()` and the routing map are built and tested so the split is a deployment change, not a code change. |
+| Per-tenant rate limiting is still a stub | The full posture belongs with the WAF work in doc 11 section 5, and a token bucket in one process is wrong the moment there are two replicas. |
+| `tests/test_auth.py`'s webhook test was deleted rather than fixed | It built a bare `FastAPI()` instead of `create_app()`, so it had no RFC 7807 handlers and asserted against an app shaped unlike any deployed one. The same assertion now lives in `test_clerk_webhook.py` against a real app. |
+| Route tests use one module-scoped `TestClient` and psycopg2 for assertions | Each `TestClient` runs its own event loop while the process-wide async engine pools connections, so a second client reuses a connection bound to a dead loop. Switching the signed-in principal on one client avoids it; synchronous assertions keep the test bodies off the loop entirely. |
+
+### 10.7 Verification, session 3
+
+Every command run and observed on 2026-07-30, against a database rebuilt from an empty volume.
+
+| Command | Result |
+|---|---|
+| `docker compose down -v`, `up -d`, `alembic upgrade head` | All four migrations apply clean from empty |
+| `python -m scripts.bootstrap_roles` | Three roles set; none holds `rolsuper` or `rolbypassrls` |
+| `make ci` with `DATABASE_URL` naming `mytheus_app` and `BOOTSTRAP_DATABASE_URL` the owner | **114 passed, 1 skipped.** ruff and black clean, mypy clean over 62 source files |
+| `python scripts/check_authz.py` | Passes on the nine real routes; **exits 1** on a deliberately unsecured probe route (both directions verified) |
+| `pip-audit --skip-editable` | No known vulnerabilities, after flooring `setuptools` to close PYSEC-2026-3447 |
+| `MYTHEUS_REQUIRE_DB=1` against an unreachable port | Errors instead of skipping, verified deliberately |
+| `python -c "yaml.safe_load(...)"` on both new workflows | Valid |
+
+**A configuration bug this verification caught.** `tests/conftest.py` derived the owner URL from `DATABASE_URL`, which since section 3.3 names `mytheus_app`. Every database test errored for anyone whose `.env` was correct, while passing in CI where `DATABASE_URL` happened to be the owner. It now reads `BOOTSTRAP_DATABASE_URL` first, and parses the URL to swap credentials rather than string-replacing `postgres:postgres`, which would have silently left every role URL pointing at the owner against a real database. That is a false green of exactly the D1 kind.
+
+Test count by file: `test_gateway_edge.py` 20, `test_meetings_api.py` 15, `test_clerk_webhook.py` 12, `test_roles_and_policies.py` 10, `test_auth.py` 8, `test_idempotency.py` 7, `test_bff_dashboard.py` 7, `test_org_resolver.py` 6, `test_errors.py` 6, `test_audit.py` 6, `test_rbac_grants.py` 5, `test_relay.py` 4, `test_grpc.py` 4, `test_rls.py` 3, `test_outbox_inbox.py` 2. Total 115 collected, 114 passing, 1 skipped (`test_relay_real_bus_roundtrip`, which needs Redpanda; skipped rather than silently passing).
+
+---
+
+## 11. Definition of Done, P2
+
+Against section 10 of the plan.
+
+| DoD line | Verdict | Evidence |
+|---|---|---|
+| Clerk revert verified | **MET** | `libs/shared/auth.py` is a Clerk RS256 JWKS verifier; a CI grep guard blocks the Supabase SQL returning |
+| Migration baseline with RLS | **MET** | Four migrations; every `org_id` table `ENABLE`+`FORCE` with `tenant_isolation`, asserted in CI |
+| Identity tables plus `rbac_grants` | **MET** | Section 8.2 |
+| Clerk webhook body | **MET** | Section 10.4, 12 tests |
+| Meetings CRUD | **MET** | Section 10.3, 15 tests |
+| `audit_logs` live from the moment RLS is | **MET** | Section 8.3; wired to `meeting.created`, `meeting.updated`, `authz.deny`, `user.synced` |
+| Gateway JWT pre-validation and `org_id` extraction | **MET** | Section 10.2, 20 tests |
+| `bff` dashboard | **MET** | Section 10.5, 7 tests |
+| `web-app` shell | **NOT MET** | Section 3.10 untouched; `mytheus-ui` has no Clerk and no generated client |
+| `mytheus-mobile` realign | **NOT MET** | Not begun |
+| CI gates | **MET, with one exception** | Six jobs in `mytheus-backend`, three in `mytheus-events`. `spectral lint` and `oasdiff` are still not wired: both are Node tools and no OpenAPI spec is served from code yet |
+
+**P2 verdict at the end of session 3: the backend is complete. Section 14 records the mobile realign that followed.**
+
+---
+
+## 12. What is still open
+
+Gap 2 is superseded by section 14: the mobile realign landed.
+
+| # | Gap | Blocks | Picked up by |
+|---|---|---|---|
+| 1 | **`mytheus-ui` Clerk wiring** - LANDED in session 5 (see section 15). Still open within it: no generated TS client (the specs are hand-written, gap 5), and no browser run against a live Clerk instance or gateway, so section 3.10's two end-to-end acceptance checks (two tenants seeing disjoint data, a network capture showing no `org_id`) are unverified. | The end-to-end demo | A session with real Clerk keys and a deployed gateway |
+| 2 | **`mytheus-mobile` realign** - LANDED in session 4. See section 14. | - | Done |
+| 3 | **`Idempotency-Key` reuse with a different body replays instead of returning 409.** The middleware caches by key without fingerprinting the body. `ErrorCode.IDEMPOTENCY_KEY_REUSED` exists and is unused. | Plan section 3.6 step 4's acceptance check | Next backend session |
+| 4 | **Tenant provisioning still has no reachable path.** `POST /api/v1/orgs` is deferred by decision and the operator seed script standing in for it is still unwritten, so a tenant can only be created by a manual INSERT as `mytheus_admin`. | Onboarding anyone | Deferred, needs a decision |
+| 5 | **`spectral lint` and `oasdiff` are not wired.** Both are Node tools; the specs in `design/openapi/` are hand-written and not yet generated from the code, so they can drift from the routes that now exist. | The P1 DoD line and two acceptance checks | Next session, with generated specs |
+| 6 | **The outbox relay has never run against these events.** `meeting-events` rows are being written by the routes and nothing has drained them, because the real-bus test is the one skipped test. | Nothing yet; the first thing a consumer needs | Plan 3-4 |
+| 7 | **Stale Railway/Render references** in reader docs 00, 01, 03, 04, 13, 22 and plan bands 0, 3-4, 5-6, 10-13, 14. Plan 14 needs rewriting, not substituting: its premise is a PaaS-to-Kubernetes migration and the source is now the VPS. | Nothing technically | Docs pass |
+| 8 | **`design/tech-lock.md` is unsigned**, and section 3.3 was gated on it. The gate was not honored: 3.3 landed unsigned. Recorded rather than left implicit. | Nothing now | The team |
+| 9 | **Clerk's DPA is unexecuted**, and Clerk is the only processor receiving real data in this band. | Nothing technically | Legal |
+| 10 | **The live VPS deploy has not run.** No longer blocked by D1: roles, the per-process credential split and the runbook are ready. Back up PostgreSQL off-box and rehearse a restore before any real tenant data lands. | Nothing | Explicit go |
+
+---
+
+## 13. What to do next
+
+1. **Section 3.10, `mytheus-ui`**, once the maintainer confirms it is safe to touch (see 14.3). A reconciliation, not a scaffold: add Clerk, generate the API client, and point the existing `(app)/dashboard` page at `GET /bff/dashboard`, whose shape is now fixed and tested. The mobile client in section 14 is the working reference for the whole client-side contract.
+2. **Generate the OpenAPI specs from the code** and point Spectral plus `oasdiff` at them, closing gap 5 and removing the drift risk in its own artifacts.
+3. **Close gap 3**, the idempotency body fingerprint. Small, and a stated acceptance check.
+4. **Write the operator seed script** (gap 4) so a tenant can be created without a manual INSERT.
+
+---
+
+## 14. P2 session 4, 2026-07-30: the mobile realign (section 7)
+
+`mytheus-mobile` moves off mock data onto the real backend for the arms that have one. Its git divergence (one local commit against one remote) was rebased first: it is now one commit ahead, clean.
+
+### 14.1 What landed
+
+| Artifact | What it does |
+|---|---|
+| `src/api/client.ts` | The single base fetch wrapper. Knows one address and one credential, injects the Clerk bearer, attaches `Idempotency-Key` to every mutation, and parses RFC 7807 into a typed `ApiError` carrying the stable `code`. |
+| `src/api/types.ts` | Wire types for the `bff` and `core-api` reads, including the per-arm `status` the dashboard returns. |
+| `src/api/present.ts` | Wire to view model, and the one place `snake_case` becomes `camelCase`. |
+| `src/api/provider.tsx` | Binds the client to Clerk's session and supplies the TanStack Query client with a retry policy that does not retry auth failures. |
+| `src/api/hooks/index.ts`, `src/api/queryKeys.ts` | One hook per endpoint. Components never call `fetch`. |
+| `src/lib/secure-store.ts` | The Keychain/Keystore wrapper, and Clerk's `tokenCache`. |
+| `src/lib/session.ts` | Rewritten from a module-level mock boolean to a Clerk delegate, keeping the same surface so the three consuming screens did not need rewriting. |
+| `app/_layout.tsx`, `app/sign-in.tsx`, `app/profile.tsx`, `app/(tabs)/index.tsx` | Providers wired, real Clerk SSO sign-in and sign-out, and the home screen reading `GET /bff/dashboard`. |
+| `__tests__/api-client.test.ts`, `jest.config.js`, `.env.example` | 14 tests, and the env contract. |
+
+Three decisions worth stating outright, because each is a place where the obvious implementation would have been wrong:
+
+- **The client has no parameter through which `org_id` could be passed.** Not "we remember not to send it": there is no argument for it, and a test asserts no request's URL, headers or body contains the string. The gateway derives the tenant from the token, and a client-supplied one is a value the server must either ignore or trust.
+- **Tokens go to `expo-secure-store`, wired as Clerk's `tokenCache`.** Left on Clerk's default they would sit in AsyncStorage, which is plain JS-readable storage that survives on a lost device. This is a stated invariant in the repo's own CLAUDE.md and it is one line to get wrong.
+- **`signIn()` was deleted rather than adapted.** The mock exported a no-argument `signIn()` that flipped a boolean. Real sign-in needs a strategy and a browser session, so a no-argument version cannot be implemented honestly, and leaving a working-looking stub invites a screen to call it and appear authenticated while holding no token.
+
+### 14.2 Deviations, session 4
+
+| Deviation | Rationale |
+|---|---|
+| **`src/data/mock.ts` is NOT deleted**, contrary to step 3 | It is imported by 12 screens, and four of them (`live-session`, `recap`, `insights`, `ask`) render transcripts and agent output whose backends land in Plan 3-4 and Plan 7-9. Deleting it now breaks four working screens in exchange for nothing. The mock is gone from the home screen, which is the one with a real backend, and each remaining import is a screen waiting on a named later band. |
+| **The people screen still reads the mock** | It needs an org-member roster and `identity-tenant-service` has no `GET /users` surface. `useTeams()` exists and works, but teams are not people. Faking a roster with a client-side join would invent membership data. **Recorded as a gap, not quietly skipped.** |
+| **`MeetingCard` gained optional `durationMin`, `speakers` and `chips`** rather than being fed defaults | Those come from transcription and agents, neither of which exists. Defaulting them to `0` renders "0 min - 0 speakers", which states a fabricated fact as a real one; the card now omits what it does not have. `fromMockMeeting()` bridges the screens still on mock so the component keeps ONE prop type. |
+| **`weeklyStats` on the home banner stays on the mock** | It aggregates decisions and action items. The `bff` arms for both are shaped-but-empty, so computing it from real data would display "0 decisions" as though that were measured. |
+| **Route groups were not restructured to `(auth)`/`(app)`** as step 1 describes | The app already ships a working `(tabs)` shell with an auth gate. Moving every route to satisfy the plan's directory names would be a large destructive refactor of a working app for no functional gain. |
+| **Plain jest, not jest-expo** | `jest-expo` requires React 19.2.3 and the app is on 19.1.0. Bumping the app's React to satisfy a test harness is the wrong way round. The security-relevant layer imports nothing from React Native, so it is fully covered; component/RNTL tests wait for the versions to line up. |
+| **Home shows UPCOMING, not RECENT** | `GET /bff/dashboard` returns `upcoming_meetings` (status `scheduled` or `live`). Labelling upcoming meetings "recent" would mislabel the data to preserve a heading. |
+
+### 14.3 `mytheus-ui`: a correction, and why 3.10 did not proceed
+
+**An error worth recording.** This session first concluded that `mytheus-ui` contained only four documentation files and no application code, and that the gap-1 description above was therefore false. That conclusion was wrong. The local clone was **34 commits behind** and its `origin/main` remote-tracking ref had never been fetched, so `git status` reported "up to date" against a stale reference and `git ls-files` listed only what the stale checkout held.
+
+The repo really does contain what the record said: **40 pages** across `(marketing)`, `(app)`, `(auth)` and `(admin)`, plus `src/lib/mock/data.ts` and `src/lib/org-context.tsx`. It is 1301KB on the remote, last pushed 2026-07-23, and it carries a second branch, `local-mytheus-rebuild`, which suggests in-flight work. The clone has since been fast-forwarded so it no longer misreports.
+
+The lesson is specific and worth keeping: **`git status` compares against the last fetch, not against the remote.** On a repo deliberately excluded from the pull sweep, that makes "clean and up to date" meaningless. Fetch before drawing any conclusion about a repo's contents.
+
+Section 3.10 was paused at this point for the maintainer's go, because the plan's literal instruction is `create-next-app@14` in a directory holding 40 real pages, and because the standing instruction is not to modify that repo while work is active in it. **The maintainer authorised proceeding additively on `main`**, and section 15 records what landed.
+
+---
+
+## 15. P2 session 5, 2026-07-30: `mytheus-ui` reconciliation (section 3.10)
+
+Done additively on `main` with the maintainer's explicit go. **No scaffold**: `create-next-app` was never run, and none of the 40 pages was replaced.
+
+Footprint: **6 files modified, 3 added**. The modified files are the root layout, the `(app)` layout, the two `(auth)` pages, the dashboard page, and one dashboard component. Every other page is untouched.
+
+### 15.1 What landed
+
+| Artifact | What it does |
+|---|---|
+| `src/middleware.ts` (new) | Clerk middleware gating everything outside an explicit public ALLOWLIST. |
+| `src/lib/api/client.ts` (new) | The server-only gateway wrapper: Clerk bearer, `Idempotency-Key` on mutations, RFC 7807 to a typed `ApiError`, plus `apiSafe` for per-panel degradation. |
+| `src/lib/api/types.ts`, `present.ts` (new) | Wire shapes, and wire to the view models the existing components already expect. |
+| `src/lib/api/org-context.ts` (new) | Resolves `OrgContextValue` from the Clerk session, replacing `mockOrgContext`. |
+| `src/app/layout.tsx` | `ClerkProvider` at the root. |
+| `src/app/(app)/layout.tsx` | Session-derived `OrgContext`. Closes the `TODO(auth)` that stood there. |
+| `src/app/(auth)/sign-in`, `sign-up` | Real `<SignIn />` / `<SignUp />`, replacing the 4-July bypass that redirected straight to `/dashboard`. |
+| `src/app/(app)/dashboard/page.tsx` | Now an async Server Component reading `GET /bff/dashboard`. |
+| `src/components/app/dashboard/TodaysMeetings.tsx` | Optional `meetings` and `status` props, defaulting to the mock. |
+
+Four decisions worth stating, because in each case the obvious implementation would have been wrong:
+
+- **The middleware is an allowlist, not a denylist.** With a denylist, every new authenticated route is public until somebody remembers to add it, and the failure is silent. Here a new route is protected by default and the mistake is a redirect to sign-in, which is noticed immediately.
+- **`client.ts` is server-only, and that is a security property.** It imports `auth()` from `@clerk/nextjs/server`, so importing it from a client component fails the build rather than shipping a token-fetching path into the browser bundle.
+- **Every gateway fetch is `cache: "no-store"`.** The Next data cache keys on the URL, which is identical for every tenant, so a cached `/bff/dashboard` would serve one tenant's dashboard to the next visitor. The build confirms `/dashboard` renders as `ƒ` (dynamic), not static.
+- **`apiSafe`, not `api`, on the dashboard.** One failed read degrades its own panel instead of replacing the screen with an error boundary, mirroring the per-arm status `bff` already returns.
+
+### 15.2 Deviations, session 5
+
+| Deviation | Rationale |
+|---|---|
+| **No `create-next-app@14`**, contrary to step 1 | It would have destroyed 40 pages. The repo already has the exact route groups step 2 asks for, so the scaffold step was satisfied before the band started. |
+| **No shadcn/ui init**, contrary to step 1 | Already recorded as a deviation in section 3: the repo has its own component layer, and a second primitive set forks the visual language. |
+| **Clerk 6, not 7** | Clerk 7 requires Next 15 or 16; this app is on Next 14.2.35, which is what the plan itself specifies. Clerk 6 declares `next ^14.2.25`, so it fits with no framework upgrade. Upgrading Next under 40 pages to satisfy an auth library is the wrong way round. |
+| **No generated TS client yet** (step 7) | The OpenAPI specs in `design/openapi/` are hand-written and not emitted from the code, so generating from them would encode drift rather than prevent it. `src/lib/api/types.ts` is deliberately small and separate so it is the only place drift can hide. Unchanged open gap. |
+| **Only the meetings panel reads real data** | `action_items`, `worklogs` and `decisions` are shaped-but-empty arms until Plan 7-9. Wiring them now would replace a populated demo with three permanently empty boxes and no new information. The same reasoning as the mobile client. |
+| **`org.plan` reports `starter` and `user.role` reports `member`** | Both are placeholders in `OrgContextValue` that cannot be filled honestly: plan needs `subscriptions` (billing band) and role is a permission living in `rbac_grants`, readable only through the gateway. Both default to the LEAST privileged value, so a UI gating on either hides a feature rather than offering something the tenant has not got. |
+| **`org.id` is Clerk's opaque organization id, not our `org_id`** | Display key only. The browser never learns our tenant identifier and never needs to; the gateway derives it from the token. |
+| **`TodaysMeetings` gained optional props rather than a rewrite** | `meetings`/`status` default to the mock, so the component keeps one prop type and any not-yet-reconciled caller renders exactly as before. `durationMinutes` and `participants` became optional for the same reason as on mobile: rendering "0 attendees" states a fabricated fact as a measured one. |
+
+### 15.3 Verification, session 5
+
+| Command | Result |
+|---|---|
+| `npx tsc --noEmit` | Clean |
+| `npm run lint` | No ESLint warnings or errors |
+| `npm run build` | Succeeds. All 40 pages build; `Middleware 78.4 kB` compiled; `/dashboard` is `ƒ` (dynamic), confirming no cross-tenant static caching |
+| `git status --porcelain` | 6 modified, 3 added. No page deleted or replaced |
+
+**Not verified, and not claimed:** no browser run against a live Clerk instance or a live gateway, because that needs real Clerk keys and a deployed backend. The end-to-end acceptance checks in step 3.10 (two different-tenant users seeing disjoint data, and a network capture showing no `org_id`) remain outstanding and are listed as an open gap. The `org_id`-never-sent property is structurally enforced (no parameter exists for it) and is unit-tested on the mobile client, which shares the contract.
+
+---
+
+## 16. Related
 
 - [00-status-overview.md](00-status-overview.md) for program-wide state.
 - [01-plan-0-scaffold-and-contracts.md](01-plan-0-scaffold-and-contracts.md) for what this band inherited.
 - [design/README.md](../design/README.md) for the P1 pack index and its deviations.
-- [threat-model/stride.md](../threat-model/stride.md) section 5 for gaps 1 to 5 in detail.
+- [threat-model/stride.md](../threat-model/stride.md) section 5, updated in the same pass: all six defects closed, with the residual risk stated.

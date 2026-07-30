@@ -56,19 +56,23 @@ Six surfaces by six STRIDE categories. Plan 1-2 requires the **Auth** and **APIs
 | **Integrations** | OAuth tokens envelope-encrypted with a per-tenant KMS data key, never returned by any API, never logged. Provider webhooks signature-verified. Scopes least-privilege per connection. |
 | **Subprocessors** | Signed DPAs plus SCCs before any T4 data flows. Regional routing per `data_residency`. Server-side keys only. See [subprocessors.md](../design/subprocessors.md). |
 
-## 5. Open defects this model surfaced
+## 5. Defects this model surfaced (ALL CLOSED 2026-07-30)
 
-Five findings, all in code that already exists, all reachable today. Ordered by severity. These are not hypothetical threat-model entries: they were confirmed by reading the source.
+Five findings, all in code that already existed, all reachable at the time. They were not hypothetical threat-model entries: each was confirmed by reading the source, and each is now closed with a test that fails if it returns. Ordered as originally filed.
 
-| # | Defect | Why it matters |
-|---|---|---|
-| 1 | **The application connects to PostgreSQL as the superuser** in every environment including the deployed one. Superusers bypass RLS unconditionally. | The entire fail-closed foundation is inert. Every acceptance check that claims to prove isolation proves it only for a role the application never uses. |
-| 2 | **The idempotency cache is not tenant-namespaced.** | A live cross-tenant leak of full response bodies, requiring no RLS bypass and no database access. |
-| 3 | **The identity gRPC server fails open.** A bare `except Exception` returns a valid context for the caller's asserted `org_id` with a default tier. | Becomes "database unreachable therefore grant access" the moment it reads real permissions. |
-| 4 | **The outbox relay will read zero rows and report an empty queue** once the correct roles are wired. | Silent, total event loss with no error, no log, and no metric that distinguishes it from an idle queue. |
-| 5 | **One poison outbox row crash-loops the relay forever.** `attempts` exists and is never written; there is no produce-side DLQ. | Head-of-line block across every tenant. |
+| # | Defect | Why it mattered | Closed by |
+|---|---|---|---|
+| 1 | **The application connected to PostgreSQL as a role that bypasses RLS** in every environment including the deployed one. | The entire fail-closed foundation was inert. Every acceptance check that claimed to prove isolation proved it only for a role the application never used. | `mytheus_app` / `mytheus_relay` / `mytheus_admin`, none holding `rolsuper` or `rolbypassrls`, plus a per-process credential split in the deploy. Asserted by `test_no_application_role_is_superuser_or_bypasses_rls`. |
+| 2 | **The idempotency cache was not tenant-namespaced.** | A live cross-tenant leak of full response bodies, requiring no RLS bypass and no database access. | Re-keyed to `nexus:{org_id}:idem:{key}`; no resolvable tenant means no caching at all. Asserted by `test_same_key_in_two_tenants_never_shares_a_response`. |
+| 3 | **The identity gRPC server failed open.** A bare `except Exception` returned a valid context for the caller's asserted `org_id` with a default tier. | Would have become "database unreachable therefore grant access" the moment it read real permissions. | Each condition returns its own status and gives the caller nothing. It now reads the real tier from `rbac_grants`. |
+| 4 | **The outbox relay would have read zero rows and reported an empty queue** once the correct roles were wired. | Silent, total event loss with no error, no log, and no metric distinguishing it from an idle queue. | One permissive `outbox_relay_drain` policy on `outbox` for `mytheus_relay` alone. Asserted by `test_relay_role_drains_outbox_across_tenants`. |
+| 5 | **One poison outbox row crash-looped the relay forever.** `attempts` existed and was never written; there was no produce-side DLQ. | Head-of-line block across every tenant. | Per-row isolation, `attempts` written, dead-lettering to `{topic}.dlq`. |
 
-Defects 1 and 4 share a root cause, which is why the database-role work is the first task of the build phase rather than a naming tidy-up.
+Defects 1 and 4 shared a root cause, which is why the database-role work was taken as the first task of the build phase rather than as a naming tidy-up.
+
+**A sixth defect was found while fixing these, by the CI assertion added for defect 1.** Partitions of `audit_logs` inherited the full DML grant from `ALTER DEFAULT PRIVILEGES`, and a partition is a table in its own right: privileges are checked against the relation named in the query, and the parent's RLS policy is only enforced on access through the parent. So `DELETE FROM audit_logs_2026_07` succeeded for `mytheus_app` while `DELETE FROM audit_logs` was correctly refused, making an append-only audit trail erasable one partition at a time with no tenant isolation on the way. Closed by revoking all privileges on every partition, and asserted by `test_no_application_role_can_reach_a_partition_directly`.
+
+**The residual risk this model now carries** is that all six assertions run only under `make ci`, which no continuous-integration system invokes: no repo except `mytheus-platform` has a `.github/` directory. Until that lands (plan section 3.11), nothing prevents a pull request from reintroducing any of them.
 
 ## 6. Related
 
