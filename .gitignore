@@ -25,3 +25,6 @@ package-lock.json
 # Local env
 .env
 .env.local
+
+# Local git worktrees (scratch; never committed)
+.worktrees/
