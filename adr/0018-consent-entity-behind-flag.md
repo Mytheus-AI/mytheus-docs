@@ -94,13 +94,51 @@ with the authority to make that legal determination flips the flag for that tena
 
 The token-mint 428-Precondition-Required mechanism described in [12
 §3.3](../12-compliance-and-privacy.md) is ratified as the design these columns support: when a
-tenant's `consent_required` is `true` and a participant has no matching `consented_at` for the
-current `consent_version`, `POST /api/meetings/:id/token` returns 428 instead of minting a join
-token, until the participant acknowledges.
+tenant's `consent_required` is `true` and a participant has no `consented_at` recorded,
+`POST /api/meetings/:id/token` returns 428 instead of minting a join token, until the participant
+acknowledges.
 
 **Out of scope for this ADR and this task:** the Alembic migration adding these columns, and any
 `meeting-service` application code implementing the 428 check. Both are later tasks that depend on
 this ADR and the canon amendment landing first.
+
+### Amendment (post-implementation): the gate is presence-or-absence, not version-pinned
+
+The paragraph above originally described the gate as checking for "no matching `consented_at` for
+the **current** `consent_version`" — i.e., a re-consent flow where bumping the version invalidates
+prior consent. **That is not what the implementation task built, and this ADR is narrowed to match
+what actually shipped**, per the same principle that landed this schema in the first place: the
+decision record must not claim a stronger protection than the code provides.
+
+**What shipped:** the 428 gate is `consent_required AND consented_at IS NULL` — a presence-or-absence
+check. A participant who has ever consented (any `consented_at`, regardless of which
+`consent_version` was current when they did) is treated as consented today.
+
+**Why this ADR did not require the stronger form:** the version-pinned re-consent design needs a
+"what is the current version" source of truth to compare a participant's `consented_at`/
+`consent_version` against — a pointer such as `tenant_settings.consent_version` or equivalent. No
+such column exists anywhere in canon; this ADR ratified `consent_version` as a column **on
+`meeting_participants`** (what a participant last consented to), not as a current-version pointer
+on `tenant_settings` (what a tenant is currently requiring consent to). Implementing version-pinned
+re-consent without that pointer would mean inventing an undefined compliance decision — which
+version is current, how it advances, who owns changing it — that is not this ADR's, or this band's,
+to make unilaterally. The implementer's narrower build is therefore correct engineering, not a
+shortfall against this ADR; the shortfall was in this ADR's own wording, which described a
+mechanism one column short of what canon actually supports.
+
+**What this means in practice, stated plainly so nobody has to infer it:** a tenant that updates its
+recording-consent terms and bumps `consent_version` does **not** trigger re-consent under the
+shipped logic. Every participant who consented under the old terms remains treated as consented
+under the new ones, indefinitely, until/unless a future change adds version-pinning.
+`meeting_participants.consent_version` exists as a column and is written on each consent, but is
+**not currently read by the enforcement gate** — it is captured for the audit trail today, not yet
+load-bearing for re-consent logic.
+
+**What closes this properly:** a canon addition — a current-version pointer, most likely
+`tenant_settings.consent_version` (or an equivalent mechanism), amended into
+[_canon/02-data-model.md](../_canon/02-data-model.md) — **first**, canon-first as always, followed
+by the ADR/amendment recording it and the `meeting-service` gate change to compare against it. Until
+that lands, `consent_version` on `meeting_participants` remains capture-only.
 
 ---
 
@@ -114,6 +152,10 @@ this ADR and the canon amendment landing first.
 - Every future reader of `meeting_participants`/`tenant_settings` must know these columns are
   inert until a tenant's flag is set — [12 §3.3](../12-compliance-and-privacy.md) and the Glossary
   entries for both tables carry that caveat forward.
+- The shipped gate does not re-prompt for consent when `consent_version` changes (see the
+  Amendment above): a tenant that revises its consent terms and bumps the version does not
+  re-consent any already-consented participant. This is a known, accepted gap until the canon
+  addition described below lands, not a defect in the current implementation.
 
 ### Benefits realized
 
@@ -144,3 +186,9 @@ machinery.
 5. A tenant-facing decision, owned outside engineering, on which tenants and jurisdictions get
    `consent_required` flipped to `true`, and on what `consent_version` text/versioning scheme is
    used.
+6. **Canon addition required before version-pinned re-consent can be built:** a current-version
+   pointer (e.g. `tenant_settings.consent_version` or equivalent) amended into
+   [_canon/02-data-model.md](../_canon/02-data-model.md), canon-first, followed by an ADR/amendment
+   recording it and the `meeting-service` gate change to enforce it. Until this lands, the shipped
+   gate stays presence-or-absence only (see the Amendment above) and `consent_version` on
+   `meeting_participants` stays capture-only.
