@@ -1,0 +1,225 @@
+# 03 Plan 3-4 Meeting Platform and Real-time Transcription
+
+| Field | Value |
+|---|---|
+| Band | Plan 3-4, phases P3 (Meeting Platform Integration, W6-8) and P4 (Real-time and Transcription, W9-12) |
+| Plan file | [plan/plan-3-4-meeting-and-transcription.md](../plan/plan-3-4-meeting-and-transcription.md) |
+| Status | **DONE WITH GAPS.** Every section of the plan this band was authorized to build is built and tested against real infrastructure where real infrastructure exists (Postgres, Redis, Redpanda, Schema Registry). `web-app` room UI and captions UI (sections 3.4, 3.8) were deliberately **not built**, by explicit product-owner decision: `mytheus-ui` is out of scope for this band. `mytheus-mobile` section 7 is deferred for the same decision plus missing LiveKit RN credentials. No LiveKit, Deepgram, or S3 credentials exist anywhere in the program; every acceptance check that needs one is marked **BLOCKED**, never claimed green. |
+| Complete | Canon amendments plus two ADRs (`mytheus-docs`); partition-key validator scoping and schema fixes (`mytheus-events`); `meeting-service`, `core-api` chat and speaker-mapping, the consent gate (`mytheus-backend`); `realtime-gateway` and `transcription-service` (`mytheus-realtime`) |
+| Deliberately not built | `mytheus-ui` sections 3.4 and 3.8 (meeting room video grid, live captions/transcript/speaker-mapping UI) - out of scope by decision. `mytheus-mobile` section 7 (live media, presence, captions) - deferred, same decision plus no LiveKit RN credentials. |
+| Blocked, not built | Every acceptance check requiring a live LiveKit account, a live Deepgram account, or an S3-compatible object store: real end-to-end token verification, `recording.ready` landing an object in `nexus-recordings`, any real Deepgram stream, the EU-cell half of the residency check, the reconnect-SLO metric, and the `k6` token-mint p95 smoke. |
+| Last verified | 2026-08-05/06, by running each repo's own suite in its Plan 3-4 worktree against the shared dev stack (Postgres, Redis, Redpanda, Schema Registry) |
+
+Clerk credentials arrived mid-band (2026-08-05) and are live: `mytheus-ui` serves real sign-in against `firm-grouse-59.clerk.accounts.dev`, and `mytheus-backend` verifies real RS256 tokens against that JWKS. This does **not** unblock LiveKit, Deepgram, or S3; those remain absent and every task built against them stays on the Protocol-plus-Fake pattern with the live path marked BLOCKED.
+
+---
+
+## 1. What landed, per repo
+
+### 1.1 `mytheus-docs`: two ADRs and the canon they ratify
+
+Both DECISION-REQUIRED callouts in the plan (section 8) are resolved and recorded.
+
+- **[ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)** - `transcript-chunks` and `agent-stream` are composite-keyed `{org_id}:{meeting_id}`; every other topic, including `agent-results` (a candidate the ADR explicitly excludes), stays `org_id` alone. `_canon/03-event-taxonomy.md` amended accordingly.
+- **[ADR-0018](../adr/0018-consent-entity-behind-flag.md)** - `meeting_participants.consented_at timestamptz NULL` / `consent_version text NULL` and `tenant_settings.consent_required boolean NOT NULL DEFAULT false` land in `_canon/02-data-model.md`. Narrowed post-implementation (see section 3) once the shipped gate turned out to check presence-or-absence rather than the ADR's original version-pinned re-consent language.
+- **Propagation, first pass:** `plan-3-4` section 8 (both callouts marked RESOLVED with ADR citations, the false BLOCKED banner removed), `plan-5-6` section 8.1 (also corrects a second document's misclassification of `agent-results` as a composite candidate), `06-multi-tenancy.md` (qualified to "19 of 21" topics), and `adr/0001`, `adr/0007`, `adr/0009` (annotated with a forward pointer to ADR-0017, never rewritten - the repo's supersede-don't-rewrite rule).
+- **Propagation, second pass, self-initiated:** a wider regex sweep, run to zero unscoped hits, found 11 more stale copies of the same pre-decision language, the most severe being a literal build-step instruction in `plan-3-4` itself ("Produce `transcript-chunks` ... partition key `org_id`") that an implementer could have followed verbatim into the wrong key. Also fixed: `adr/0007`'s "alternatives considered" table, `plan/README.md`, `plan/00-HUMAN-OVERVIEW.md`, `plan/00-PROJECT-UNDERSTANDING.md`, `plan-0`, `plan-7-9`, `plan-10-13`, `design/c4-l1-system-context.md`, `diagrams/07`, `diagrams/09` (a second miss beyond round one).
+- `diagrams/05` and `diagrams/09` updated for consistency with the new canon, per the repo's binding rule that diagrams are a derived view of the same truth.
+- 3 commits: `717a14f` (canon plus ADRs), `55e5549` (fix round: the reviewer's six findings plus the self-initiated sweep), `800cf4e` (ADR-0018 narrowed to match what shipped).
+
+### 1.2 `mytheus-events`: the partition-key invariant, scoped not deleted
+
+- `codegen/_schemas.py`'s `COMPOSITE_PARTITION_KEY_TOPICS` now contains exactly `{"transcript-chunks", "agent-stream"}`; the validator's org_id-alone rule is scoped to exempt those two rather than removed outright, and a new invariant requires `meeting_id` non-nullable on both (currently already true for both, so it only guards a future regression).
+- `schemas/_envelope/EventEnvelopeHeader.avsc`'s doc string, which shipped to every one of the 21 registered subjects as user-facing Schema-Registry metadata, no longer claims `org_id` is unqualified "the Kafka partition key".
+- `TranscriptChunk` gained a `redacted: boolean` field, registered BACKWARD against the live registry (subject now shows versions `[1, 2]`).
+- `clients/python/mytheus_events/meeting_events.py` regenerated: it had drifted, typing `livekit_room: str` while the schema had gone `["null", "string"]` since an earlier commit. A full audit of all 21 topic schemas for the same drift class found no other offender.
+- 3 commits: `4139d5a` (validator scoping, invariant, envelope fix), `0177d1f` (doc-string fix round), `1549e25` (regenerated client, prerequisite for `mytheus-backend`'s `meeting-events` consumer).
+- Gates run against the live registry, not just parsed: `make validate` (21 topics), `make check-compatibility` (21 subjects BACKWARD), and the validator's failure mode re-proved twice by deliberately breaking a schema (an unqualified `org_id`, then a nullable `EventEnvelopeHeader.org_id`) and restoring it.
+
+### 1.3 `mytheus-backend`: `meeting-service`, `core-api` additions, the consent gate
+
+`services/meeting_service/` moves from a routeless stub to a real module.
+
+- **`transport.py`** - `MeetingTransport` (Protocol), `LiveKitTransport` (the only file in the codebase importing `livekit-api`, grep-tested in both directions: it passes on the real routes and fails on a deliberately unsecured probe), `FakeTransport` for every test. Adapted to the real installed `livekit-api==1.1.1` signature, which differs from the plan's literal snippet (`with_ttl` takes a `timedelta`, `WebhookReceiver` takes a `TokenVerifier`).
+- **`routes.py`** - `POST /api/meetings/{id}/token`. Deny-by-default (`403 NOT_A_PARTICIPANT` before the meeting-existence check, cross-tenant `404 not 403` proven by check ORDER through mutation testing, not just by outcome), the 428 consent gate, and a genuinely-cancelling 2 s `statement_timeout` (proved with `SELECT pg_sleep(2.5)` inside the same transaction shape the route uses, not merely that the `SET` succeeded).
+- **`webhook.py`** - `POST /livekit/webhook`. HMAC-verified through the adapter, deduped on the inbox key `{room}:{event}:{participant_sid}` (`nexus:{org_id}:dedupe:livekit:{room}:{event}:{participant_sid}`), resolves `org_id` from LiveKit room metadata via a sanctioned second reader on `organizations` (`org_resolver.resolve_org_by_id`, added because the existing `resolve_org_id` takes a `clerk_org_id`, not an internal id).
+- **`rooms.py`** - the single shared room-naming and `ensure_meeting_room` logic used by the token-mint route, the webhook, and the `meeting-events` consumer, so three independent writers of the same string cannot disagree by construction.
+- **`meeting_events_consumer.py`** - a live `confluent-kafka` consumer loop (not just unit-tested business logic) that opens/closes `meeting_rooms` on `meeting.created` / `meeting.ended`, re-asserting `org_id` from the header and deduping via inbox.
+- **Migrations:** `meeting_rooms` (`ENABLE` + `FORCE` RLS, `tenant_isolation`, `UNIQUE (org_id, meeting_id)`, `UNIQUE (org_id, livekit_room)`, and `ck_meeting_rooms_status_valid` - the CHECK constraint the plan's literal SQL omitted, added once its gap was flagged); the three consent columns via `866f7eedb0e7`; `meeting_rooms.livekit_metadata_synced_at` via `f3a7c9e0b21d` (see section 3 for why).
+- **`core-api`:** `POST /chat` (`Idempotency-Key`, RLS-scoped write to `chat_messages`); the participant-check endpoint, resolving tenancy solely from the caller's own re-verified bearer token and returning a dedicated `ParticipantCheck` model carrying the resolved internal `org_id` and `user_id` (added rather than overloading the shared `Participant` model, which is also embedded in `Meeting.participants` where no per-participant org is resolved); `PATCH /meetings/:id/speakers/:speaker_id` with a database-level `BEFORE UPDATE` trigger making manual assignment authoritative over any suggested one.
+- **Final suite state:** **200 passed, 1 failed.** The one failure is `tests/test_relay.py::test_relay_real_bus_roundtrip`, a known-flaky live-Redpanda-consumer-poll test unrelated to any file this band touched; it passes in isolation and on reruns. `ruff`, `black`, and `mypy --strict` clean; `check_authz.py` clean.
+
+### 1.4 `mytheus-realtime`: `realtime-gateway` and `transcription-service`, both from a docs-only repo
+
+**`realtime-gateway`** (Node, TypeScript, Socket.io):
+
+- Socket.io server with the Redis adapter for cross-pod fan-out; rooms keyed by `meeting_id` (see section 3 for the deliberate `org_id` drop and its later correction).
+- Presence as a Redis ZSET scored by last-heartbeat rather than a plain set: reads filter stale members immediately, a periodic per-pod sweep physically reaps them (proven against a real `kill -9` across two separately spawned OS processes: process A joins then is SIGKILLed with no disconnect handler ever firing, and process B - which never held a local socket in that meeting - does the reaping and re-broadcast), and the read-then-remove sweep step is a single atomic Lua script so two racing sweeps cannot both report the same reap.
+- Chat relay to `core-api`'s `POST /chat`; the gateway never writes `chat_messages` directly.
+- `presence-events` producer against the real broker, with a `presence-events.dlq` write on produce failure (plain JSON, no registered `.dlq` subject) rather than silent loss.
+- Captions bridge: subscribes `transcription-service`'s caption channel on `nexus:{org_id}:pubsub:meeting:{meeting_id}` and delivers by a literal per-channel local-socket set, not Socket.io room membership - closing a real cross-tenant leak found empirically during Task 8 (see section 3).
+- **42/42 vitest** across unit, integration (fake JWKS plus fake `core-api`), real-broker, and cross-pod tests. `npm run typecheck`, `make ci` (both stacks) green.
+
+**`transcription-service`** (Python, FastAPI, its own Alembic chain):
+
+- `TranscriptionProvider` (Protocol), `DeepgramProvider` (the compliance gate is a source constant, `COMPLIANCE_GATE_GREEN = False`, with no environment-variable override path, checked inside `open_stream` before any network I/O - a reviewer tried multiple bypass vectors, including direct construction and configuring a key, and could not open a stream), `FakeProvider`.
+- Interim-versus-final split with the load-bearing test: 2 interims plus 1 final through `process_utterance` against real Postgres asserts **zero** `transcript_chunks` rows and **zero** outbox rows from the interims, then drains the (empty) outbox against the real broker and, for the final, consumes the produced `TranscriptChunk` back off a real `confluent_kafka` consumer and decodes it, checking the raw Kafka key is `{org_id}:{meeting_id}`.
+- Deterministic PII redaction (`redaction.py`): email, phone, IBAN, credit card via Luhn, and a US SSN-shaped government-ID pattern, replacing spans with typed placeholders (`‹EMAIL›`, and so on). Gated by `tenant_settings.pii_redaction_enabled`, tested both on and off against real Postgres. The NER pass and the per-tenant reversible token vault the plan also asks for are **not implemented** - disclosed, not silently dropped (see section 3).
+- Residency: `data_residency.region` selects the Deepgram regional WSS endpoint (`us`/`eu`; `ap` falls back to `us`), tested against real Postgres for both `us` and `eu`. The "chunks physically land in the EU cell" half is BLOCKED - no second regional Postgres/Redpanda cell exists anywhere.
+- `transcript-chunks` producer: composite key, `chunk:{chunk_id}` idempotency, `chunk_id` minted deterministically as `uuid5(NAMESPACE_URL, "deepgram:{request_id}:{speaker_id}:{start_ms}:{end_ms}")` after two collision-closing rounds (see section 3).
+- `meeting-room-events` consumer: the dedupe and session-open/close business logic is real and unit-tested; the live `confluent-kafka` subscribe/poll/commit loop that would drive it from the real topic is **not stood up** - a disclosed trade against landing the compliance gate, finals-only persistence, and the producer correctly against real infra.
+- `audit.py`: one `audit_logs` row per session-open, in the same transaction as the residency and redaction reads, recording both decisions - closes the compliance gate's fourth condition, found missing (and undisclosed) by the first review pass and fixed in the first fix round.
+- **41/41 pytest**, all against real Postgres/Redis/Redpanda/Registry on the load-bearing paths, no mocks. `ruff`, `black`, `mypy --strict` clean; `make ci` green for both stacks.
+
+### 1.5 `mytheus-ui`: untouched, by decision
+
+Sections 3.4 (meeting room video grid, in-meeting chat and presence UI) and 3.8 (live captions, transcript view, speaker-mapping UI) were not built. This is a deliberate exclusion recorded in the governing decisions for this band, not an omission: `mytheus-ui` was declared out of scope. Clerk sign-in went live mid-band for reasons unrelated to this band's scope (see the header note); no meeting-surface code was added.
+
+### 1.6 `mytheus-mobile`: untouched, deferred
+
+Section 7 (live-session media, presence, captions, the real meeting clock, mic capture) was not started. Deferred for the same out-of-scope decision as `mytheus-ui`, compounded by the absence of LiveKit RN credentials that section 7's acceptance checks require regardless.
+
+---
+
+## 2. Definition of Done audit
+
+Against section 10 of [plan-3-4-meeting-and-transcription.md](../plan/plan-3-4-meeting-and-transcription.md), reproduced verbatim per line.
+
+### End of P3 (W8) - Meeting Platform demo and DoD
+
+| DoD line | Verdict | Evidence or reason |
+|---|---|---|
+| `meeting-service` token mint (p95 < 250 ms) shipped | **PARTIAL** | The route is built and its deny-by-default, cross-tenant, and timeout behavior are mutation-tested. The p95 < 250 ms figure itself is **not proven**: `FakeTransport.mint_join_token` does no I/O, so it cannot stand in for real LiveKit latency, and no `k6` smoke was run because there is no LiveKit endpoint to smoke against. Disclosed by the implementer, not silently claimed. |
+| `meeting-service` webhook (HMAC-verified, inbox-deduped) shipped | **MET** | `POST /livekit/webhook`, HMAC through the adapter, deduped on `nexus:{org_id}:dedupe:livekit:{room}:{event}:{participant_sid}`. Real end-to-end delivery from a live LiveKit account is BLOCKED (no account), but the handler, its dedupe, and its fail-closed org resolution are tested against real Postgres. |
+| `meeting_rooms` migrated with RLS FORCE | **MET** | `ENABLE` + `FORCE` RLS, `tenant_isolation` policy, `ck_meeting_rooms_status_valid`. Confirmed against the live database, not only the migration source. |
+| `realtime-gateway` scaffolded with Redis-adapter fan-out, presence, chat relay | **MET** | Section 1.4. Cross-pod fan-out proven with two separately spawned OS processes. |
+| `chat_messages` + `meeting_speakers` migrated in `core-api` | **MET** | Section 1.3. `chat_messages` partitions correctly inherit no application-role grants directly (contrast with the `transcript_chunks` defect in section 3). |
+| Staging deploy fires on merge | **NOT MET** | Not attempted in this band. No task added `meeting-service` to a CI deploy matrix or built a staging pipeline; the eight tasks executed were schema, adapter, and route work only. |
+| Mobile media + presence wired | **NOT MET** | Deferred by decision. Section 1.6. |
+| Cross-pod fan-out test, RLS isolation test, token-mint deny-by-default test all green | **MET** | Cross-pod: two spawned node processes (section 1.4). RLS isolation: proven at the database level for `meeting_rooms`, `chat_messages`, `meeting_speakers` (and, after the fix in section 3, `transcript_chunks`). Deny-by-default: mutation-tested check order (section 1.3). |
+
+### End of P4 (W12) - Real-time and Transcription demo and DoD
+
+| DoD line | Verdict | Evidence or reason |
+|---|---|---|
+| Compliance gate green before any Deepgram stream | **PARTIAL** | The gate **as an engineering control** is real and unbypassable: `COMPLIANCE_GATE_GREEN = False` blocks `DeepgramProvider.open_stream` before any network I/O, verified by a reviewer actively trying to bypass it. The gate's **substantive conditions** are not met: no Deepgram DPA/SCC is signed, no LiveKit Cloud subprocessor registration exists, and the "zero-retention" flag is unset, because there is no live vendor relationship. This is a legal and compliance gap, not an engineering one, and the code correctly refuses to open a stream regardless. |
+| `transcription-service` shipped: provider adapter | **MET** | `TranscriptionProvider` / `DeepgramProvider` / `FakeProvider`. Section 1.4. |
+| `transcription-service` shipped: interim-vs-final split | **MET** | The load-bearing zero-persistence test, section 1.4. |
+| `transcription-service` shipped: finals-only persistence | **MET** | Same test; only `is_final=true` writes a row. |
+| `transcription-service` shipped: at-rest redaction node | **PARTIAL** | The deterministic regex/validator layer (email, phone, IBAN-Luhn, government ID) is real and tested on and off. The plan's NER pass and per-tenant reversible token vault are **not implemented**. |
+| `transcription-service` shipped: residency pinning | **PARTIAL** | Endpoint selection (`us`/`eu`) is real and tested against real Postgres. Chunks physically landing in a separate EU cell is BLOCKED - no second regional cell exists. |
+| `transcription-service` shipped: `transcript-chunks` producer (outbox + Avro + `chunk:{chunk_id}` dedupe) | **MET** | Section 1.4, after two collision-closing rounds; the final key discriminates on speaker and both time boundaries. |
+| `transcription-service` shipped: `meeting-room-events` consumer | **PARTIAL** | Dedupe and session-open/close logic is real and unit-tested. The live `confluent-kafka` I/O loop driving it from the real topic is not stood up. |
+| Partition-key DECISION ratified (section 8 #1) | **MET** | [ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md). Section 1.1. |
+| `transcript_chunks` migrated (monthly partition, local index, RLS FORCE) | **MET, with a closed critical defect en route** | The parent table is correctly RLS-FORCEd. Every partition initially had RLS disabled and full DML grants to `mytheus_app`/`mytheus_admin` - a live cross-tenant leak on the most sensitive table in the product, found by the shared exceptionless CI guard and closed in the same task. Full account in section 3. |
+| Captions wired through `realtime-gateway` | **MET** | Section 1.4, including the cross-tenant leak found and closed in the same task (section 3). |
+| `web-app` captions/transcript/speaker-mapping shipped | **NOT MET** | Deliberately out of scope. Section 1.5. |
+| Mobile captions + real meeting clock + mic capture shipped | **NOT MET** | Deferred. Section 1.6. |
+| Interims-never-persisted test green | **MET** | The load-bearing test, section 1.4. |
+| Redaction test green | **MET, for the implemented scope** | On/off tested for the deterministic layer; the plan's NER/vault scope was never built, so there is no test for what does not exist. |
+| Residency test green | **PARTIAL** | Endpoint-selection half green; EU-cell-placement half BLOCKED (no second cell). |
+| Reconnect-SLO test green | **NOT MET** | Not implemented. Meaningless to build against `FakeProvider` and unexercisable against a permanently gate-closed `DeepgramProvider`. The mechanism (fault-inject the fake, assert interims are discarded and finals resume) and the untestable > 99.9%-within-2s metric were not separated, per a reviewer's own noted precision gap. |
+
+**Verdict tally: 9 MET, 8 PARTIAL, 6 NOT MET**, of 23 individual lines audited (the two multi-clause DoD paragraphs in the plan text are split one row per clause, matching the style of [02-plan-1-2-foundation-and-tenancy.md](02-plan-1-2-foundation-and-tenancy.md)). Every PARTIAL and NOT MET traces to one of three named causes: missing live vendor credentials (LiveKit, Deepgram, S3), the `mytheus-ui`/`mytheus-mobile` out-of-scope decision, or work explicitly traded off within the band's own priority order (staging deploy, NER/vault, the consumer I/O loop, reconnect mechanics).
+
+---
+
+## 3. Deviations from the plan, and why
+
+| Deviation | Rationale |
+|---|---|
+| **`mytheus-ui` sections 3.4 and 3.8 not built.** | Explicit product-owner decision, recorded before this band started: `mytheus-ui` is out of scope. Not attempted, not a shortfall found during the work. |
+| **`mytheus-mobile` section 7 not built.** | Same decision, plus no LiveKit RN credentials exist to satisfy the section's own acceptance checks regardless. |
+| **Every LiveKit, Deepgram, and S3 code path is built to a Protocol with a Fake implementation; the live path is BLOCKED, never faked green.** | No credentials exist for any of the three. The governing decision for this band states plainly: any acceptance check needing a live provider is marked BLOCKED. Applies across `LiveKitTransport`, `DeepgramProvider`, and `nexus-recordings`. |
+| **ADR-0018's consent gate is `consent_required AND consented_at IS NULL`, not the ADR's original version-pinned "no matching `consented_at` for the current `consent_version`".** | No `tenant_settings.consent_version` or equivalent current-version pointer exists anywhere in canon, so a version-pinned gate would invent an undefined compliance decision rather than implement a recorded one. The implementer and reviewer agreed the shipped behavior is correct; ADR-0018 itself was narrowed afterward (commit `800cf4e`) to describe what shipped, with an explicit consequence recorded: a tenant that bumps `consent_version` does **not** re-prompt users who consented to the older version. This must be closed - a canon addition landing first - before `consent_required` is turned on for any real tenant. |
+| **`transcript_chunks` lives in its own Alembic chain under `mytheus-realtime/services/transcription-service/`, not a competing head in `mytheus-backend`'s chain.** | The honest answer to an open migration-ownership question: the table is owned by `transcription-service`, which lives in a different repo than the Postgres migration history it was, until now, entirely absent from. This is also the contributing cause of the partition-grant defect below: the backend's own partition-privilege convention, and the CI guard that checks it, is scoped to that repo's suite and was not inherited across the repo boundary. |
+| **`transcript_chunks` partitions initially inherited full DML grants for `mytheus_app` and `mytheus_admin`, with RLS disabled on every partition - found, then closed, in the same task.** | Root cause: `mytheus-backend` migration `a1c4e7f20b18` (Plan 1-2) runs `ALTER DEFAULT PRIVILEGES` schema-wide, in `public`, not scoped to that repo. Any migration from any repo creating a table or partition in the shared Postgres silently inherits those grants unless it explicitly revokes. PostgreSQL compounds it: RLS on a partitioned parent is enforced only when querying through the parent; a partition queried by name is checked against its own row-security state, which was off. Empirically proven both ways: a live query as `mytheus_app` through the parent returned only the caller's own tenant's row; the identical query against a partition by name returned every tenant's rows, writable and deletable. Closed with a `lock_down_partition()` migration helper that `REVOKE ALL`s from all three application roles immediately after every `CREATE TABLE ... PARTITION OF`, plus a new guard scoped to `transcript_chunks` via `pg_inherits` so future partitions are covered without anyone remembering. The schema-wide root cause is not fixed - see the open gaps. |
+| **`chunk_id` is minted deterministically via `uuid5`, not randomly, across three iterations.** | Round 1 (`request_id + ":" + start_ms`) was not a valid UUID and every Postgres insert failed. Round 2 (`uuid5(..., f"deepgram:{request_id}:{start_ms}")`) fixed the format but not the collision surface: `request_id` is constant for a whole Deepgram session, so two distinct finals sharing a millisecond timestamp - ordinary behavior when two speakers start talking at once - collided and the second was silently swallowed by the outbox idempotency gate. Round 3 adds `speaker_id` and `end_ms` to the key, so a collision now requires matching speaker and both time boundaries, which is what a genuine redelivery looks like. Determinism was preserved throughout on purpose: a random key would trade a rare silent drop for guaranteed-broken dedupe on genuine redelivery, which is worse. |
+| **`realtime-gateway` Socket.io rooms are keyed by `meeting_id` alone, with `org_id` deliberately dropped from the room name.** | `mytheus-realtime/CLAUDE.md` states rooms are keyed by `meeting_id`; the org-embedding in an earlier draft was a repo-local embellishment on canon, not a canon requirement being weakened. Isolation instead rests on the deny-by-default participant check at `join` time (the only place a socket enters a room) plus, after the fix below, literal per-channel delivery for captions. Verified this is not a regression by tracing every write path into a room. |
+| **A real cross-tenant leak in the captions path, found and closed within the same task.** | If org A and org B genuinely have meetings sharing a literal `meeting_id`, both orgs' users legitimately pass their own participant checks and both join Socket.io room `meeting:{id}`. The pre-fix relay delivered a caption to that whole room, so an org A caption reached an org B socket. Reproduced against the pre-fix code with a failing test first, then closed by delivering directly to a per-channel (`org_id` plus `meeting_id`) local-socket set, bypassing room membership for this path entirely - structurally closed rather than contingent on `meeting_id` uniqueness holding. |
+| **`presence-events` producer originally wrote raw Clerk claims (the opaque `org_...` string, the `sub` claim) into envelope fields typed as internal UUIDs.** | The Avro schema types `header.org_id` and `payload.user_id` as UUID; canon defines `header.org_id` as the internal tenant root, resolved through `organizations.clerk_org_id`. `realtime-gateway` has no database and cannot resolve this locally. Fixed by resolving through `core-api`'s participant-check response, which already returns the resolved internal ids as part of the deny-by-default `join` flow - no new query, no new endpoint. |
+| **`X-Org-Id`, sent by the gateway on the participant-check call, was inert - `core-api` never read it - and was removed rather than documented.** | A header that appears to convey tenancy while being silently discarded is a trap for a future reader who might trust it or copy the pattern into a route that does not ignore it. Since nothing on the sending side read anything back from it either, there was nothing worth keeping under a different name. |
+| **`meeting_rooms.livekit_metadata_synced_at` (new column, new migration) replaces an earlier design that called LiveKit synchronously inside the token-mint route's open database transaction.** | The synchronous call created two real defects: a LiveKit blip could crash-loop the `meeting-events` consumer indefinitely (an ordinary exception is not dead-lettered and is redelivered on restart before the offset commits), and the call's default 60 s timeout could hold a pooled connection for up to ~120 s per join, undercutting the same route's own 2 s `statement_timeout`. The fix decouples the LiveKit call into a background task that fires only after the tenant-scoped session has already committed, retried automatically on the next mint or webhook rather than requiring new cross-tenant infrastructure (a full outbox-style sweep was considered and rejected as disproportionate to a fix round). A residual gap is disclosed: a room that never receives a token mint or a webhook after its one sync attempt fails stays permanently unsynced, judged acceptable because that state is only reachable by a room nobody ever actually joins. |
+| **Redaction ships as a deterministic regex/validator layer only; the plan's NER pass and per-tenant reversible token vault are not implemented.** | A real NER model is a dependency disproportionate to this band; a per-tenant token vault (encryption, storage, access control for reversal) is a feature of its own scale. Disclosed explicitly, not silently dropped, and the deterministic layer covers every case the plan's own acceptance test exercises. |
+| **`transcription-service`'s `meeting-room-events` consumer has real dedupe and session logic but no live `confluent-kafka` I/O loop wired.** | A disclosed trade: the team lead's own stated priority order was "land the compliance gate, finals-only persistence, and the producer correctly over rushing the reconnect logic and captions bridge," and the I/O wiring for this consumer was the piece traded to keep that order. |
+| **Reconnect success-rate mechanics (> 99.9% within 2 s) not implemented.** | Meaningless to build against `FakeProvider` (there is nothing to reconnect to) and unexercisable against `DeepgramProvider` while the compliance gate stays closed. |
+| **Staging deploy on merge (plan step 3.1.8) not attempted.** | No task in this band's eight-task breakdown covered CI-matrix or deploy-pipeline work; all eight were schema, adapter, and route/service work. Recorded as an open gap rather than a silent skip. |
+
+---
+
+## 4. Open gaps
+
+Ordered by what blocks the most.
+
+| # | Gap | Blocks | Picked up by |
+|---|---|---|---|
+| 1 | **No LiveKit, Deepgram, or S3-compatible object-store credentials exist anywhere in the program.** | Real end-to-end token verification, `recording.ready` landing an object in `nexus-recordings`, any real Deepgram stream, the EU-cell half of the residency check, the reconnect-SLO metric, the `k6` token-mint p95 smoke, and turning the compliance gate substantively green. | Explicit go plus real vendor accounts. |
+| 2 | **`web-app` room UI and captions UI (plan sections 3.4, 3.8) not built.** | The full end-to-end browser demo described in the plan's own end-of-P3 and end-of-P4 demo sections. | Deliberately deferred; needs the maintainer's go the same way Plan 1-2's `mytheus-ui` reconciliation did. |
+| 3 | **`mytheus-mobile` section 7 not built.** | The phone leg of the same demo. | Deferred, same decision plus missing LiveKit RN credentials. |
+| 4 | **The compliance gate's substantive conditions are unmet: no Deepgram DPA/SCC signed, LiveKit Cloud not yet in the subprocessor register, zero-retention flag unset.** | Turning `COMPLIANCE_GATE_GREEN` on for any real tenant. The engineering control itself is correct and unbypassable. | Legal and compliance, not engineering. |
+| 5 | **The platform-level partition-grant leak is not durably fixed.** `mytheus-backend` migration `a1c4e7f20b18`'s schema-wide `ALTER DEFAULT PRIVILEGES` means any future table or partition created by any repo against the shared Postgres re-inherits full DML grants unless its own migration explicitly revokes. `transcript_chunks` is now locked down and guarded; the class of bug that produced it is not closed. | Every future cross-repo migration against this database. | `mytheus-backend` or `mytheus-platform`: either retire the schema-wide grant for narrower per-table ones, or add a `ddl_command_end` event trigger that auto-revokes on every new relation in `public` unless allow-listed. Neither belongs in a single service repo's migration. |
+| 6 | **The partition-privilege guard test lives only in `mytheus-backend`'s suite**, scoped to that repo's pytest run. A repo creating a table in the shared Postgres has no way to discover it needs this check before shipping. | The next repo to add a partitioned table to this database, the same way `transcription-service` did. | A cross-repo or platform-level check, not a per-repo one. |
+| 7 | **NER redaction pass and the per-tenant reversible token vault not implemented.** | The plan's full redaction scope; the deterministic layer covers its own acceptance test but not the plan's stated design. | A dedicated task once the compliance gate's other conditions are being pursued anyway. |
+| 8 | **`transcription-service`'s `meeting-room-events` consumer has no live I/O loop.** | Nothing drives session open/close from a real Redpanda topic yet; the logic that would run it is real and tested standalone. | Next `mytheus-realtime` session. |
+| 9 | **`usage_events` producer for `meeting_minute` / `transcription_second` still has no assigned owner (plan section 8, DECISION-REQUIRED #3).** | Metering accuracy in Plan 7-9. Does not block this band's capture path. | Billing lead plus canon owners, before Plan 7-9 needs it. |
+| 10 | **Staging deploy on merge for `meeting-service` not attempted.** | Plan step 3.1.8's own acceptance line. | Next session that picks up CI/deploy work for this service. |
+| 11 | **`tests/test_relay.py::test_relay_real_bus_roundtrip` is a known-flaky live-broker test**, observed flaking by three independent agents across this band, always passing in isolation. | Confidence in the "N passed, 1 failed" framing every session in this band has had to restate. | Needs a real wait-condition instead of a fixed poll window. Carried over from Plan 1-2's gap list, now with more evidence. |
+| 12 | **The shared dev Postgres is now ahead of `main`.** `mytheus-backend`'s `main` checkout cannot run `alembic upgrade head` or any alembic operation against the shared dev database until this branch merges (`Can't locate revision '25e7cede5672'`). Services still run fine; they only query tables. | Anyone doing alembic work from `main` against the shared dev stack before this branch merges. | Merge this branch, or point `main`'s alembic operations at a separate database meanwhile. |
+| 13 | **`meeting_rooms` is still not represented in `_canon/02-data-model.md`.** Pre-existing gap from the table's original migration (Task 2 of this band), not introduced or closed here. | Canon completeness for this table. | Whoever next reconciles canon against the shipped schema. |
+| 14 | **`mytheus-realtime` has no lint step wired into `make lint` for the gateway (Node/TypeScript) stack** - pre-existing, only the Python stack is linted. | Nothing today; a latent quality gap. | Next `mytheus-realtime` CI session. |
+| 15 | **The idempotency-cache collision inherited from Plan 1-2 is worse than previously recorded**: `libs/shared/idempotency.py` keys purely on `nexus:{org_id}:idem:{key}`, with no route, method, or path component, so the real blast radius is cross-endpoint collision (any two different mutating endpoints sharing a reused key), not same-endpoint-different-body as Plan 1-2's record stated. Left alone in this band (shared middleware, all nine services, explicitly out of scope for any single task), but the corrected shape is recorded here so whoever fixes it knows the true blast radius. | Whoever eventually closes Plan 1-2 open gap 3. | Next backend session that touches `libs/shared/idempotency.py`. |
+| 16 | **`test_roles_and_policies.py::test_relay_role_drains_outbox_across_tenants` runs an unscoped `DELETE FROM outbox` before seeding its own rows**, a hazard in a database shared with concurrent agents. No harm observed this band (checked: outbox held 3 rows, 0 unpublished, after the run that surfaced this), but the hazard itself is unfixed. | Any future concurrent work against the shared dev database. | A `mytheus-backend` test-hygiene pass. |
+
+---
+
+## 5. Verification
+
+Every command below was run and its output observed during this band, in each repo's Plan 3-4 worktree against the shared dev stack (Postgres, Redis, Redpanda, Schema Registry). Nothing here is inherited from a prior band's claim; where a number is carried forward from earlier in this same band's session log, that is stated explicitly.
+
+| Repo | Command | Result |
+|---|---|---|
+| `mytheus-backend` | `uv run pytest -q` | **200 passed, 1 failed** (`tests/test_relay.py::test_relay_real_bus_roundtrip`, known flake, reproduced standalone across 3 runs, passes in isolation) |
+| `mytheus-backend` | `ruff check .` / `black --check .` / `mypy .` | Clean (103 files black-checked, 72 source files mypy-checked as of the last fix round) |
+| `mytheus-backend` | `python scripts/check_authz.py` | Passes on every real route |
+| `mytheus-realtime` (`realtime-gateway`) | `npm test` | **42/42 vitest**, across unit, integration, real-broker, and cross-pod-process suites |
+| `mytheus-realtime` (`realtime-gateway`) | `npm run typecheck`, `make ci` | Clean / green |
+| `mytheus-realtime` (`transcription-service`) | `uv run pytest -q` | **41/41**, all real Postgres/Redis/Redpanda/Registry on load-bearing paths |
+| `mytheus-realtime` (`transcription-service`) | `ruff` / `black` / `mypy --strict` | Clean |
+| `mytheus-events` | `make validate` | 21 topics OK |
+| `mytheus-events` | `make check-compatibility` | 21 subjects BACKWARD against the live Schema Registry |
+| `mytheus-events` | Deliberate-break-and-restore of the validator (unqualified `org_id`, then a nullable `EventEnvelopeHeader.org_id`) | Both correctly exit non-zero, then pass again once restored |
+| Live DB (direct query) | `SELECT` / `UPDATE` / `DELETE` on a `transcript_chunks` partition by name, as `mytheus_app`, before the fix | **Succeeded across the tenant boundary** - the defect described in section 3, reproduced empirically, cleaned up afterward with zero residue |
+| Live DB (direct query) | Same probe, after the fix | Zero rows returned; `mytheus-backend`'s own `test_no_application_role_can_reach_a_partition_directly` (10/10 in that file) passes when run from the Plan 3-4 worktree |
+| `mytheus-realtime` | `test_partition_privileges.py`, guard-fires check | A hand-created `transcript_chunks_2099_01` partition without the lockdown helper reproduced the original defect exactly (full DML inherited); the guard failed listing all 8 leaked grants; dropped, both tests pass clean afterward |
+| `mytheus-realtime` (`realtime-gateway`) | Cross-pod fan-out test | Two separately spawned OS node processes, distinct PIDs, real Redis adapter |
+| `mytheus-realtime` (`realtime-gateway`) | Presence sweep test | A real `kill -9` on one of two spawned processes; the surviving process performs the reap and emits the leave event |
+| `mytheus-realtime` (`transcription-service`) | Compliance-gate bypass attempt | A reviewer tried environment variables, direct `DeepgramProvider` construction, and configuring a key; none opened a stream |
+| `mytheus-docs` | Regex sweep for the pre-decision partition-key language, before and after the fix rounds | Converged to zero unscoped hits across two rounds |
+| `mytheus-docs` | `grep` for em-dashes and en-dashes in files touched this band | Found none in new prose; pre-existing instances elsewhere in the corpus (2,153 counted repo-wide) are flagged as a separate, unfixed repo-hygiene item, not this band's regression |
+
+**NOT run, and not claimed:** any command requiring a LiveKit, Deepgram, or S3 account; the `k6` token-mint smoke; a browser or mobile run against a live meeting.
+
+---
+
+## 6. What to do next
+
+1. **Get the maintainer's explicit go for `mytheus-ui` and `mytheus-mobile`**, the same way Plan 1-2's section 3.10 reconciliation required one, before building sections 3.4, 3.8, or section 7.
+2. **Close the platform-level partition-grant leak durably** (open gap 5): narrow `mytheus-backend`'s schema-wide `ALTER DEFAULT PRIVILEGES`, or add a `ddl_command_end` event trigger. This is the single highest-leverage fix outstanding, because it protects every future table in the shared database, not just this band's.
+3. **Wire `transcription-service`'s `meeting-room-events` consumer I/O loop** (open gap 8) - the logic is done, only the Redpanda subscribe/poll/commit wiring is missing.
+4. **Pursue the compliance gate's substantive conditions** (Deepgram DPA/SCC, LiveKit Cloud subprocessor registration, zero-retention flag) once real vendor relationships exist - the engineering gate is ready to be turned on the moment they land.
+5. **Promote `test_relay_real_bus_roundtrip` off the deferred-minor list** (open gap 11) - it has now flaked across three separate bands' worth of sessions.
+
+---
+
+## Final whole-branch review
+
+TO BE COMPLETED BY THE CONTROLLER.
+
+---
+
+## 7. Related
+
+- [00-status-overview.md](00-status-overview.md) for program-wide state.
+- [02-plan-1-2-foundation-and-tenancy.md](02-plan-1-2-foundation-and-tenancy.md) for what this band inherited, including the entry preconditions this band's own recon confirmed GREEN.
+- [adr/0017-transcript-chunks-composite-partition-key.md](../adr/0017-transcript-chunks-composite-partition-key.md) and [adr/0018-consent-entity-behind-flag.md](../adr/0018-consent-entity-behind-flag.md) for the two decisions this band ratified.
+- [plan/plan-5-6-org-context-and-ai-infra.md](../plan/plan-5-6-org-context-and-ai-infra.md) for the next band, whose entry preconditions this band's recon already checked: identity live (GREEN), this band's tier live (GREEN once merged), `libs/shared` building blocks (GREEN), infra reachable (PARTIAL - Qdrant, an S3-compatible store, and a GPU runner are still missing), and the partition-key decision (already ratified here, see ADR-0017).
