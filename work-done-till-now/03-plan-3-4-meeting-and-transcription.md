@@ -213,7 +213,78 @@ Every command below was run and its output observed during this band, in each re
 
 ## Final whole-branch review
 
-TO BE COMPLETED BY THE CONTROLLER.
+Run after all eight tasks passed their own task-level reviews. Its purpose was the one thing a
+task-level review structurally cannot do: look at all four repos at once and find what falls between
+tasks. It earned that purpose.
+
+The first attempt, one reviewer over the whole branch, produced no output at all and was treated as
+failed rather than re-prompted. It was replaced by two reviewers, each taking half the branch with a
+bounded output budget and explicit permission to report "nothing above Minor" rather than manufacture
+findings.
+
+Verdicts:
+
+- `mytheus-backend` and `mytheus-events`: MERGE. No Critical, no Important. It cleared the
+  least-reviewed code deliberately, confirming the detached `asyncio.Task` in `f4306bf` keeps a
+  strong reference with an `add_done_callback` discard, never touches a session before the triggering
+  transaction commits, and cannot crash the poll loop; that the token-mint route's hand-managed
+  session closes on every exit path including exceptions; and that the deadlock regression test
+  exists rather than accepting the claim. It also cleared the two-Alembic-histories risk: the
+  `transcription-service` history renames its version table to
+  `alembic_version_transcription_service` so it cannot collide with the backend's on the same
+  physical database, and `transcript_chunks` holds no foreign key into backend-owned tables.
+- `mytheus-docs`: clean and independently mergeable. Every prior "not ratified" or "PROPOSED"
+  mention was propagated to cite the ADRs, and ADR-0001, ADR-0007 and ADR-0009 carry pure
+  forward-pointer annotations rather than rewrites.
+- `mytheus-realtime`: MERGE WITH FIXES, on one Critical.
+
+### The Critical, and why every earlier review missed it
+
+Presence and chat still delivered by Socket.io room membership after `roomName()` had stopped
+carrying `org_id`. Three presence broadcasts and the chat relay were affected. Two organizations
+whose meetings shared a literal `meeting_id` would place sockets from both in one room, so a member
+of one would receive the other's presence member list, carrying internal user UUIDs, and its live
+chat content.
+
+This was not an oversight by any single task. Presence and chat were built while the room name still
+carried `org_id`, and were correct then. The room key lost `org_id` later, while fixing an unrelated
+identity bug, and two reviewers examined that change and cleared it, one tracing every write path and
+reasoning that emitting is not joining. That reasoning holds for authorization and fails for delivery
+targeting. A later task then found and fixed the leak on its own path without anyone asking what else
+the room-key change had made unsafe.
+
+The signal that exposed it was a test asymmetry: captions had a dedicated test for two organizations
+sharing one literal `meeting_id`; presence and chat had nothing equivalent.
+
+Fixed in `6679ab4` by restoring `org_id` to `roomName()` itself as a two-argument function, so the
+compiler enforces it at all five call sites rather than four separate call sites each needing to
+remember. That is safe now in a way it was not when the argument was first dropped, because every
+caller threads the same `presenceOrgId`, resolved once at join and reused everywhere including by the
+reconciliation sweep. The reasoning is recorded in `libs/keys.ts` so it is not reversed without
+someone reading why. A collision test covering presence and chat in both directions was added and
+verified to fail against the pre-fix code, not merely to pass against the fix.
+
+### Residual items accepted rather than fixed
+
+- The `stop()` drain was changed from a single snapshot to a loop, removing reliance on an unstated
+  Socket.io ordering guarantee. The accompanying test does not discriminate the loop from the
+  snapshot: both pass, because `io.close()` registers cleanups synchronously before its own callback
+  in every scenario that could be constructed. The loop was kept regardless and the limit recorded
+  rather than overclaimed.
+- Interim captions are not redacted. Confirmed as correct and now documented at the point the code
+  skips it. Note this is not an at-rest-only rule: a final's live caption carries the already-redacted
+  text, so only interims are ever unredacted. It rests on the assumption that every tenant treats at
+  rest as the boundary. A tenant whose posture puts the live plane in scope would need a second
+  `tenant_settings` flag, separate from `pii_redaction_enabled`. None exists.
+
+### A theme worth carrying forward
+
+Three separate test doubles in this band were found to be unfaithful to the services they doubled:
+one read a header the real service never read, one minted a fresh organization id per call so two
+users intended to share an organization silently did not, and one encoded a contract that the real
+producer had already stopped honouring. Each was invisible until something outside the double
+depended on the real behaviour. Test doubles in this program need fidelity review in their own right,
+not only the code under test.
 
 ---
 
