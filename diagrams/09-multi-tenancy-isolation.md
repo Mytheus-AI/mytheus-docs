@@ -35,7 +35,7 @@ flowchart TB
   SVC -->|"SET app.current_org = org_id (txn-local)"| PG["Postgres + RLS<br/>USING (org_id = current_setting('app.current_org'))<br/>tenant rows only"]
   SVC -->|"resolve logical → physical collection"| QD["Qdrant<br/>transcript_chunks__{org_id}<br/>document_chunks__{org_id}<br/>+ mandatory org_id payload filter"]
   SVC -->|"$org_id Cypher param"| AGE["Apache AGE: nexus_knowledge<br/>org-partitioned, every node carries org_id"]
-  SVC -->|"produce / consume<br/>partition key = org_id"| RP["Redpanda topics<br/>(transcript-chunks, decisions, actions, …)<br/>tenant-keyed partitions"]
+  SVC -->|"produce / consume<br/>partition key = org_id (19 topics) or<br/>{org_id}:{meeting_id} (transcript-chunks, agent-stream)"| RP["Redpanda topics<br/>(decisions, actions, transcript-chunks, …)<br/>tenant-keyed partitions"]
   SVC -->|"key builder enforces prefix"| RD["Redis (Upstash)<br/>nexus:{org_id}:user_ctx:{user_id}<br/>nexus:{org_id}:rag:{user_id}:{query_hash}<br/>nexus:{org_id}:budget:{period}"]
   SVC -->|"org_id in request context"| QUOTA["billing-metering-service<br/>per-tenant token budgets + hard quotas<br/>agent_budgets / quotas"]
 
@@ -100,7 +100,7 @@ The defining property: **RLS stays ON even inside a cell.** A cell shrinks blast
 | `app.current_org` | The transaction-local Postgres session GUC RLS reads; set per request from the injected `org_id`. |
 | `transcript_chunks__{org_id}` / `document_chunks__{org_id}` | Physical per-tenant Qdrant collections (logical names `transcript_chunks` / `document_chunks`); a mandatory `org_id` payload filter is the second line of defense. |
 | `nexus_knowledge` | The org-partitioned Apache AGE graph; every node carries `org_id` and every Cypher template is parameterized by `$org_id`. |
-| Tenant-keyed partitions | Every Redpanda topic (`transcript-chunks`, `decisions`, `actions`, `agent-requests`, …) uses `org_id` as the partition key. |
+| Tenant-keyed partitions | Every Redpanda topic is tenant-partitioned. 19 of 21 (`decisions`, `actions`, `agent-requests`, …) use `org_id` as the partition key; `transcript-chunks` and `agent-stream` use the composite `{org_id}:{meeting_id}` ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)). |
 | `nexus:{org_id}:…` | The Redis key namespace prefix; the key builder rejects unprefixed keys. |
 | Solid arrows | The single-resolution `org_id` propagation path from edge to each store. |
 | Dotted arrows | Cross-cutting control-plane concerns (quotas, audited ops) that apply across all tenants/cells. |

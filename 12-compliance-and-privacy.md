@@ -107,11 +107,11 @@ Excluded from every bundle by classification: **C2 secrets** (`oauth_tokens`, `s
 
 ### 3.3 Recording & transcription consent
 
-> [SaaS-scale adjustment] There is **no canon consent entity** — this is a genuine design gap that NEXUS must close, and it is grounded in the existing token-mint / join flow rather than a new store. Two-party-consent jurisdictions (e.g. several US states, EU) require an affirmative, recorded acknowledgment before a participant is transcribed.
+> [SaaS-scale adjustment] There was **no canon consent entity** — a genuine design gap this document identified, grounded in the existing token-mint / join flow rather than a new store. Two-party-consent jurisdictions (e.g. several US states, EU) require an affirmative, recorded acknowledgment before a participant is transcribed.
 
-> [SaaS-scale adjustment] **The consent schema below is a PROPOSED extension, not settled canon — it requires an ADR + canon amendment before implementation.** Specifically: `consented_at`/`consent_version` are **new columns on `meeting_participants`**, which is a PDF-original frozen table (canon freezes it to exactly `meeting_id`, `user_id`, `role_in_meeting`, PK `(meeting_id, user_id)`); and any `consent_required` / consent-exempt-meeting-type flag is a **new field on `tenant_settings`**, which is canon-frozen to `default_locale`, `agent_confidence_overrides`, `retention_days_transcripts`, `retention_days_worklogs`, `pii_redaction_enabled`, `sso_config`. The 428-Precondition-Required token-mint response and the consent-exempt meeting type are likewise proposed mechanics. None may be implemented until the ADR lands and the two frozen tables are amended in [Data Model §2.1](_canon/02-data-model.md); any rename must first be recorded in the glossary.
+> [SaaS-scale adjustment] **The consent schema is ratified canon, landed schema-first and defaulted off** ([ADR-0018](adr/0018-consent-entity-behind-flag.md)). `meeting_participants.consented_at timestamptz NULL` / `consent_version text NULL` and `tenant_settings.consent_required boolean NOT NULL DEFAULT false` are amended into [Data Model §2.1/§2.2](_canon/02-data-model.md). Both previously-frozen tables now carry these columns; no other column changed. `consent_required` defaults `false`, so no tenant's join behavior changes as a result of this landing — flipping it for a tenant is a legal/compliance decision, not an engineering one ([ADR-0018](adr/0018-consent-entity-behind-flag.md)). **Out of scope for this landing:** the migration adding these columns and the `meeting-service` application code enforcing the 428 check below are later tasks that depend on the schema landing first; a consent-exempt internal-meeting-type flag remains a separate, still-unratified proposal not covered by ADR-0018.
 
-Consent is captured at the **token-mint boundary** that already gates joining a meeting (`POST /api/meetings/:id/token`, owned by `meeting-service`, [Tech Decisions §2.7](_canon/06-tech-decisions.md)). The token endpoint will not mint a join token until the participant acknowledges that the meeting is recorded and transcribed by AI agents. The acknowledgment is persisted as a proposed `meeting_participants` consent flag (`consented_at timestamptz`, `consent_version`) and emitted on `meeting-room-events` (the topic `meeting-service` produces — `meeting-events` is owned by `core-api`) for the audit trail.
+Consent is captured at the **token-mint boundary** that already gates joining a meeting (`POST /api/meetings/:id/token`, owned by `meeting-service`, [Tech Decisions §2.7](_canon/06-tech-decisions.md)). The token endpoint will not mint a join token until the participant acknowledges that the meeting is recorded and transcribed by AI agents. The acknowledgment is persisted on the now-canon `meeting_participants.consented_at`/`consent_version` (`consented_at timestamptz`, `consent_version`) and emitted on `meeting-room-events` (the topic `meeting-service` produces — `meeting-events` is owned by `core-api`) for the audit trail.
 
 ```mermaid
 sequenceDiagram
@@ -120,8 +120,8 @@ sequenceDiagram
   participant T as identity-tenant-service
   participant AUD as admin-ops-service
   U->>M: POST /api/meetings/:id/token
-  M->>T: read tenant_settings (default_locale; proposed consent_required field)
-  alt consent not yet given this meeting
+  M->>T: read tenant_settings (default_locale; consent_required)
+  alt consent_required = true and consent not yet given this meeting
     M-->>U: 428 Precondition Required (consent prompt + version)
     U->>M: acknowledge consent (version)
     M->>M: meeting_participants.consented_at = now()
@@ -130,7 +130,7 @@ sequenceDiagram
   M-->>U: mint LiveKit join token
 ```
 
-If a participant declines, they are not admitted to the recorded session; the tenant admin may configure a consent-exempt internal meeting type via a proposed `tenant_settings` field (see the proposed-extension callout above — this field is not in canon-frozen `tenant_settings` and requires the same ADR + canon amendment), which is itself an auditable setting change.
+If a participant declines, they are not admitted to the recorded session; the tenant admin may configure a consent-exempt internal meeting type via a proposed `tenant_settings` field — this field is **not** part of [ADR-0018](adr/0018-consent-entity-behind-flag.md)'s ratified schema, remains a proposal, and requires its own ADR + canon amendment before implementation.
 
 ### 3.4 Erasure and the legal-hold carve-out
 
@@ -379,7 +379,7 @@ Reading the diagram:
 | Subprocessors | Deepgram, OpenAI, Anthropic, LiveKit — all under DPA; EU transfers under SCC + zero-retention |
 | Redaction boundaries | `ingestion-service` (docs), `transcription-service` (at-rest, gated), LLM-egress (always-on) |
 | DSR SLA | 30 days; access/portability via `nexus-exports`; erasure via the [§8.1](05-data-architecture.md) RTBF saga |
-| Consent | Captured at `meeting-service` token-mint; recorded on `meeting_participants` + audit. **Proposed schema: requires ADR + canon amendment** — `consented_at`/`consent_version` (on frozen `meeting_participants`) and `consent_required` (on frozen `tenant_settings`) are new columns/fields not yet in canon |
+| Consent | Captured at `meeting-service` token-mint; recorded on `meeting_participants` + audit. Schema ratified ([ADR-0018](adr/0018-consent-entity-behind-flag.md)) — `consented_at`/`consent_version` on `meeting_participants` and `consent_required` on `tenant_settings`, defaulted `false`. Migration and 428 application code are later tasks |
 | Legal-hold carve-out | `nexus-invoices` (7yr) + `nexus-audit-archive` (SOC2) survive erasure under GDPR Art 17(3) |
 | Audit | Append-only `audit_logs` (`actor_type ∈ {user, agent, system}`), 1yr hot + write-once archive |
 | SOC2 | Type II readiness over Security/Availability/Processing Integrity/Confidentiality, mapped to canon mechanisms |

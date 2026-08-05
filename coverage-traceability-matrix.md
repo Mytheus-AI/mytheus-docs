@@ -315,6 +315,8 @@ Everything in this table is wholly added or hardened relative to the PDF. Each a
 | Compliance suite: GDPR/CCPA, DPAs+SCCs, data residency, PII redaction, RTBF, audit logging, SOC2 readiness | PDF had no compliance posture | [12-compliance-and-privacy.md](12-compliance-and-privacy.md) |
 | Capacity model (20k concurrent meetings / 100k participants, ~$19.5M/mo variable infra, SLO tiers) | PDF sized only a `2 orgs × 10 users × 5 meetings` seeder | [13-scalability-and-performance.md](13-scalability-and-performance.md) ([_canon/05-capacity-math.md](_canon/05-capacity-math.md)) |
 | Structured observability: Prometheus/Grafana SLOs, consumer-lag + quota dashboards, tenant-tagged JSON logs | PDF listed tooling but no SLO/dashboard ownership | [15-observability-and-sre.md](15-observability-and-sre.md) |
+| Composite `{org_id}:{meeting_id}` partition key for `transcript-chunks` and `agent-stream` only (19 other topics stay `org_id`-only) | PDF had no tenant concept and no partition key strategy of any kind | [07-event-architecture.md](07-event-architecture.md) ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) |
+| Consent entity landed schema-first, defaulted off: `meeting_participants.consented_at`/`consent_version`, `tenant_settings.consent_required` | PDF had no consent concept and no data-subject/consent capture | [12-compliance-and-privacy.md](12-compliance-and-privacy.md) ([ADR-0018](adr/0018-consent-entity-behind-flag.md)) |
 
 ---
 

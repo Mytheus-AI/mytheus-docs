@@ -23,7 +23,7 @@ NEXUS is **event-driven microservices with an explicit modular-monolith → serv
 Five invariants bind every topic and every arrow in the system:
 
 1. **One bus, Kafka API.** Redpanda (Kafka API compatible), Avro values, Redpanda Schema Registry. One subject per topic, named `{topic}-value`, **BACKWARD** compatibility (carried verbatim from the PDF).
-2. **Partition key = tenant.** Every topic is partitioned by `org_id`. Per-tenant ordering, isolation, replay, and throughput control. A noisy tenant cannot starve or reorder another's stream.
+2. **Partition key = tenant (with two named exceptions).** 19 of 21 topics are partitioned by `org_id` alone: per-tenant ordering, isolation, replay, and throughput control, so a noisy tenant cannot starve or reorder another's stream. `transcript-chunks` and `agent-stream` are partitioned by the composite `{org_id}:{meeting_id}` (§4.1, [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) so a hot enterprise tenant spreads across partitions while ordering within a meeting is preserved. `org_id` is present and non-nullable in the envelope header on every topic regardless.
 3. **At-least-once, idempotent in effect.** Producers write through a **transactional outbox** in the same DB transaction as their state change. Consumers dedupe through an **inbox** table plus a Redis dedupe cache keyed by `idempotency_key`. Net effect is exactly-once application of every event.
 4. **Poison messages quarantine, never block.** Every topic has a paired **DLQ** with a bounded retry policy; a single bad message never wedges a partition.
 5. **No silent commits.** `decisions` and `actions` are emitted **only on user confirmation**, matching the PDF agent rule. The graph and downstream read models mirror confirmed truth only.
@@ -164,27 +164,30 @@ The Confluent wire format prepends a magic byte + 4-byte schema id to every valu
 
 ## 4. Partitioning, ordering, and retention
 
-### 4.1 Partition key = tenant
+### 4.1 Partition key = tenant, with two composite exceptions
 
-The partition key for **every** topic is the `org_id` UUID (the same value carried in the envelope header). Consequences, all intentional:
+The partition key for 19 of the 21 topics is the `org_id` UUID (the same value carried in the envelope header). Consequences, all intentional:
 
-- **Per-tenant ordering.** All events for one tenant on one topic land on one partition and are consumed in offset order. A meeting's `transcript-chunks` arrive in speech order at the embedding consumer and the agent runtime.
+- **Per-tenant ordering.** All events for one tenant on one topic land on one partition and are consumed in offset order.
 - **Per-tenant replay.** Reprocessing one tenant means replaying its partition slice, not the whole topic.
 - **Noisy-neighbor isolation.** A tenant generating a burst saturates its own partition's lag, observable per tenant, without head-of-line-blocking another tenant on a different partition.
 
-> [SaaS-scale adjustment] The PDF had no tenant concept and therefore no partition key strategy. Partitioning by `org_id` is locked in [Tech Decisions §2.4](_canon/06-tech-decisions.md) and is the bus-level half of the same isolation story as RLS, per-tenant Qdrant collections, and the org-partitioned `nexus_knowledge` graph (see [Multi-Tenancy](06-multi-tenancy.md)).
+`transcript-chunks` and `agent-stream` are partitioned by the composite key `{org_id}:{meeting_id}` instead. A single enterprise tenant running thousands of concurrent meetings can exceed one partition's throughput on these two topics, the highest-*count* topics in the system, because keying solely on `org_id` hashes that tenant onto one partition regardless of the topic's total partition count. The composite key spreads one tenant's load across partitions while preserving ordering **within a meeting** — the only ordering scope the embedding consumer and the agent runtime actually require: a meeting's `transcript-chunks` still arrive in speech order, and one meeting's `agent-stream` deltas still arrive in emission order. `org_id` remains present and non-nullable in the envelope header on both topics; it is still the tenant key and the leading component of the composite key, just no longer the whole key.
 
-The locked partition key for **every** topic is `org_id` (per [Tech Decisions §2.4](_canon/06-tech-decisions.md) "All topics partitioned by tenant" and [Data Model §7 rule 3](_canon/02-data-model.md) "Redpanda by tenant-keyed partition"). The table below states the frozen key for each topic class.
+> [SaaS-scale adjustment] The PDF had no tenant concept and therefore no partition key strategy. Partitioning by `org_id` is locked in [Tech Decisions §2.4](_canon/06-tech-decisions.md) and is the bus-level half of the same isolation story as RLS, per-tenant Qdrant collections, and the org-partitioned `nexus_knowledge` graph (see [Multi-Tenancy](06-multi-tenancy.md)). The two named exceptions below do not change that lock in substance — `org_id` is still the tenant-partitioning anchor on every topic — they refine it for the two topics where per-meeting spread matters.
+
+The frozen partition key for every topic, including the two exceptions, is recorded in [_canon/03-event-taxonomy.md](_canon/03-event-taxonomy.md), which is the single authoritative source; the table below reproduces it grouped by topic class.
 
 | Topic class | Partition key | Ordering guarantee | Why |
 |---|---|---|---|
-| High-volume meeting (`transcript-chunks`, `agent-results`, `agent-stream`) | `org_id` | Per-tenant | Locked tenant-partitioning; per-tenant ordering and replay |
+| High-volume meeting, per-meeting spread (`transcript-chunks`, `agent-stream`) | `{org_id}:{meeting_id}` | Per-tenant, per-meeting | [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md): hot-tenant spread across partitions while within-meeting order is preserved |
+| High-volume meeting, tenant-only (`agent-results`) | `org_id` | Per-tenant | Durable read-model source, lower count than the two topics above; locked tenant-partitioning is sufficient |
 | Documents (`document-chunks`) | `org_id` | Per-tenant | `document_chunks` has no mandatory `meeting_id` ([Data Model §2.1](_canon/02-data-model.md)); keyed by tenant |
 | Confirmed truth (`decisions`, `actions`) | `org_id` | Per-tenant | Graph edges and follow-ups apply in per-tenant order; idempotent `MERGE` (see §9) |
 | A2A (`agent-requests`, `agent-responses`) | `org_id` | Per-tenant | Correlation by `correlation_id`, not partition; deny-by-default authz scopes to one org |
 | Control plane / metering (`tenant-events`, `billing-events`, `usage-events`, `meeting-events`, `integration-events`, `graph-events`, `admin-events`, `user-sync-events`, `notification-delivery-events`, `presence-events`, `embedding-events`, `notifications`) | `org_id` | Per-tenant | Lifecycle/metering must apply in order per tenant |
 
-> [SaaS-scale adjustment] **Proposed (NOT yet ratified) hot-tenant sub-key.** A single enterprise tenant running thousands of concurrent meetings can exceed one partition's throughput, because keying solely on `org_id` hashes that tenant onto a single partition. A natural mitigation for the high-volume meeting topics (`transcript-chunks`, `agent-results`, `agent-stream`) is a composite key `"{org_id}:{meeting_id}"` that spreads one tenant's load across partitions while preserving ordering **within a meeting** — the only ordering scope agents and the embedding consumer actually require. This is a sound extension but it **changes the locked partition-key semantics** ("partitioned by tenant" → "partitioned by tenant+meeting"). It is therefore recorded here as a proposal only and must be ratified in [Tech Decisions §2.4](_canon/06-tech-decisions.md) and [Data Model §7](_canon/02-data-model.md) **before** any topic uses it. Until then, the frozen key for every topic is `org_id` as in the table above. (`document-chunks` could not use this sub-key in any case, since it carries no mandatory `meeting_id`; a hot-tenant spread for documents would key on `"{org_id}:{document_id}"`.)
+> [SaaS-scale adjustment] **Ratified hot-tenant sub-key, scoped to two topics.** This section previously recorded the `{org_id}:{meeting_id}` composite key as a proposal only, pending ratification in canon. [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md) has now ratified it for `transcript-chunks` and `agent-stream` specifically — see [_canon/03-event-taxonomy.md](_canon/03-event-taxonomy.md) for the frozen per-topic key. It was **not** extended to `agent-results` (durable, lower-count) or to the other 18 topics, whose per-tenant-only ordering and replay guarantees are unaffected. (`document-chunks` still could not use this sub-key in any case, since it carries no mandatory `meeting_id`; a hot-tenant spread for documents would key on `"{org_id}:{document_id}"` and remains unratified.)
 
 ### 4.2 Partition counts and retention
 
@@ -659,7 +662,7 @@ The ordering of what we shed is deliberate and maps to the retention/value table
 | Concern | Locked value |
 |---|---|
 | Bus | Redpanda (Kafka API), Avro values, Schema Registry, subject `{topic}-value`, **BACKWARD** compat |
-| Partition key | `org_id` on **every** topic (locked tenant partitioning). A hot-tenant `{org_id}:{meeting_id}` sub-key is proposed but **not** ratified — see §4.1. |
+| Partition key | `org_id` on 19 of 21 topics (locked tenant partitioning); `transcript-chunks` and `agent-stream` use the ratified composite `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) — see §4.1. |
 | Delivery | At-least-once + idempotency keys; **exactly-once in effect** |
 | Producer | Transactional **outbox** + relay; `NexusProducer` (confluent-kafka-python + AvroSerializer, `acks=all`, idempotent) |
 | Consumer | `BaseConsumer` (AvroDeserializer, manual offset commit after effect) + **inbox** + Redis dedupe `nexus:{org_id}:dedupe:{topic}:{key}` (24h) |

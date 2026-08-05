@@ -38,7 +38,7 @@ flowchart TB
     RTGW["realtime-gateway<br/>(Socket.io fan-out)"]
   end
 
-  subgraph BUS["Redpanda — tenant-partitioned (key = org_id)"]
+  subgraph BUS["Redpanda — tenant-partitioned (key = org_id, or {org_id}:{meeting_id} for transcript-chunks/agent-stream)"]
     TC[["transcript-chunks<br/>(Avro TranscriptChunk)"]]
     AR[["agent-results<br/>(Avro AgentResult)"]]
     AST[["agent-stream<br/>(token-delta envelope)"]]
@@ -96,7 +96,7 @@ flowchart TB
   NOTIF -->|in-app| RTGW
 ```
 
-> [SaaS-scale adjustment] Every topic above is **tenant-partitioned with `org_id` as the partition key** (see [Multi-Tenancy](../06-multi-tenancy.md)), and the Qdrant target is the per-tenant collection `transcript_chunks__{org_id}` rather than the PDF's single shared collection. The PDF carried no tenant key on events or vectors.
+> [SaaS-scale adjustment] Every topic above is **tenant-partitioned**: `transcript-chunks` and `agent-stream` use the composite key `{org_id}:{meeting_id}` ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)); every other topic on this path (`agent-results`, `decisions`, `actions`, `notifications`, `usage-events`) uses `org_id` alone (see [Multi-Tenancy](../06-multi-tenancy.md)). The Qdrant target is the per-tenant collection `transcript_chunks__{org_id}` rather than the PDF's single shared collection. The PDF carried no tenant key on events or vectors.
 
 ---
 
@@ -121,7 +121,7 @@ sequenceDiagram
     LK->>TR: server-side audio hook (one diarized stream/meeting)
     Note over TR: Deepgram WS, diarization,<br/>interim vs final — persist FINALS only
     TR->>UI: interim captions via realtime-gateway (p95 < 2s)
-    TR->>TC: produce TranscriptChunk on FINAL (outbox, key=org_id)
+    TR->>TC: produce TranscriptChunk on FINAL (outbox, key={org_id}:{meeting_id})
 
     par Embedding consumer
         TC->>EM: consume final chunk
@@ -136,7 +136,7 @@ sequenceDiagram
 
     AR->>RG: fan-out agent output
     AR->>CO: update read models (worklogs, candidate rows)
-    AG-->>RG: agent-stream token deltas (live typing in sidebar)
+    AG-->>RG: agent-stream token deltas (live typing in sidebar, key={org_id}:{meeting_id})
     RG->>UI: render My Notes / suggestion / decision card (p50 < 2s)
 
     UI->>CO: user confirms a decision/action candidate
@@ -170,7 +170,7 @@ The same `transcript-chunks` topic feeds two consumer groups with opposite scali
 
 ```mermaid
 flowchart LR
-  TC[["transcript-chunks<br/>360/meeting, key=org_id"]]
+  TC[["transcript-chunks<br/>360/meeting, key={org_id}:{meeting_id}"]]
   TC -->|"consumer group:<br/>embedding"| EMB["embedding-service<br/>split → embed(32) → upsert"]
   TC -->|"consumer group:<br/>agents"| AGENT["agent-runtime-service<br/>30s windows → pre-gate → route"]
   EMB --> Q["Qdrant stock (V7: 4.42B vec, ~17 TB)<br/>scales on GPU + queue depth"]
@@ -193,7 +193,8 @@ flowchart LR
 | `par … and …` (sequence) | Concurrent fan-out — embedding and agent consumer groups run in parallel off the same chunk. |
 | Solid arrow | Asynchronous event over the bus, or a synchronous internal call where labeled. |
 | Dashed arrow (`-->>`) | Streamed deltas (`agent-stream` token-by-token to the UI). |
-| `key = org_id` | The tenant partition key on every topic. |
+| `key = org_id` | The tenant partition key on `agent-results`, `decisions`, `actions`, `notifications`, `usage-events`. |
+| `key = {org_id}:{meeting_id}` | The composite partition key on `transcript-chunks` and `agent-stream` only ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)). |
 | `__{org_id}` suffix | The per-tenant physical Qdrant collection resolved from the logical name. |
 
 ---
@@ -207,4 +208,4 @@ flowchart LR
 - **At-least-once everywhere, deduped on `idempotency_key`.** Every arrow into a consumer is at-least-once; consumers dedupe via an inbox table + the `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` Redis cache, and poison messages land in a per-topic DLQ ([Event Architecture §6–§7](../07-event-architecture.md)).
 - **Metering is a byproduct of the same path.** `agent-runtime-service` emits `usage-events` (LLM tokens) alongside `agent-results`; `billing-metering-service` aggregates them into per-tenant token budgets and hard quotas, so the cost of this exact flow is metered as it happens.
 
-> [SaaS-scale adjustment] `usage-events`, the per-tenant Qdrant collection, and the `org_id` partition key on every topic are SaaS-scale additions absent from the PDF, which had neither tenant isolation nor usage metering on the transcript→agent path.
+> [SaaS-scale adjustment] `usage-events`, the per-tenant Qdrant collection, and the tenant partition key on every topic (`org_id` alone, or the composite `{org_id}:{meeting_id}` on `transcript-chunks`/`agent-stream`, [ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)) are SaaS-scale additions absent from the PDF, which had neither tenant isolation nor usage metering on the transcript→agent path.

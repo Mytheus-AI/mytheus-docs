@@ -4,11 +4,11 @@ The single naming authority for every NEXUS Redpanda topic — its Avro value sc
 
 ## Topic catalog
 
-All 21 topics (9 PDF-original + 12 SaaS-added). Partition key is `org_id` (the tenant UUID string) on **every** topic — the proposed `{org_id}:{meeting_id}` hot-tenant sub-key is **not ratified** and is not used. A paired `<topic>.dlq` (14-day retention) exists for every topic. Delivery is **at-least-once, idempotent in effect**: every consumer dedupes via the durable `inbox` table plus Redis cache `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (24h TTL); explicit `idempotency_key` formulas are given where [07 §6.3](../07-event-architecture.md) defines one.
+All 21 topics (9 PDF-original + 12 SaaS-added). Partition key is `org_id` (the tenant UUID string) on 19 of the 21 topics. `transcript-chunks` and `agent-stream` are the exception: their partition key is the composite `{org_id}:{meeting_id}` ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)) — it preserves within-meeting speech ordering while letting a hot enterprise tenant spread across partitions. `org_id` remains present and non-nullable in the envelope header on every topic, including these two; it is the tenant key and the leading component of their composite key even though it is no longer the whole key. Every other topic keeps `org_id` alone as its partition key. A paired `<topic>.dlq` (14-day retention) exists for every topic. Delivery is **at-least-once, idempotent in effect**: every consumer dedupes via the durable `inbox` table plus Redis cache `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (24h TTL); explicit `idempotency_key` formulas are given where [07 §6.3](../07-event-architecture.md) defines one.
 
 | Topic | Producer service | Consumer services | Avro value schema | Partition key | Retention (cleanup) | Delivery / idempotency |
 |---|---|---|---|---|---|---|
-| `transcript-chunks` | `transcription-service` | `embedding-service`, `agent-runtime-service`, `search-service` | `TranscriptChunk` | `org_id` | 7 days (delete) | At-least-once; inbox + Redis dedupe. Key `chunk:{chunk_id}` |
+| `transcript-chunks` | `transcription-service` | `embedding-service`, `agent-runtime-service`, `search-service` | `TranscriptChunk` | `{org_id}:{meeting_id}` | 7 days (delete) | At-least-once; inbox + Redis dedupe. Key `chunk:{chunk_id}` |
 | `document-chunks` | `ingestion-service` | `embedding-service`, `agent-runtime-service` | `DocumentChunk` † | `org_id` | 7 days (delete) | At-least-once; inbox + Redis dedupe. Key `docchunk:{document_id}:{element_id}` |
 | `agent-results` | `agent-runtime-service` | `core-api`, `realtime-gateway`, `notification-service` | `AgentResult` | `org_id` | 3 days (delete) | At-least-once; inbox + Redis dedupe. Key `agentresult:{meeting_id}:{window_id}:{user_id}:{agent}` |
 | `decisions` | `core-api` (outbox, on confirm) | `knowledge-graph-service`, `notification-service` | `Decision` | `org_id` | 30 days (delete) | At-least-once; inbox + Redis dedupe + `MERGE`. Key `decision:{decision_id}:confirmed` |
@@ -16,7 +16,7 @@ All 21 topics (9 PDF-original + 12 SaaS-added). Partition key is `org_id` (the t
 | `notifications` | multiple | `notification-service`, `realtime-gateway` | `Notification` | `org_id` | 3 days (delete) | At-least-once; inbox + Redis dedupe. Key `notif:{source_event_id}:{channel}:{user_id}` |
 | `agent-requests` | `agent-runtime-service` | `agent-runtime-service` (peer agents) | `AgentRequest` | `org_id` | 1 day (delete) | At-least-once; inbox + Redis dedupe. Key `areq:{correlation_id}` |
 | `agent-responses` | `agent-runtime-service` | `agent-runtime-service` (requester) | `AgentResponse` | `org_id` | 1 day (delete) | At-least-once; inbox + Redis dedupe |
-| `agent-stream` | `agent-runtime-service` (LiteLLM stream bridge) | `realtime-gateway` → WebSocket | `AgentStreamDelta` † | `org_id` | 1 hour (delete) | At-least-once; inbox + Redis dedupe (throwaway; shed first under backpressure) |
+| `agent-stream` | `agent-runtime-service` (LiteLLM stream bridge) | `realtime-gateway` → WebSocket | `AgentStreamDelta` † | `{org_id}:{meeting_id}` | 1 hour (delete) | At-least-once; inbox + Redis dedupe (throwaway; shed first under backpressure) |
 | `tenant-events` | `identity-tenant-service` | `billing-metering-service`, `admin-ops-service`, `workflow-service` | `TenantEvent` | `org_id` | retain (compact) | At-least-once; inbox + Redis dedupe |
 | `meeting-events` | `core-api` | `meeting-service`, `workflow-service`, `integration-service` | `MeetingEvent` | `org_id` | 7 days (delete) | At-least-once; inbox + Redis dedupe |
 | `meeting-room-events` | `meeting-service` | `transcription-service`, `core-api` | `MeetingRoomEvent` | `org_id` | 3 days (delete) | At-least-once; inbox + Redis dedupe |
@@ -40,7 +40,7 @@ Every event value opens with the shared `EventEnvelopeHeader` (namespace `io.nex
 |---|---|---|
 | `event_id` | `string` (uuid) | Unique per emitted event; distinct from `idempotency_key`. |
 | `idempotency_key` | `string` | Business dedupe key; stable across producer retries of the same fact. |
-| `org_id` | `string` (uuid) | Tenant root; the Kafka partition key; RLS/cell scoping anchor. |
+| `org_id` | `string` (uuid) | Tenant root; RLS/cell scoping anchor; the Kafka partition key on 19 of 21 topics, and the leading component of the `{org_id}:{meeting_id}` composite key on `transcript-chunks` and `agent-stream` (see Partition key column above). |
 | `schema_version` | `int` (default 1) | Producer's payload schema version (observability; Registry enforces compat independently). |
 | `producer` | `string` | Owning service name (kebab-case, from the Service Catalog). |
 | `occurred_at` | `long` (timestamp-micros) | When the fact happened (UTC); not enqueue time. |

@@ -167,7 +167,7 @@ The persisted row matches the canonical `transcript_chunks` schema ([Data Model 
 
 The emitted bus message is the `TranscriptChunk` Avro value enveloped per [Event-Driven Architecture §3](07-event-architecture.md). At `A12` = 8 finals/minute over a 45-minute meeting this is **360 `transcript_chunks`/meeting** (`T2`) — this document consumes that number, it does not re-derive it.
 
-> [SaaS-scale adjustment] The bus message is enveloped (`org_id`, `idempotency_key = chunk:{chunk_id}`, `correlation_id`, `schema_version`) and the topic is partitioned by the composite key `{org_id}:{meeting_id}` so a hot enterprise tenant spreads across partitions while within-meeting speech order is preserved ([Event-Driven Architecture §4.1](07-event-architecture.md)). The PDF had no envelope and no tenant partition key.
+> [SaaS-scale adjustment] The bus message is enveloped (`org_id`, `idempotency_key = chunk:{chunk_id}`, `correlation_id`, `schema_version`) and the topic is partitioned by the composite key `{org_id}:{meeting_id}` so a hot enterprise tenant spreads across partitions while within-meeting speech order is preserved ([Event-Driven Architecture §4.1](07-event-architecture.md), ratified by [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). The PDF had no envelope and no tenant partition key.
 
 ### 3.3 Provider abstraction and the Whisper cost tier
 
@@ -278,7 +278,7 @@ sequenceDiagram
     RT->>U: replace stream with confirmed card
 ```
 
-- The `agent-stream` topic, `AgentStreamDelta` envelope, **120 partitions, 1-hour retention**, and `{org_id}:{meeting_id}` partition key are owned by [Event-Driven Architecture §4](07-event-architecture.md). This document references them; it does not redefine them.
+- The `agent-stream` topic, `AgentStreamDelta` envelope, **120 partitions, 1-hour retention**, and `{org_id}:{meeting_id}` partition key (ratified by [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) are owned by [Event-Driven Architecture §4](07-event-architecture.md). This document references them; it does not redefine them.
 - `agent-stream` is the highest-*count* topic in the system (Capacity `E8` ≈ 1,260/meeting) and the lowest-*value* — deltas are disposable once rendered. It is the first thing shed under backpressure (§4.4) and the first dropped under bus load ([Event-Driven Architecture §8](07-event-architecture.md)).
 - The **durable** truth is `agent-results` (and, on confirmation, `decisions`/`actions`). A client that misses every delta still receives the final card. Streaming is a UX latency optimization, never a system of record.
 
