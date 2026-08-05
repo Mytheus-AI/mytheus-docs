@@ -804,7 +804,7 @@ Per the roadmap data-store stand-up schedule (`22-roadmap-and-phasing.md` §3.1 
 
 This band introduces the **event contract itself** (the frozen schemas + subjects) and the **topic provisioning**, not the producers/consumers (those land per-service in later bands). Specifically:
 
-- **All 21 `{topic}-value` Avro subjects** authored in `mytheus-events` (Phase 0A), registered under **BACKWARD** compatibility, partitioned by `org_id`. Frozen schemas: `TranscriptChunk`, `AgentResult`, `Decision`, `Action`, `Notification`, `AgentRequest`, `AgentResponse`. Plus `EventEnvelopeHeader`, `DlqEnvelope`, and the net-new `DocumentChunk`, `AgentStreamDelta`, and 12 SaaS payloads.
+- **All 21 `{topic}-value` Avro subjects** authored in `mytheus-events` (Phase 0A), registered under **BACKWARD** compatibility, tenant-partitioned (`org_id` alone at this band's scaffold stage; `transcript-chunks`/`agent-stream` were later ratified onto the composite `{org_id}:{meeting_id}` key by [ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md) in Plan 3-4 — see [Plan 3-4 §8](plan-3-4-meeting-and-transcription.md)). Frozen schemas: `TranscriptChunk`, `AgentResult`, `Decision`, `Action`, `Notification`, `AgentRequest`, `AgentResponse`. Plus `EventEnvelopeHeader`, `DlqEnvelope`, and the net-new `DocumentChunk`, `AgentStreamDelta`, and 12 SaaS payloads.
 - **21 topics + 21 `<topic>.dlq` topics** created locally for dev with the canon partition counts/retention as a documented `rpk` script (`mytheus-events/scripts/create_topics.sh`), e.g.:
 
 ```bash

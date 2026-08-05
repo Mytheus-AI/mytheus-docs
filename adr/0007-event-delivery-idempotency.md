@@ -126,6 +126,8 @@ The inbox insert and the business effect commit in the **same transaction**, and
 
 Every topic is **partitioned by `org_id`** (the locked tenant partition key — [Tech Decisions §2.4](../_canon/06-tech-decisions.md), [Multi-Tenancy](../06-multi-tenancy.md)). This gives per-tenant ordering, per-tenant replay, and noisy-neighbor isolation: a runaway tenant's lag is contained to its partitions and cannot starve others. The dedupe namespace, inbox PK, and DLQ envelope all carry `org_id` so isolation holds end-to-end.
 
+> **Narrowed by [ADR-0017](0017-transcript-chunks-composite-partition-key.md), added, does not alter the decision above.** `transcript-chunks` and `agent-stream` are keyed by the composite `{org_id}:{meeting_id}` rather than `org_id` alone; `org_id` remains present, non-nullable, and the leading component of that key, so the dedupe namespace/inbox PK/DLQ envelope guarantees described above still hold end-to-end. Every other topic this section describes is unaffected. This is a forward pointer, not a rewrite of what was decided at the time.
+
 ### 6. DLQ + bounded retry per topic
 
 Consumer failures split two ways:
@@ -200,6 +202,8 @@ This preserves the PDF "no silent commits" rule: `core-api` writes the `decision
 | **FORWARD or FULL compatibility instead of BACKWARD** | BACKWARD (new consumer reads old data) matches our rollout reality: consumers are upgraded after producers, and a new consumer schema must read in-flight data written by the previous producer. BACKWARD is the PDF lock and the right mode; FULL would over-constrain field removal without operational benefit here. |
 | **Per-meeting partition key (`{org_id}:{meeting_id}`)** | Tempting for hot-tenant fan-out, but it weakens per-tenant ordering and complicates per-tenant replay/rate-control. It is *proposed but not ratified* ([Event-Driven Architecture §4.1/§11](../07-event-architecture.md)); the locked key is `org_id`. Revisit only if a single tenant's partition becomes a proven hotspot. |
 | **A separate message broker for the AI/inference tier** | Splitting buses (e.g. a second cluster for `agent-stream`) was considered to isolate the high-count throwaway stream. Rejected: one tenant-partitioned cluster with per-topic retention (`agent-stream` at 1h, durable facts longer) and value-tiered backpressure achieves the isolation without a second operational surface. |
+
+> **Narrowed by [ADR-0017](0017-transcript-chunks-composite-partition-key.md), added, does not alter the row above.** The "per-meeting partition key" row was rejected here on the general case, at the time this ADR was written, for hot-tenant fan-out weakening per-tenant ordering/replay. ADR-0017 later revisited this narrowly: it ratified the composite `{org_id}:{meeting_id}` key for `transcript-chunks` and `agent-stream` specifically, whose within-meeting-only ordering need makes the tradeoff this row describes not apply to them, while leaving every other topic - including the ones this row's general reasoning was really about - on `org_id` alone exactly as decided here. This is a forward pointer, not a rewrite of what was decided at the time.
 
 ---
 

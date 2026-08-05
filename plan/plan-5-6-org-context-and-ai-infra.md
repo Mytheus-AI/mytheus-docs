@@ -26,7 +26,7 @@
 | 2 | **Plan 3-4 meeting + realtime tier is live** — `meetings`, `meeting_participants`, `meeting_speakers`, `transcript_chunks`, `chat_messages` tables exist; `transcription-service` produces the `transcript-chunks` topic; `realtime-gateway` is up. | `get_user_context` joins recent meetings; the embedding/search consumers in P6 consume `transcript-chunks`; the seeder needs `meetings`. |
 | 3 | **`libs/shared` (mytheus-backend) building blocks exist**: tenancy `ContextVar` + `SET LOCAL app.current_org`, transactional-outbox **enqueue**, inbox Redis-dedupe, `EventEnvelope`, RFC7807 errors, OTel. (The **relay/publisher**, the **gRPC server**, **all** Alembic migrations, and any real routes are still MISSING and are built here.) | This band adds the relay, the `NexusProducer`, the DDL migrations, and the first real consumers on top of these. |
 | 4 | **Infra reachable from dev + CI**: Postgres (Supabase, AGE-enabled), Redis (Upstash), Redpanda + Schema Registry, Qdrant Cloud, an S3-compatible object store, and at least one GPU runner (or CPU fallback for dev). `docker-compose` (Postgres/Redis/Redpanda/Temporal) boots. | P6 stands up Qdrant collections, registers Avro subjects, and runs the GPU model servers. |
-| 5 | **Partition-key decision (DECISION-REQUIRED §8.1) is at least scheduled for ratification this band.** | The embedding + agent consumer groups and their ordering guarantees depend on the `transcript-chunks` / `agent-stream` partition key; wiring consumers before ratification risks a re-cut. |
+| 5 | **Partition-key decision (§8.1) is RESOLVED** ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)): `transcript-chunks`/`agent-stream` are composite-keyed `{org_id}:{meeting_id}`. | The embedding + agent consumer groups can wire their ordering guarantees against the ratified key with no re-cut risk. |
 
 Gate to start P6: P5's `get_user_context()` endpoint and the seeder are green (the agent tier reads context), AND the event-backbone foundation (§3.6) is registered.
 
@@ -580,7 +580,7 @@ Citing the roadmap data-store provisioning table (`22-roadmap-and-phasing.md §3
 | **Apache AGE** `nexus_knowledge` | `Topic` nodes seeded from the role→topics taxonomy (no edges yet) | `org_id` property on every node; `$org_id` on every Cypher template |
 | **Redis** (Upstash) | `nexus:{org_id}:user_ctx:{user_id}` (5-min), `nexus:{org_id}:qembed:{query_hash}` (~10-min), `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (24h) | Key builder rejects unprefixed keys |
 | **Object storage** | `nexus-documents` (`{org_id}/{document_id}/`), `nexus-attachments` (`{org_id}/{meeting_id}/`) | Per-tenant key prefix |
-| **Redpanda + Schema Registry** | All 21 topics + 21 DLQs created; 7 frozen + `DocumentChunk` + `EmbeddingEvent` Avro subjects registered (BACKWARD) | Partitioned by `org_id` |
+| **Redpanda + Schema Registry** | All 21 topics + 21 DLQs created; 7 frozen + `DocumentChunk` + `EmbeddingEvent` Avro subjects registered (BACKWARD) | Partitioned by `org_id` (composite `{org_id}:{meeting_id}` for `transcript-chunks`/`agent-stream`, [ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)) |
 
 ---
 
@@ -634,11 +634,8 @@ Realign one screen onto the new org-context substrate; **no agent UI yet**.
 
 ## 8. DECISION-REQUIRED callouts
 
-> ⚠️ **DECISION-REQUIRED 8.1 — Ratify the `transcript-chunks` / `agent-stream` partition key BEFORE wiring the embedding + agent consumers.**
-> The locked key for every topic is `org_id`. `07-event-architecture.md §4.1` proposes (NOT ratified) a composite `"{org_id}:{meeting_id}"` sub-key for the high-volume meeting topics (`transcript-chunks`, `agent-results`, `agent-stream`) to stop one enterprise tenant hashing onto a single partition, preserving ordering only **within a meeting** — the only ordering scope the embedding consumer and agents need.
-> **Why it bites now:** §3.7's embedding consumer group and its ordering/replay guarantees are defined by this key; choosing it after the consumer ships forces a consumer-group + partition re-cut.
-> **Options:** (a) keep pure `org_id` (canon-locked, simplest, hot-tenant risk); (b) ratify the composite `{org_id}:{meeting_id}` for the three meeting topics (spreads hot tenants, requires updating Tech Decisions §2.4 + Data Model §7 FIRST).
-> **Who decides:** Canon owners (Tech Decisions + Data Model) + the events/streaming lead. **Blocks:** §3.7 embedding consumer wiring and all later agent consumers.
+> ✅ **DECISION-REQUIRED 8.1 — RESOLVED. `transcript-chunks` / `agent-stream` partition key ratified.**
+> **Resolved by [ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md), option (b) as scoped below.** `transcript-chunks` and `agent-stream` take the composite `{org_id}:{meeting_id}` key, preserving ordering **within a meeting** — the only ordering scope the embedding consumer and agents need. **`agent-results` is NOT included** — ADR-0017 considered and excluded it (durable read-model source, lower count than the two per-chunk/per-token topics; the same hot-tenant pressure doesn't apply to it in the same way), so it stays `org_id`-only along with the other 18 topics. Canon [03-event-taxonomy](../_canon/03-event-taxonomy.md) reflects this; `07-event-architecture.md §4.1` is propagated and no longer describes the key as an unratified proposal. §3.7's embedding consumer group can be wired against this key with no further ratification needed.
 
 > ⚠️ **DECISION-REQUIRED 8.2 — Confirm Qdrant tenancy model = per-tenant collections (ADR-0006) vs a shared collection with `org_id` filter.**
 > ADR-0006 locks **per-tenant collections** (`transcript_chunks__{org_id}`) + a mandatory `org_id` payload filter. The counter-force is collection-count overhead at the long tail (~9,000 collections at 3,000 active orgs × 3) vs a single shared collection with an `org_id` payload index (lowest count, but one missed filter leaks verbatim transcript text and RTBF becomes a slow `delete-by-filter`).

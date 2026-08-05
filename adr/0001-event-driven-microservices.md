@@ -136,6 +136,8 @@ Three invariants bind every cross-service event and are non-negotiable consequen
 2. **Partition key = tenant (`org_id`) on every topic.** Per-tenant ordering, isolation, replay, and throughput control; a noisy tenant cannot starve another's stream.
 3. **At-least-once with idempotency keys + transactional outbox/inbox + dedupe cache + per-topic DLQs.** Producers write the outbox row in the same DB transaction as the state change; consumers dedupe on `idempotency_key` via an inbox table plus the Redis dedupe cache (`nexus:{org_id}:dedupe:{topic}:{idempotency_key}`, 24h TTL). Net effect: exactly-once application of every event.
 
+> **Narrowed by [ADR-0017](0017-transcript-chunks-composite-partition-key.md), added, does not alter the decision above.** Invariant 2 as decided here still stands for 19 of the 21 topics. ADR-0017 later ratified a composite `{org_id}:{meeting_id}` key for `transcript-chunks` and `agent-stream` specifically, so `org_id` is the leading component of the key on those two rather than the whole key. This is a forward pointer, not a rewrite of what was decided at the time.
+
 > [SaaS-scale adjustment] At-least-once delivery, idempotency keys, transactional outbox/inbox, dedupe cache, and per-topic DLQs are wholly added versus the PDF's implicit "consume → process" semantics. Topic names, Avro subjects, and BACKWARD compatibility are unchanged. The added topics carry control-plane, metering, and lifecycle signals the single-team in-process design handled with direct function calls.
 
 ### D3 — Independent autoscaler signal per family
