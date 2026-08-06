@@ -175,7 +175,50 @@ Every command below was run and its output observed during this band, in each re
 
 ## Task 10: search-service
 
-TO BE COMPLETED BY THE CONTROLLER.
+Landed as commit `0d0a42f` in `mytheus-intelligence`. 134 tests pass (112 before this task, 22 new),
+all against real Postgres, Redis, Redpanda and Schema Registry. `ruff`, `black` and `mypy` clean.
+
+What shipped: the lexical arm of hybrid retrieval, `GET /search`, over Postgres full-text search.
+
+The ownership question this task faced is the most instructive thing in it. Full-text search wants a
+`tsvector` column and a GIN index on the text being searched, and the text lives in
+`transcript_chunks`, which is owned by `transcription-service` in `mytheus-realtime`, and in
+`chat_messages`, owned by `core-api`. Adding a column to either would have made this service a
+second writer of a table it does not own.
+
+It did not do that. It confirmed against the live database that both tables grant the
+`mytheus_ai_app` and `mytheus_ai_relay` roles no access at all, then built
+`intelligence.transcript_chunk_search`: this service's own read model, carrying the plan's literal
+`GENERATED ALWAYS AS (to_tsvector(...)) STORED` column and its GIN index, populated by a new
+`TranscriptChunkSearchConsumer` subclassing the shared `BaseConsumer` and consuming the same real
+`transcript-chunks` topic that `embedding-service` already consumes. Building an owned read model
+rather than reaching into another service's table is the correct resolution, and it is the third time
+in this band a task refused a second-writer temptation.
+
+The `chat_messages` arm is BLOCKED, and reported rather than faked. There is no `chat-messages` topic
+anywhere in the frozen 21-subject registry, and `chat_messages` has no event production path at all,
+since `core-api` writes it directly. So there is neither an event to build a read model from nor a
+grant to read the table. Closing it needs either a new canon topic or a cross-repo grant, both of
+which are decisions above this task.
+
+Isolation was proven adversarially rather than by a filter assertion. Two organizations were given
+content sharing a distinctive phrase, one of them with twenty times the other's matching volume and
+higher-ranking text, and the query limit was set smaller than the larger tenant's match count. The
+smaller tenant still received its true matches: neither starved out of the result page nor leaked
+into. This is the shape of test that matters for search, because a tenant filter applied only to the
+final page can leak through ranking and totals even when no foreign row is ever returned. A second
+test proved that RLS alone, with no explicit predicate in the query, isolates independently.
+
+The output shape mirrors `reranker-service`'s `RerankedPassage.passage` exactly, so `GET /search`
+results feed `POST /rerank` with no adapter between them, and the citation-provenance fields
+(`chunk_id`, `meeting_id`, `speaker_id`) ride alongside for the citation stage in a later band.
+
+One shared-infrastructure finding came out of it that future work needs to know: the shared
+`BaseConsumer` names its dead-letter topic after the source topic alone, not the consumer group, so
+`transcript-chunks.dlq` is shared between `embedding-service` and `search-service`. This task's first
+test draft reused an earlier task's hardcoded idempotency key and genuinely picked up that task's
+leftover message. It was fixed with a unique key and scan-forward matching, and documented in the
+test. Any future test asserting against a dead-letter topic must not assume it owns that topic.
 
 ## Final review
 
