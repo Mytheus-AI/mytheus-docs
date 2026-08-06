@@ -222,7 +222,64 @@ test. Any future test asserting against a dead-letter topic must not assume it o
 
 ## Final review
 
-TO BE COMPLETED BY THE CONTROLLER.
+Run after all ten tasks completed, across both code repos, with full coverage: both diffs read, the
+live database inspected directly rather than the migration source, the four contract seams verified
+field by field, and `org_id` traced end to end across every repo and store boundary.
+
+Verdict: MERGE WITH FIXES. One Important finding, one Minor, and nothing above them.
+
+### Important: the AI tier's REST surface trusts an unauthenticated header
+
+`ingestion-service`, `search-service`, `reranker-service` and `embedding-service` all take `org_id`
+from a client-supplied `X-Org-Id` request header, failing closed only when that header is a malformed
+UUID. None of them verifies a JWT or a gRPC identity.
+
+Concretely: anyone with network reachability to `ingestion-service` can `POST /ingest` carrying
+another organization's id in that header and write into that organization's object storage and vector
+collection, or call `GET /search` with it and read that organization's transcript index.
+
+This contradicts an invariant the sibling repo states explicitly. `mytheus-backend`'s own guidance
+requires each service to re-verify the JWT independently, on the grounds that the edge gateway is a
+denial-of-service shield rather than a trust delegation, and `identity-tenant-service` genuinely does
+so. The canonical service catalog assigns JWT validation and `org_id` extraction to `api-gateway`,
+which does not exist yet, so there is currently nothing upstream performing that check either.
+
+The way this arrived is worth recording, because the code is not the interesting part. Each of the
+four tasks disclosed this individually, as an accepted interim convention, and each was a locally
+reasonable call at the time. What never happened was checking that local convention against the
+sibling repo's stricter standard, or escalating it as a band-level risk. Four defensible local
+decisions composed into an unauthenticated write path over live infrastructure. No ADR blesses the
+deviation. The program has already shipped one authorization-bypass defect from precisely this
+class of gap, where every component was individually correct.
+
+It is latent rather than exploited: nothing in this band calls these routes across a repo boundary
+yet. But the infrastructure is real and already holds tenant data. This needs an ADR and a fix before
+`api-gateway` lands or any real caller reaches these routes, and it should be tracked as one
+band-level item rather than left as four independent interim comments.
+
+### Minor: dead-letter topics are scoped by source topic, not consumer group
+
+`embedding-service` and `search-service` both consume `transcript-chunks` and both dead-letter to
+`transcript-chunks.dlq`, distinguished only by a field inside the payload. Nothing reads dead-letter
+topics today, so this is not exploitable, but any future replay tooling must filter by consumer group
+rather than assuming a topic belongs to one consumer. A test in this band already tripped over it by
+matching an earlier task's leftover message.
+
+### The two cross-task properties that were specifically checked, both clean
+
+The two-repositories-one-database separation is genuinely complete, verified live rather than
+inferred: the AI roles hold no role attributes granting bypass, there are zero cross-schema grants in
+either direction, and the schema keeps its own migration version table.
+
+The `intelligence` schema's row-level security matches the backend's standard exactly. All six tables
+have row security both enabled and forced, and every `tenant_isolation` policy predicate is
+byte-identical to the fail-closed form used elsewhere in the program. No partitions were created in
+this band, so the partition-grant rule that produced a real cross-tenant leak in the previous band has
+nothing to apply to here. That is an absence of risk, not an unchecked gap.
+
+The four contract seams between independently built services were verified to match field for field
+rather than assumed: search results into the reranker, the two independent consumers of
+`transcript-chunks`, and ingestion's `document-chunks` output into the embedding consumer.
 
 ---
 
