@@ -115,8 +115,7 @@ The precondition chain in P5: schema (3.1) → taxonomy (3.2) → `get_user_cont
    poetry run alembic upgrade head
    ```
 
-3. Add CRUD routes (the `identity-tenant-service` stub currently exposes none). Mount under the canon-owned prefixes (`/orgs`, plus org-chart reads). All routes set `app.current_org` transaction-locally via the tenancy middleware before any query.
-   `routes/org.py`: `GET /orgs/{org_id}/departments`, `GET /orgs/{org_id}/teams`, `GET /orgs/{org_id}/teams/{team_id}/members`, `PATCH /users/{user_id}` (role/skills/bio).
+3. **CORRECTED 2026-08-06:** the org-hierarchy reads this step names (`GET /orgs/{org_id}/departments`, `GET /orgs/{org_id}/teams`, `GET /orgs/{org_id}/teams/{team_id}/members`) already live in `core-api` at `services/core_api/routes/org_hierarchy.py` (`GET/POST /api/v1/teams`, `GET/POST /api/v1/departments`), which owns `teams`/`team_members`/`departments` (see step 1's correction). Do NOT add a second copy of them to `identity-tenant-service`: that would make it a second writer of tables it does not own. The one genuinely missing route on this service is `PATCH /users/{user_id}` (role/skills/bio) - add only that, set `app.current_org` transaction-locally via the tenancy middleware before the query, same as every other route.
 
 **Canonical names:** `users`, `teams`, `team_members`, `departments`, `app.current_org`, `org_id`.
 
@@ -201,7 +200,7 @@ The precondition chain in P5: schema (3.1) → taxonomy (3.2) → `get_user_cont
    ```
 2. Expose `GET /context/{user_id}` (canon §6). It resolves `org_id` from the request context (Clerk JWT, never the path).
 3. Cache invalidation: on `PATCH /users/{id}` (role/skills) and on `team_members` changes, `DEL nexus:{org_id}:user_ctx:{user_id}`.
-4. Expose the same resolver over the **gRPC** mesh for the AI tier (`mytheus-intelligence` calls `get_user_context` over gRPC, `org_id` in metadata). Add `proto/identity.proto` `GetUserContext(GetUserContextRequest) returns (UserContext)` and implement the gRPC server (this is the first gRPC server in `identity-tenant-service`; the stub currently has none).
+4. **CORRECTED 2026-08-06:** `proto/identity.proto`'s `GetUserContext(GetUserContextRequest) returns (UserContext)` and its gRPC server already shipped in Plan 1-2 (`grpc_server.py`, reading `rbac_grants` directly, no longer a stub). This step is not standing up a first gRPC server: it is wiring that existing server to call the cache-then-compute resolver from steps 1-2 instead of querying Postgres directly on every call, and populating the `team_ids`/`department_id`/`cache_expires_at` fields the existing implementation left empty. Keep `email`/`rbac_tier` as separate, uncached queries per ADR-0010 D2.
 
 **Canonical names:** `get_user_context`, `nexus:{org_id}:user_ctx:{user_id}`, `meeting_participants`, `team_members`, `departments`.
 
@@ -279,7 +278,7 @@ P6 precondition chain: event backbone GA (3.6) → embedding-service + Qdrant + 
 
 **Repo / folder:** `mytheus-events/schemas/`, `mytheus-events/provisioning/`, `mytheus-events/src/nexus_events/`; consumed by `mytheus-backend/libs/shared/` and `mytheus-intelligence/libs/shared/`.
 
-`mytheus-events` is currently DOCUMENTATION ONLY — scaffold it. It owns the frozen Avro schemas, the Schema Registry registration + CI compatibility gate, the topic/DLQ provisioning scripts, and the shared `nexus_events` producer/consumer library (the **only** sanctioned way to touch the bus).
+**CORRECTED 2026-08-06:** `mytheus-events` is NOT documentation only. It was scaffolded in Plan 0 and extended in Plan 3-4 (the composite-partition-key validator scoping, the `redacted` field, the envelope doc-string fix). By the start of this band all 21 topics plus DLQs, all 21 Avro subjects (including `DocumentChunk` and `EmbeddingEvent`), and the outbox/inbox/relay/DLQ mechanism already exist and are live against the broker and registry - verified against the live infrastructure in this band, not rebuilt (section 3.6's acceptance checks passed with zero code changes). It owns the frozen Avro schemas, the Schema Registry registration plus CI compatibility gate, the topic/DLQ provisioning scripts, and the shared `nexus_events` producer/consumer library (the **only** sanctioned way to touch the bus). Verify what is live before adding anything.
 
 **Steps**
 
@@ -638,7 +637,7 @@ Realign one screen onto the new org-context substrate; **no agent UI yet**.
 > **Resolved by [ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md), option (b) as scoped below.** `transcript-chunks` and `agent-stream` take the composite `{org_id}:{meeting_id}` key, preserving ordering **within a meeting** — the only ordering scope the embedding consumer and agents need. **`agent-results` is NOT included** — ADR-0017 considered and excluded it (durable read-model source, lower count than the two per-chunk/per-token topics; the same hot-tenant pressure doesn't apply to it in the same way), so it stays `org_id`-only along with the other 18 topics. Canon [03-event-taxonomy](../_canon/03-event-taxonomy.md) reflects this; `07-event-architecture.md §4.1` is propagated and no longer describes the key as an unratified proposal. §3.7's embedding consumer group can be wired against this key with no further ratification needed.
 
 > ✅ **DECISION-REQUIRED 8.2 — RESOLVED. Qdrant tenancy model = per-tenant collections.**
-> **Resolved as option (a), ADR-0006 as written.** Per-tenant collections (`transcript_chunks__{org_id}`, `document_chunks__{org_id}`) PLUS the mandatory `org_id` payload filter. Both layers, never either alone: the collection boundary is the primary isolation and the payload filter is the compensating control if a collection name is ever computed wrongly. This requires **no canon change**, because it is exactly what [ADR-0006](../adr/0006-qdrant-vector-store.md) already locks. The hybrid option (b) was considered and rejected: a shared collection for the Free long tail means one missed filter leaks verbatim transcript text, and RTBF degrades to a slow `delete-by-filter`. Accepted cost: roughly 9,000 collections at 3,000 active orgs. §3.7's `resolve_collection()` and the Qdrant provisioning path are unblocked and are built against this.
+> **Resolved as option (a), ADR-0006 as written.** Per-tenant collections (`transcript_chunks__{org_id}`, `document_chunks__{org_id}`) PLUS the mandatory `org_id` payload filter. Both layers, never either alone: the collection boundary is the primary isolation and the payload filter is the compensating control if a collection name is ever computed wrongly. This requires **no canon change**, because it is exactly what [ADR-0006](../adr/0006-vector-store-tenancy.md) already locks. The hybrid option (b) was considered and rejected: a shared collection for the Free long tail means one missed filter leaks verbatim transcript text, and RTBF degrades to a slow `delete-by-filter`. Accepted cost: roughly 9,000 collections at 3,000 active orgs. §3.7's `resolve_collection()` and the Qdrant provisioning path are unblocked and are built against this.
 
 ---
 
