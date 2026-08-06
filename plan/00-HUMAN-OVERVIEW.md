@@ -200,8 +200,8 @@ The finish line of the MVP is **the end of Plan 10-13**: a complete, differentia
 
 These are flagged risks/questions that need a human owner and a ruling **before** the band that depends on them:
 
-- **Consent entity** — recording-consent fields (`consented_at`, `consent_version`, the 428 token-mint gate) are *proposed, not canon*. If consent is legally required at launch, this **blocks P3/P4** and needs an ADR early.
-- **Partition key** — the canon contradicts itself on whether `org_id` is the *sole* partition key or whether `transcript-chunks`/`agent-stream` are composite-keyed by `{org_id}:{meeting_id}`. Must be ratified **before Plan 3-4.**
+- **Consent entity — RESOLVED, schema only** ([ADR-0018](../adr/0018-consent-entity-behind-flag.md)). `consented_at`/`consent_version` on `meeting_participants` and `consent_required` on `tenant_settings` are now canon, defaulted off. The 428 token-mint gate's application code and the migration are later tasks; whether the gate must ship before launch in a given jurisdiction is still a legal/compliance call, not an open canon question.
+- **Partition key — RESOLVED** ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)). `transcript-chunks`/`agent-stream` are composite-keyed `{org_id}:{meeting_id}`; every other topic keeps `org_id` alone. Canon no longer contradicts itself on this.
 - **Plan limits (per-seat vs per-tenant)** — `included_meeting_minutes` / `included_agent_tokens` accounting is unresolved; it changes the billing quota math and must be fixed **before metering goes live (Plan 7-9).**
 - **`manager_id` / reporting edge** — there's no first-class manager relationship in the data model, so the day-10 escalation in ActionFollowUpWorkflow is best-effort. Decide whether to add `manager_id` **before P12.**
 - **Jira vs Linear** — only **one** of the two ships in the MVP (the R8 guardrail). Which one is a go/no-go call needing an owner before P12.

@@ -25,7 +25,7 @@ flowchart TB
     QD["Qdrant<br/>per-tenant collections"]
     AGE["Apache AGE<br/>nexus_knowledge, org-partitioned"]
     RD["Redis<br/>nexus:{org_id}: namespaces"]
-    RP["Redpanda<br/>topics partitioned by org_id"]
+    RP["Redpanda<br/>topics partitioned by org_id<br/>(2 by org_id:meeting_id, ADR-0017)"]
     OBJ["Object storage<br/>{org_id}/ prefixes"]
   end
 

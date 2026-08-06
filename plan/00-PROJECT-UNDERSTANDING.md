@@ -151,7 +151,7 @@ The bus is **Redpanda** (Kafka API) with **Avro + Schema Registry**, subject nam
 ### Five invariants
 
 1. **One bus.** Every event flows through Redpanda.
-2. **Partition key = `org_id`.** Always.
+2. **Partition key = `org_id`, on 19 of 21 topics.** `transcript-chunks` and `agent-stream` are the exception: composite `{org_id}:{meeting_id}` ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)), with `org_id` still mandatory and still the leading component.
 3. **At-least-once + idempotency** via transactional **outbox** (producer side) and **inbox + Redis dedupe** (consumer side).
 4. **Poison messages quarantine to the DLQ.** Each topic has a paired `<topic>.dlq` (14-day retention).
 5. **No silent commits** (mirrors §4 — durable facts are produced only on confirmation).
@@ -311,8 +311,8 @@ The docs describe a multi-tenant LiveKit / Socket.io enterprise client. The actu
 
 | # | Open decision | Blocks |
 | --- | --- | --- |
-| O1 | **Partition-key contradiction:** doc 07 / canon 03 freeze `org_id` as the sole partition key with `{org_id}:{meeting_id}` as a *proposed/unratified* sub-key, but doc 10 states `transcript-chunks` and `agent-stream` **are** composite-keyed. Ratify before transcription-service / realtime-gateway. | P3–P4 |
-| O2 | **Consent entity is PROPOSED, not canon:** `consented_at` / `consent_version` on `meeting_participants`, `consent_required` on `tenant_settings`, and the 428 token-mint gate need an ADR + canon amendment. If recording consent is legally required at launch, this blocks P3/P4. | P3–P4 |
+| O1 | **RESOLVED** ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)). `transcript-chunks` and `agent-stream` are composite-keyed `{org_id}:{meeting_id}`; every other topic keeps `org_id` alone. Canon 03 and docs 07/10 are reconciled to this. | P3–P4 (unblocked) |
+| O2 | **RESOLVED, schema only** ([ADR-0018](../adr/0018-consent-entity-behind-flag.md)). `consented_at` / `consent_version` on `meeting_participants` and `consent_required` on `tenant_settings` are amended into canon, defaulted off. The 428 token-mint gate's application code and the migration remain later tasks; whether it must ship before P3/P4 launch is still the legal/compliance call ADR-0018 assigns. | P3–P4 (schema unblocked; gate build still pending) |
 | O3 | **No `manager_id` / reporting edge** exists in the data model — ActionFollowUpWorkflow day-10 manager escalation is best-effort over the departments tree + organizer fallback. Decide whether a first-class `manager_id` is added. | P12 |
 | O4 | **Plan limits per-seat vs per-tenant** (`included_meeting_minutes` / `included_agent_tokens`) is unresolved, not canon. Affects metering quota math. | P7–P9 |
 | O5 | **Derived `usage_events` dimension producers** (`meeting_minute`, `transcription_second`, `storage_gb`) are not named in the Service Catalog (docs point to transcription-service / meeting-service / a storage-sweep job). Resolve ownership before metering. | P7 |

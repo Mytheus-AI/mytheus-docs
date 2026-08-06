@@ -71,6 +71,8 @@ Two derived placements are not separate columns but follow the same rule by cons
 - **Apache AGE `nexus_knowledge`** is co-located with the tenant's Postgres (`db_cell`), so the org-partitioned graph inherits the zone automatically.
 - **Redpanda partitions** for the tenant (all topics partitioned by `org_id`) live on the in-zone cluster; the cross-region MirrorMaker2 mirror ([Reliability §4](../14-reliability-and-dr.md)) targets only the *in-zone* passive region (D3).
 
+> **Narrowed by [ADR-0017](0017-transcript-chunks-composite-partition-key.md), added, does not alter the decision above.** `transcript-chunks` and `agent-stream` are keyed by the composite `{org_id}:{meeting_id}` rather than `org_id` alone; `org_id` remains the leading component of that key, so the same tenant still resolves to the same in-zone cluster and the residency placement rule above is unaffected. Every other topic here is still `org_id`-only exactly as decided. This is a forward pointer, not a rewrite of what was decided at the time.
+
 A `data_residency` row whose `db_cell`, `qdrant_region`, or `object_bucket_region` does not match `region` is a provisioning bug, rejected by a CI invariant and a startup assertion in the tenant router.
 
 ```mermaid

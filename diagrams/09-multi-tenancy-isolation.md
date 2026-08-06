@@ -35,7 +35,7 @@ flowchart TB
   SVC -->|"SET app.current_org = org_id (txn-local)"| PG["Postgres + RLS<br/>USING (org_id = current_setting('app.current_org'))<br/>tenant rows only"]
   SVC -->|"resolve logical → physical collection"| QD["Qdrant<br/>transcript_chunks__{org_id}<br/>document_chunks__{org_id}<br/>+ mandatory org_id payload filter"]
   SVC -->|"$org_id Cypher param"| AGE["Apache AGE: nexus_knowledge<br/>org-partitioned, every node carries org_id"]
-  SVC -->|"produce / consume<br/>partition key = org_id"| RP["Redpanda topics<br/>(transcript-chunks, decisions, actions, …)<br/>tenant-keyed partitions"]
+  SVC -->|"produce / consume<br/>partition key = org_id (19 topics) or<br/>{org_id}:{meeting_id} (transcript-chunks, agent-stream)"| RP["Redpanda topics<br/>(decisions, actions, transcript-chunks, …)<br/>tenant-keyed partitions"]
   SVC -->|"key builder enforces prefix"| RD["Redis (Upstash)<br/>nexus:{org_id}:user_ctx:{user_id}<br/>nexus:{org_id}:rag:{user_id}:{query_hash}<br/>nexus:{org_id}:budget:{period}"]
   SVC -->|"org_id in request context"| QUOTA["billing-metering-service<br/>per-tenant token budgets + hard quotas<br/>agent_budgets / quotas"]
 
@@ -100,7 +100,7 @@ The defining property: **RLS stays ON even inside a cell.** A cell shrinks blast
 | `app.current_org` | The transaction-local Postgres session GUC RLS reads; set per request from the injected `org_id`. |
 | `transcript_chunks__{org_id}` / `document_chunks__{org_id}` | Physical per-tenant Qdrant collections (logical names `transcript_chunks` / `document_chunks`); a mandatory `org_id` payload filter is the second line of defense. |
 | `nexus_knowledge` | The org-partitioned Apache AGE graph; every node carries `org_id` and every Cypher template is parameterized by `$org_id`. |
-| Tenant-keyed partitions | Every Redpanda topic (`transcript-chunks`, `decisions`, `actions`, `agent-requests`, …) uses `org_id` as the partition key. |
+| Tenant-keyed partitions | Every Redpanda topic is tenant-partitioned. 19 of 21 (`decisions`, `actions`, `agent-requests`, …) use `org_id` as the partition key; `transcript-chunks` and `agent-stream` use the composite `{org_id}:{meeting_id}` ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)). |
 | `nexus:{org_id}:…` | The Redis key namespace prefix; the key builder rejects unprefixed keys. |
 | Solid arrows | The single-resolution `org_id` propagation path from edge to each store. |
 | Dotted arrows | Cross-cutting control-plane concerns (quotas, audited ops) that apply across all tenants/cells. |
@@ -111,7 +111,7 @@ The defining property: **RLS stays ON even inside a cell.** A cell shrinks blast
 
 - **Resolve once, enforce everywhere.** `org_id` is derived a single time — at `identity-tenant-service` from the Clerk-verified JWT — and injected into request context; no downstream service re-derives the tenant from a path parameter, body field, or header it didn't get from the chokepoint. The authz middleware re-asserts the injected value before any query (see [Service Catalog §3](../_canon/01-service-catalog.md)).
 - **Six independent backstops, not one perimeter.** Postgres RLS (`app.current_org`), the per-tenant Qdrant collection plus mandatory `org_id` payload filter, the `$org_id`-parameterized `nexus_knowledge` Cypher, the tenant-keyed Redpanda partition, the `nexus:{org_id}:…` Redis prefix, and the per-tenant token quota each scope a tenant on their own — so a single missed check is contained, never catastrophic.
-- **Events re-assert tenancy on the way out.** Redpanda delivery is at-least-once with idempotency keys; topics are partitioned by `org_id` for ordering and throughput isolation, and a consumer re-asserts `org_id` from the event header before it writes anything, so a cross-tenant write is impossible even on replay (see [Data Model §7](../_canon/02-data-model.md)).
+- **Events re-assert tenancy on the way out.** Redpanda delivery is at-least-once with idempotency keys; topics are tenant-partitioned for ordering and throughput isolation - `org_id` alone on 19 of 21, the composite `{org_id}:{meeting_id}` on `transcript-chunks`/`agent-stream` ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)) - and a consumer re-asserts `org_id` from the event header before it writes anything, so a cross-tenant write is impossible even on replay (see [Data Model §7](../_canon/02-data-model.md)).
 - **Pooled is logical isolation; cells are physical.** Free/Pro tenants share Postgres clusters and a Qdrant cluster (one collection each, `transcript_chunks__{org_id}`) behind RLS; enterprise tenants get a dedicated Postgres + Qdrant cell pinned to a region via `data_residency.db_cell`, removing the noisy-neighbor and shared-blast-radius problem.
 - **RLS is non-negotiable in both postures.** Cells reduce blast radius but never replace row-level security — `FORCE ROW LEVEL SECURITY` is on inside a cell exactly as in the pool, so defense-in-depth holds regardless of plan tier.
 - **Quotas and ops cut across tenancy, not around it.** `billing-metering-service` applies per-tenant token budgets and hard quotas (mirrored hot in `nexus:{org_id}:budget:{period}`) to pooled and cell tenants alike, and `admin-ops-service` cross-tenant access is RBAC-gated and fully audited — control-plane reach never bypasses the `org_id` scope on tenant data.

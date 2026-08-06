@@ -89,7 +89,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `team_members` | entity | Join table `(team_id, user_id)` with role. Owned by `identity-tenant-service`. | — |
 | `departments` | entity | Self-referential org tree (`parent_id`). Owned by `identity-tenant-service`. | — |
 | `meetings` | entity | A meeting: title, scheduled_start/end, `livekit_room`, status, created_by. Monthly range-partition candidate. Owned by `core-api`. | — |
-| `meeting_participants` | entity | Join table `(meeting_id, user_id)` with `role_in_meeting`; drives `get_user_context`. Owned by `core-api`. | — |
+| `meeting_participants` | entity | Join table `(meeting_id, user_id)` with `role_in_meeting`; drives `get_user_context`. Also carries `consented_at timestamptz NULL` / `consent_version text NULL`, the recording/transcription consent acknowledgment ([ADR-0018](adr/0018-consent-entity-behind-flag.md)); both NULL until enforcement is enabled and a participant consents. Owned by `core-api`. | — |
 | `transcript_chunks` | entity | Finalized diarized utterances: speaker_id, start_ms, end_ms, text, is_final, confidence. Index on `(meeting_id, start_ms)`; only finals persisted. Owned by `transcription-service`. | — |
 | `meeting_speakers` | entity | Diarized `speaker_id` → `user_id` mapping with confidence and `assignment` (manual/suggested) — the R7 source of truth. Owned by `core-api` (the catalog lists it under `core-api`'s owned data; the data model labels its owner `transcription-service` — catalog wins, see §10). | — |
 | `worklogs` | entity | Per-user notes (PersonalListenerAgent): content, relevance_score, created_by_agent, source_chunk_ids. Owned by `core-api`. | — |
@@ -111,7 +111,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `audit_logs` | entity | Append-only, tamper-evident audit trail: actor_id/type, action, target, metadata, ip, occurred_at. Owned by `admin-ops-service` (the catalog folds audit-log access into it — see §10). | added (SaaS) |
 | `integration_connections` | entity | One row per installed integration: provider (google_calendar/slack/jira/linear), external_account_id, status, scopes, webhook cursors. Owned by `integration-service`. | added (SaaS) |
 | `oauth_tokens` | entity | Per-connection OAuth tokens, encrypted at rest (envelope/KMS); never returned by API. Owned by `integration-service`. | added (SaaS) |
-| `tenant_settings` | entity | Per-tenant config: locale, `agent_confidence_overrides`, retention days, pii_redaction_enabled, sso_config. Owned by `identity-tenant-service` (the tenant control plane; data-model labels this `tenant-service` — see §10). | added (SaaS) |
+| `tenant_settings` | entity | Per-tenant config: locale, `agent_confidence_overrides`, retention days, pii_redaction_enabled, sso_config, `consent_required boolean NOT NULL DEFAULT false` (gates the meeting-join consent flow, [ADR-0018](adr/0018-consent-entity-behind-flag.md); default off). Owned by `identity-tenant-service` (the tenant control plane; data-model labels this `tenant-service` — see §10). | added (SaaS) |
 | `data_residency` | entity | Pins a tenant to region/cell (us/eu/ap), db_cell, qdrant_region, object_bucket_region; immutable after `locked_at`. Owned by `identity-tenant-service` (data-model labels this `tenant-service` — see §10). | added (SaaS) |
 | `agent_budgets` | entity | Per (tenant, month) token budget: token_quota, tokens_consumed, hard_cap, 80/95% alert flags, state (ok/throttled/blocked). Enforces R4 budgets. Owned by `billing-metering-service` (data-model labels this `budget-service` — see §10). | added (SaaS) |
 | `rbac_grants` | entity | The authorization store: `tier` (owner/admin/member) per (org_id, user_id), plus `granted_by`. The **only** thing the authz middleware reads. Strictly distinct from `users.role`, which is a job/domain attribute with no permission meaning. Owned by `identity-tenant-service`. | added (SaaS) |
@@ -120,13 +120,13 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 
 ## 5. Redpanda topics
 
-Kebab-case, partitioned by `org_id`, Avro + Schema Registry (`{topic}-value`, BACKWARD). 9 PDF-original + 12 SaaS-added = 21. Source: [Event Architecture §2](07-event-architecture.md), [`_canon/01` §5](_canon/01-service-catalog.md).
+Kebab-case, Avro + Schema Registry (`{topic}-value`, BACKWARD). 9 PDF-original + 12 SaaS-added = 21. Partitioned by `org_id` alone on 19 of 21 topics; `transcript-chunks` and `agent-stream` use the composite `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). Source: [Event Architecture §2](07-event-architecture.md), [`_canon/01` §5](_canon/01-service-catalog.md), [`_canon/03`](_canon/03-event-taxonomy.md).
 
 ### 5.1 PDF-original topics (9, names verbatim)
 
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
-| `transcript-chunks` | topic | Finalized diarized utterances from a live meeting. Producer `transcription-service`. | — |
+| `transcript-chunks` | topic | Finalized diarized utterances from a live meeting. Producer `transcription-service`. Partition key `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). | — |
 | `document-chunks` | topic | Typed, split document elements from ingestion. Producer `ingestion-service`. | — |
 | `agent-results` | topic | Agent output (notes, scores, candidates, suggestions). Producer `agent-runtime-service`. | — |
 | `decisions` | topic | Confirmed decisions only. Producer `core-api` (outbox, on confirm). | — |
@@ -134,7 +134,7 @@ Kebab-case, partitioned by `org_id`, Avro + Schema Registry (`{topic}-value`, BA
 | `notifications` | topic | Cross-channel notification intents. Multiple producers. | — |
 | `agent-requests` | topic | A2A context-fill requests (ContextGapAgent). | — |
 | `agent-responses` | topic | A2A context-fill responses. | — |
-| `agent-stream` | topic | Streamed LLM token deltas to the UI. | — |
+| `agent-stream` | topic | Streamed LLM token deltas to the UI. Partition key `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). | — |
 
 ### 5.2 SaaS-scale topics (12, added vs PDF)
 
@@ -260,6 +260,7 @@ These are **not PDF renames** — they are reconciliations between the informal 
 | Data-model label (non-canonical) | Canonical service (use this) | Note |
 |---|---|---|
 | `identity-service` | `identity-tenant-service` | Identity + tenancy control plane folded into one catalog service. |
+| `identity-service` (data model: `teams`/`team_members`/`departments`) | `core-api` | Per [`_canon/01-service-catalog.md`](_canon/01-service-catalog.md), `core-api` owns `teams`, `team_members`, and `departments` CRUD and their `/teams` / `/departments` prefixes. `identity-tenant-service` retains the identity and tenancy surface (`organizations`, `users`, RBAC, SSO/SCIM) and does not write these three tables. |
 | `tenant-service` | `identity-tenant-service` | `tenant_settings` / `data_residency` are owned by the identity/tenancy control plane. |
 | `meeting-service` (data model: meetings/participants/speakers/chat) | `core-api` (meetings, participants, chat, `meeting_speakers`) + `transcription-service` (`transcript_chunks`) + `meeting-service` (LiveKit transport adapter only) | The catalog splits the data-model "meeting-service" across three services; `meeting_speakers` is in `core-api`'s owned-data list and `meeting-service` proper is the LiveKit adapter. |
 | `agent-service` | `core-api` | `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations` are owned by `core-api`; `agent-runtime-service` owns no tables. |
