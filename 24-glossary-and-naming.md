@@ -260,6 +260,7 @@ These are **not PDF renames** — they are reconciliations between the informal 
 | Data-model label (non-canonical) | Canonical service (use this) | Note |
 |---|---|---|
 | `identity-service` | `identity-tenant-service` | Identity + tenancy control plane folded into one catalog service. |
+| `identity-service` (data model: `teams`/`team_members`/`departments`) | `core-api` | Per [`_canon/01-service-catalog.md`](_canon/01-service-catalog.md), `core-api` owns `teams`, `team_members`, and `departments` CRUD and their `/teams` / `/departments` prefixes. `identity-tenant-service` retains the identity and tenancy surface (`organizations`, `users`, RBAC, SSO/SCIM) and does not write these three tables. |
 | `tenant-service` | `identity-tenant-service` | `tenant_settings` / `data_residency` are owned by the identity/tenancy control plane. |
 | `meeting-service` (data model: meetings/participants/speakers/chat) | `core-api` (meetings, participants, chat, `meeting_speakers`) + `transcription-service` (`transcript_chunks`) + `meeting-service` (LiveKit transport adapter only) | The catalog splits the data-model "meeting-service" across three services; `meeting_speakers` is in `core-api`'s owned-data list and `meeting-service` proper is the LiveKit adapter. |
 | `agent-service` | `core-api` | `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations` are owned by `core-api`; `agent-runtime-service` owns no tables. |
