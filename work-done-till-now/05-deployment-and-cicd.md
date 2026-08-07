@@ -165,3 +165,54 @@ real database (the suite went from 253 to 263 tests).
 - **Every response was cached, including errors.** A transient 500 was pinned for the full 24h
   TTL, so retries replayed the error and the handler never ran again - the opposite of what a
   client retrying with an idempotency key wants. Only 2xx is stored now.
+
+## 8. Full service topology (2026-08-08)
+
+Production ran ONE of the nine HTTP services. `web` served core-api's 8 routes and every other
+service existed only as an importable module. Two consequences mattered:
+
+- `api-gateway` was not running, so core-api was directly internet-facing and the fail-closed
+  tenant checkpoint that `11-security-architecture.md` relies on was simply absent.
+- `meeting-service` was not running AND was missing from the gateway's `ROUTE_MAP` entirely,
+  so `/api/meetings/:id/token` - the only route that mints a LiveKit room token - resolved to
+  no service. The LiveKit credentials could be configured perfectly and still be unusable.
+
+### What landed
+
+- `services/api_gateway/proxy.py`: the forwarding layer `main.py` had carried a TODO for. It
+  was correct to omit while the services shared one process; once they are separate containers
+  it is the difference between a gateway and a 404. Streams the body rather than buffering,
+  forwards the signed `X-Mytheus-*` headers intact, drops hop-by-hop headers per RFC 9110
+  7.6.1, and maps failures distinctly: 404 unroutable, 503 unreachable, 504 timeout.
+- `ROUTE_MAP` corrected: added `meeting-service` (`/api/meetings`, `/livekit/webhook`) plus
+  `/users` and `/taxonomy`, which identity-tenant-service really serves.
+- `compose.prod.yml`: eight services added, keyed by their canonical catalog names because the
+  gateway resolves upstreams by name over docker DNS. `web` keeps its key and gains a
+  `core-api` alias; renaming it would have recreated the container and broken Caddy's upstream
+  mid-cutover.
+- Caddy repointed from `web:8000` to `api-gateway:8000`.
+
+`integration-service`, `billing-metering-service`, `admin-ops-service` and
+`notification-service` serve nothing but `/healthz` today - their bands have not landed. They
+are deployed anyway so the route map reaches a real upstream: `/billing` now returns a 404 FROM
+billing-metering-service, which is the truth, rather than a gateway 404 indistinguishable from
+a routing bug.
+
+### Verification
+
+- 15 containers running, `migrate` exited 0, none restarting.
+- Gateway routing proven from inside the network before it carried traffic: `/healthz` 200
+  served locally; `/clerk/webhook` and `/livekit/webhook` returned 405 from their upstreams,
+  which is the proxy reaching identity-tenant-service and meeting-service on a POST-only route.
+- After the cutover, every API path returns 401 unauthenticated, including unrouted ones:
+  `edge_auth` runs before routing, so a request with no token fails closed regardless of path.
+  A 404 is only reachable with a valid token, which is the stricter order.
+- Data unchanged across the whole cutover: `tables=31`, `mytheus_pgdata` still created
+  `2026-08-06T13:21:50Z`. Atithi 14/14 and its domains unaffected.
+- Memory 7.5 GB to 8.1 GB of 32 GB. The eight services cost about 600 MB.
+
+### Known drift
+
+The Caddy configuration lives on the VPS at `/srv/atithivishram/atithivishram-infra/Caddyfile`
+and is NOT in any repo, so the ingress route is not reproducible from git. It is backed up in
+place on each edit. Bringing it under version control is unfinished work.
