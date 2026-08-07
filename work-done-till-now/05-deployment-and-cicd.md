@@ -211,8 +211,26 @@ a routing bug.
   `2026-08-06T13:21:50Z`. Atithi 14/14 and its domains unaffected.
 - Memory 7.5 GB to 8.1 GB of 32 GB. The eight services cost about 600 MB.
 
-### Known drift
+### The ingress config, and where it lives
 
-The Caddy configuration lives on the VPS at `/srv/atithivishram/atithivishram-infra/Caddyfile`
-and is NOT in any repo, so the ingress route is not reproducible from git. It is backed up in
-place on each edit. Bringing it under version control is unfinished work.
+The Caddy configuration was NOT missing from git, as first recorded here. It is tracked in
+`github.com/Visrama/atithivishram-infra` - a different repo, for a different product, that
+happens to own 80/443 on this box. The Mytheus site blocks had been added as an UNCOMMITTED
+edit to its working tree, which was worse than untracked config in two specific ways:
+
+- That repo's `drift-check.yml` runs daily and fails on both a dirty working tree and a live
+  Caddy config differing from the committed file. The Mytheus edit tripped both, so an alarm
+  belonging to another product was red because of this work.
+- Its `deploy-vps.yml` runs `git checkout --detach origin/$REF`, which DISCARDS uncommitted
+  changes. The next `v*.*.*` tag would have silently reverted the Caddyfile and taken
+  `api.mytheus.cloud` and `vps.mytheus.cloud` offline, with nothing connecting the outage to
+  the deploy that caused it.
+
+Now committed there (`c8d5b1f`), and the VPS working tree moved to that commit. The file is
+byte-identical before and after, verified by md5 on both sides, so nothing served changed.
+Both drift-check gates pass and Caddy was never restarted.
+
+The coupling is real and worth stating plainly: Mytheus's ingress route lives in another
+product's repository, because a second TLS terminator is impossible while that Caddy holds
+80/443 and `cf-origin-lock` admits Cloudflare only to those ports. Anyone changing Mytheus
+routing edits `atithivishram-infra`, and a Mytheus deploy cannot change its own ingress.
