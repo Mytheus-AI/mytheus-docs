@@ -133,9 +133,8 @@ Reported by earlier sessions and NOT re-verified here: the Plan 5-6 feature work
 
 | Gap | Blocks | Picked up by |
 |---|---|---|
-| `internal_org_id` JWT claim unpopulated | AI-tier endpoints return 401 | Next band touching identity |
+| Clerk JWT template must map `public_metadata.internal_org_id` into the claim | AI-tier endpoints return 401 | Dashboard step; documented in `mytheus-platform` `deploy/README.md` |
 | `CLERK_WEBHOOK_SECRET`, Stripe and LiveKit values are placeholders | Webhooks, billing, meetings | Needs real credentials from the owner |
-| `Idempotency-Key` collides across endpoints | Correctness under retry | Next backend band |
 | Cloudflare SSL mode must stay Full, not Full (strict) | Both hostnames break on strict | Needs an origin certificate for `*.mytheus.cloud` |
 | No staging environment | Every deploy is to production | Future |
 | Grafana panels never built | Observability | Plan 14 |
@@ -144,3 +143,25 @@ Credential hygiene outstanding for the owner: three Hostinger API tokens, the Do
 password, and the Dokploy API key were all exposed in plaintext during these sessions and
 should be rotated. Note that Dokploy's API returns stored registry passwords in plaintext to
 any API-key holder, so that key is high value.
+
+## 7. Application defects closed alongside this work
+
+Found while chasing the deploy path, all in `mytheus-backend`, all verified by CI against a
+real database (the suite went from 253 to 263 tests).
+
+- **`organizations.clerk_org_id` was never written by any production path.**
+  `libs/shared/org_resolver.py` resolves every authenticated request through that column, so a
+  provisioned tenant was unreachable by any request: the API could not serve a real
+  Clerk-authenticated caller at all. Only test fixtures populated it. The live database holds
+  zero organizations, which is why nothing had surfaced it. `provision_organization` now takes
+  and stores it, filling a NULL on a later run but never repointing an established link.
+- **Nothing published `internal_org_id` to Clerk.** The AI tier authorizes from that claim and
+  failed closed with 401 on every request. `libs/shared/clerk_admin.py` publishes it after
+  commit, never inside the provisioning transaction.
+- **`Idempotency-Key` reused across endpoints returned the wrong response.** One key space per
+  service meant the same key on a second route replayed the first route's body with a 200: a
+  success response for an operation that never ran. Now 409 `IDEMPOTENCY_KEY_REUSED`, a code
+  that had been in the frozen enum since Plan 0 with nothing emitting it.
+- **Every response was cached, including errors.** A transient 500 was pinned for the full 24h
+  TTL, so retries replayed the error and the handler never ran again - the opposite of what a
+  client retrying with an idempotency key wants. Only 2xx is stored now.
