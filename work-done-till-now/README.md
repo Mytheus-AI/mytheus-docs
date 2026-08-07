@@ -21,6 +21,7 @@ This exists because progress was previously scattered across four repos in three
 | `00-status-overview.md` | Program status at a glance: the band-by-repo matrix, the repo inventory, and the live gap list. |
 | `01-plan-0-scaffold-and-contracts.md` | Plan 0 (`plan/plan-0-scaffold-and-contracts.md`): what landed per repo, the Definition-of-Done audit, and the four open gaps. |
 | `02-plan-1-2-foundation-and-tenancy.md` | Plan 1-2 (`plan/plan-1-2-foundation-and-tenancy.md`): P1 complete (canon amendments plus the design pack); P2 backend complete, with all seven blocking defects closed, the `organizations` RLS decision, every service's routes, and CI in two repos. The two client repos are what remains. |
+| `05-deployment-and-cicd.md` | The deployment substrate every band depends on: image publishing, the CI/CD deploy path, the Dokploy wiring, and the nine defects found in it. Not a plan band. |
 
 ## How to write a band file
 
