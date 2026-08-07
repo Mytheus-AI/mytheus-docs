@@ -230,7 +230,26 @@ Now committed there (`c8d5b1f`), and the VPS working tree moved to that commit. 
 byte-identical before and after, verified by md5 on both sides, so nothing served changed.
 Both drift-check gates pass and Caddy was never restarted.
 
-The coupling is real and worth stating plainly: Mytheus's ingress route lives in another
-product's repository, because a second TLS terminator is impossible while that Caddy holds
-80/443 and `cf-origin-lock` admits Cloudflare only to those ports. Anyone changing Mytheus
-routing edits `atithivishram-infra`, and a Mytheus deploy cannot change its own ingress.
+Then decoupled. `atithivishram-infra` now carries one permanent line -
+`import /etc/caddy/conf.d/*.caddy` - plus a read-only mount of `/srv/mytheus/caddy/conf.d`.
+The Mytheus site blocks live in this program's own repo at
+`mytheus-platform/deploy/caddy/mytheus.caddy`, and `mytheus-deploy.sh` syncs them on every
+deploy, so Mytheus can change its own ingress without a commit to another product.
+
+Three things that decoupling surfaced, each a real defect rather than a detail:
+
+- An import glob matching no files had to be proven safe before relying on it. Verified
+  against `caddy:2-alpine`: it validates. Had it errored, an empty fragment directory would
+  have stopped Atithi's Caddy from starting.
+- The Caddy container's attachment to `dokploy-network` and `mytheus_default` was ALSO manual.
+  The first recreate dropped both and Mytheus went 502 immediately. Those networks are now
+  declared on the service, so the attachment survives a recreate; `default` is listed
+  explicitly too, because naming any network stops Compose adding it implicitly and omitting
+  it would have detached Caddy from every Atithi service.
+- The fragment is spliced into another product's config, so a syntax error in it fails
+  validation of the whole Caddyfile. `mytheus-deploy.sh` validates before reloading and
+  restores the previous fragment on failure. Verified with a deliberately malformed fragment:
+  validation failed, nothing reloaded, all seven domains stayed up.
+
+The residual coupling is now one line and one mount in `atithivishram-infra`, which cannot be
+removed while that Caddy holds 80/443 and `cf-origin-lock` admits Cloudflare only there.
