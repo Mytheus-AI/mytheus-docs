@@ -75,7 +75,7 @@ reached. Wiring the app is therefore configuration - point `API_GATEWAY_URL` at
 
 | Item | Detail |
 |---|---|
-| Branch divergence in `mytheus-ui` | `main` is 5 commits ahead of `local-mytheus-rebuild`; the rebuild branch is 1 ahead of `main`; 18 files differ. Both sides moved, so this is a merge, not a fast-forward. Resolve before more work lands. |
+| Unmerged landing work in `mytheus-ui` | Less alarming than the raw counts suggest. Four of `main`'s five extra commits are merges FROM `local-mytheus-rebuild`, so that branch is the working branch and `main` absorbs it by PR. Exactly one commit is unmerged - `refactor(landing): cut redundant copy, fix the story canon, derive dates` - and it is landing-page work, so the newest marketing content is not on `main`. A dry-run merge is CLEAN, no conflicts, and preserves `main`'s only unique change (the progress-docs section of `CLAUDE.md`). Not merged here: this repo is not modified without asking. |
 | 18 meeting-UX gaps | See the imported gap analysis. Tier 1 is the live-meeting surfaces, and the largest single miss is live in-call captions, which doc 10 makes the flagship real-time surface. |
 | Action-item confirm surface | Gap 2. The backend enforces the confirmation rule (only `core-api`'s outbox emits `decisions`/`actions`, only on confirm). A UI that shows detected actions as passive text with no Confirm affordance cannot satisfy it. |
 | Clerk JWT template | Unrelated to the UI but blocks the AI tier: `public_metadata.internal_org_id` must be mapped into the token claim. See `mytheus-platform` `deploy/README.md`. |
