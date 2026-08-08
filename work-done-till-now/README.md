@@ -22,6 +22,7 @@ This exists because progress was previously scattered across four repos in three
 | `01-plan-0-scaffold-and-contracts.md` | Plan 0 (`plan/plan-0-scaffold-and-contracts.md`): what landed per repo, the Definition-of-Done audit, and the four open gaps. |
 | `02-plan-1-2-foundation-and-tenancy.md` | Plan 1-2 (`plan/plan-1-2-foundation-and-tenancy.md`): P1 complete (canon amendments plus the design pack); P2 backend complete, with all seven blocking defects closed, the `organizations` RLS decision, every service's routes, and CI in two repos. The two client repos are what remains. |
 | `05-deployment-and-cicd.md` | The deployment substrate every band depends on: image publishing, the CI/CD deploy path, the Dokploy wiring, and the nine defects found in it. Not a plan band. |
+| `06-frontend-and-ui.md` | Which frontend repo is the product and which is a draft, what `mytheus-ui` already has, the API contract it expects, and the open frontend items. |
 
 ## How to write a band file
 
