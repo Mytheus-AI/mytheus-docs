@@ -51,6 +51,21 @@ The API contract is already correct and does not need rework:
 - `.env.example` states that the gateway origin is the ONLY REST origin the app holds, because
   "going straight to core-api or bff would bypass the edge that derives org_id from the token".
 
+### Verified end to end against the live gateway
+
+The single path the app calls today, `/bff/dashboard`, was exercised through the real chain
+(Cloudflare -> Caddy -> api-gateway -> bff). That is what "wired" means here: not that the code
+compiles, but that the deployed edge answers the exact request this client makes, in the shape
+this client parses.
+
+It did not, at first. `Authorization: Bearer not-a-real-jwt` returned 500 INTERNAL rather than
+401, because `get_signing_key_from_jwt` parses a token before looking a key up and the decode
+error escaped a handler that caught only JWKS failures. That specific bug breaks THIS client:
+`client.ts` redirects to sign-in only on AUTH_REQUIRED or TOKEN_EXPIRED, so a user with an
+expired token would have seen an error page instead of being signed back in. Fixed in
+`mytheus-backend` (`libs/shared/auth.py`); malformed, truncated and undecodable tokens all now
+return 401 AUTH_REQUIRED through the deployed gateway.
+
 That contract matches the deployed topology exactly: `api.mytheus.cloud` terminates at
 `api-gateway`, which is the component that fails closed before any tenant-scoped store is
 reached. Wiring the app is therefore configuration - point `API_GATEWAY_URL` at
