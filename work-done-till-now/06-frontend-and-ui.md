@@ -79,8 +79,8 @@ reached. Wiring the app is therefore configuration - point `API_GATEWAY_URL` at
 | 18 meeting-UX gaps | See the imported gap analysis. Tier 1 is the live-meeting surfaces, and the largest single miss is live in-call captions, which doc 10 makes the flagship real-time surface. |
 | Action-item confirm surface | Gap 2. The backend enforces the confirmation rule (only `core-api`'s outbox emits `decisions`/`actions`, only on confirm). A UI that shows detected actions as passive text with no Confirm affordance cannot satisfy it. |
 | Clerk JWT template | Unrelated to the UI but blocks the AI tier: `public_metadata.internal_org_id` must be mapped into the token claim. See `mytheus-platform` `deploy/README.md`. |
-| Deployment | `mytheus-ui` had no Dockerfile and no standalone output, so it could not be deployed anywhere. Both added in `mytheus-ui` PR #5, verified by building the image and serving from it (52 MB runtime). Still needs a compose service and an ingress route. |
-| No CI and no tests in `mytheus-ui` | The repo has no vitest, no `test` script, no test files, and no workflows at all, while its own `CLAUDE.md` states CI must run lint, format check, typecheck, Vitest, `next build` and Playwright on every PR. Nothing gates that repo. |
+| Deployment | DONE except DNS. `mytheus-ui` is containerised, published to `ghcr.io/mytheus-ai/mytheus-ui`, and running as the `ui` service behind the shared Caddy at `mytheus.cloud` and `www.mytheus.cloud`. The origin serves it today; the apex and www A records still point at Hostinger's parked page and must be repointed to `187.127.190.246` (proxied) in Cloudflare. |
+| No tests in `mytheus-ui` | CI now exists (typecheck, `next lint`, a real image build on every PR, publish and deploy on main). Vitest and Playwright are still absent because the repo has no test tooling and no test files; a job running zero tests and reporting green would read as coverage. Adding that stack is separate work. |
 | Node 25 breaks the `mytheus-ui` build | On Node 25 the build compiles and generates all 57 static pages, then fails writing standalone output because `routes-manifest.json` is never emitted. `next`'s `engines` allows `>=18.17.0`, so nothing warns. The Dockerfile pins Node 20. |
 
 ### The marketing site was not publicly reachable
@@ -95,6 +95,23 @@ way, so the campaign they exist for could not convert.
 Fixed in `mytheus-ui` PR #5. Verified against a running container: all 13 `(marketing)` routes
 return 200 signed out, while `/dashboard`, `/meetings` and `/settings` stay protected. Nothing
 guards it from regressing, because that repo has no tests and no CI.
+
+### A generic service name served the wrong product
+
+The `ui` service came up healthy and Caddy reached it on `ui:3000` with a 200 - and the page
+returned was "Atithivishram: Property Management for Indian hotels". Compose derives a network
+alias from the service key, `atithivishram-prod` also has a container aliased `ui`, and the
+Caddy that fronts 443 is attached to both stacks' networks, so the bare name was ambiguous
+there and resolved to theirs.
+
+Every check short of reading the response body passed: container running, healthcheck green,
+upstream reachable, HTTP 200. It was caught by looking at the title.
+
+Fixed with an explicit namespaced alias, `mytheus-webapp`. `redis` and `postgres` are ambiguous
+across the two stacks for the same reason and are harmless only because Caddy never proxies to
+them - every other container resolves names inside its own network. The general rule this
+established: any upstream the shared Caddy must reach needs a name unique across all three
+networks, not merely unique within its own stack.
 
 ## 5. Verification
 
