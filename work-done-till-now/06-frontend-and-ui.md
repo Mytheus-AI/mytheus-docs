@@ -79,7 +79,22 @@ reached. Wiring the app is therefore configuration - point `API_GATEWAY_URL` at
 | 18 meeting-UX gaps | See the imported gap analysis. Tier 1 is the live-meeting surfaces, and the largest single miss is live in-call captions, which doc 10 makes the flagship real-time surface. |
 | Action-item confirm surface | Gap 2. The backend enforces the confirmation rule (only `core-api`'s outbox emits `decisions`/`actions`, only on confirm). A UI that shows detected actions as passive text with no Confirm affordance cannot satisfy it. |
 | Clerk JWT template | Unrelated to the UI but blocks the AI tier: `public_metadata.internal_org_id` must be mapped into the token claim. See `mytheus-platform` `deploy/README.md`. |
-| Deployment | `mytheus-ui` is not deployed anywhere yet. No container, no compose service, no ingress route. |
+| Deployment | `mytheus-ui` had no Dockerfile and no standalone output, so it could not be deployed anywhere. Both added in `mytheus-ui` PR #5, verified by building the image and serving from it (52 MB runtime). Still needs a compose service and an ingress route. |
+| No CI and no tests in `mytheus-ui` | The repo has no vitest, no `test` script, no test files, and no workflows at all, while its own `CLAUDE.md` states CI must run lint, format check, typecheck, Vitest, `next build` and Playwright on every PR. Nothing gates that repo. |
+| Node 25 breaks the `mytheus-ui` build | On Node 25 the build compiles and generates all 57 static pages, then fails writing standalone output because `routes-manifest.json` is never emitted. `next`'s `engines` allows `>=18.17.0`, so nothing warns. The Dockerfile pins Node 20. |
+
+### The marketing site was not publicly reachable
+
+Found while verifying the container, and it is the reason the marketing site could not simply
+be switched on. `src/middleware.ts` allowlists `/legal(.*)`, which matches no route in this
+app; the pages that exist are `/privacy` and `/terms`. Both were therefore protected by Clerk
+and returned 404 to a signed-out visitor - the two documents that must be publicly reachable,
+and both linked from the site footer. `/students` and `/students/verify` were gated the same
+way, so the campaign they exist for could not convert.
+
+Fixed in `mytheus-ui` PR #5. Verified against a running container: all 13 `(marketing)` routes
+return 200 signed out, while `/dashboard`, `/meetings` and `/settings` stay protected. Nothing
+guards it from regressing, because that repo has no tests and no CI.
 
 ## 5. Verification
 
