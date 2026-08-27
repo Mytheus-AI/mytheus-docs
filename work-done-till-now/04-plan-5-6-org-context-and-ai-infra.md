@@ -258,6 +258,46 @@ yet. But the infrastructure is real and already holds tenant data. This needs an
 `api-gateway` lands or any real caller reaches these routes, and it should be tracked as one
 band-level item rather than left as four independent interim comments.
 
+#### CLOSED. The fix shipped 2026-08-06; the ADR followed on 2026-08-28.
+
+The finding above is left unedited, because what it describes was true when it was written and the
+account of how four local decisions composed into it is the part worth keeping.
+
+**The code fix.** `mytheus-intelligence` commit `9ea2f9b`, merged to `main` the same day. It adds
+`libs/shared/auth.py`, a faithful reimplementation of `mytheus-backend`'s Clerk verifier (RS256
+against cached JWKS, `nbf` required, a JWKS outage mapped to `503` rather than `500`, no error
+message echoed back as an oracle), exposing one dependency, `verified_org_id`. All four services
+depend on it: `services/ingestion_service/routes.py`, `services/search_service/routes.py`,
+`services/embedding_service/query_embed.py`, `services/reranker_service/rerank.py`. The
+`Header(..., alias="X-Org-Id")` binding is removed rather than deprecated, so `org_id` has no
+unauthenticated source on this tier any more.
+
+**The ADR.** [ADR-0019](../adr/0019-ai-tier-verifies-jwt-and-reads-resolved-org-claim.md), written
+three weeks after the code and recording that lateness as a process failure rather than presenting
+the canon-first ordering as having been followed. It carries the decision the docstring held: this
+repo does NOT reimplement `org_resolver.py` and does not read `public.organizations`, so the claim
+it reads (`CLERK_JWT_INTERNAL_ORG_CLAIM`, default `internal_org_id`) is expected to carry the
+already-resolved internal `org_id`, not Clerk's opaque native id.
+
+**Two things this does not close, both stated in ADR-0019 and repeated here so a reader of the
+records alone is not misled.** First, the routes fail closed with `401` on every request until the
+Clerk JWT template actually populates that claim, which is a Clerk-dashboard and
+`identity-tenant-service` change outside `mytheus-intelligence`, and is the same work as
+provisioning the first real organization. "Deployed" is not "reachable and authenticated": that
+requires confirming the claim is present in a minted token. Second, this tier still cannot
+distinguish a suspended organization from an active one, because the not-suspended check lives in
+the `organizations` read this repo is not allowed to do; a token minted before a suspension stays
+usable here until it expires.
+
+**How this was found, which is the reusable part.** A planning pass on 2026-08-26 re-verified this
+finding against the repos and reported it still open in all four services. It had been closed for
+twenty days. The check was made against a clone that had not been fetched, which is precisely the
+trap [02-plan-1-2-foundation-and-tenancy.md](02-plan-1-2-foundation-and-tenancy.md) section 14.3
+already records: `git status` compares against the last fetch, not against the remote, so "clean and
+up to date" means nothing on a repo nobody has pulled. A stale-clone check is not a verification,
+and this record was itself the evidence used to justify the re-verification, which is why an
+un-updated record is not a cosmetic problem.
+
 ### Minor: dead-letter topics are scoped by source topic, not consumer group
 
 `embedding-service` and `search-service` both consume `transcript-chunks` and both dead-letter to

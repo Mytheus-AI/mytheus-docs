@@ -106,6 +106,9 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0014](adr/0014-kubernetes-compute-platform.md) | EKS/GKE + Terraform IaC for production; Railway/Render for the early build. |
 | [ADR-0015](adr/0015-observability-stack.md) | OpenTelemetry + Prometheus/Grafana + Sentry with structured JSON logs. |
 | [ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md) | MVP backend on a self-hosted single-node VPS (Docker Compose); supersedes the Railway/Render fast path in ADR-0014. |
+| [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md) | `transcript-chunks` and `agent-stream` are composite-keyed `{org_id}:{meeting_id}`; the other 19 topics keep `org_id` alone. |
+| [ADR-0018](adr/0018-consent-entity-behind-flag.md) | Consent entity landed schema-first behind `tenant_settings.consent_required`, defaulted off. |
+| [ADR-0019](adr/0019-ai-tier-verifies-jwt-and-reads-resolved-org-claim.md) | `mytheus-intelligence` verifies the Clerk JWT itself and reads a pre-resolved internal `org_id` claim; no `org_id` from a request header. |
 
 ---
 
