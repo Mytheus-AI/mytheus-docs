@@ -39,7 +39,7 @@ Conventions used throughout:
 graph TD
   subgraph CRUD_Tier["CRUD tier (API)"]
     IdentitySvc["identity-service<br/>users, orgs, teams, departments"]
-    MeetingSvc["meeting-service<br/>meetings, participants, speakers, chat"]
+    MeetingSvc["meeting-service<br/>meetings, participants, speakers, chat,<br/>meeting_rooms"]
     TenantSvc["tenant-service<br/>tenant_settings, data_residency"]
     BillingSvc["billing-service<br/>plans, subscriptions, invoices, usage_events"]
     IntegrationSvc["integration-service<br/>integration_connections, oauth_tokens"]
@@ -109,6 +109,9 @@ Every entity in NEXUS, its owning service, tenant key, key fields, store, and pa
 | `data_residency` | tenant-service | Yes (one row per tenant) | `org_id` (PK), `region` (`us`/`eu`/`ap`), `db_cell`, `qdrant_region`, `object_bucket_region`, `locked_at` | Postgres | RLS by `org_id`. Pins tenant data to a region/cell (GDPR data-residency). Immutable after `locked_at` without migration workflow. |
 | `rbac_grants` | identity-service | Yes | `id`, `org_id`, `user_id`, `tier` (`owner`/`admin`/`member`), `granted_by`, `created_at`, UNIQUE `(org_id, user_id)` | Postgres | RLS by `org_id`. The **authorization** store: `tier` is the only thing the authz middleware reads. Strictly distinct from `users.role`, which is a job/domain attribute feeding agent relevance and `get_user_context` and is **never** consulted for permissions ([ADR-0010](../adr/0010-auth-clerk-enterprise-sso.md) D5). One tier per user per tenant. |
 | `agent_budgets` | budget-service | Yes | `id`, `org_id`, `period` (`YYYY-MM`), `token_quota`, `tokens_consumed`, `hard_cap`, `alert_80_sent`, `alert_95_sent`, `state` (`ok`/`throttled`/`blocked`) | Postgres | RLS by `org_id`. One row per (tenant, month). Enforces R4 token budgets + hard quotas; budget alerts from Phase 7. |
+| `meeting_rooms` | meeting-service | Yes | `id`, `org_id`, `meeting_id`, `livekit_room`, `status` (`pending`/`active`/`ended`), `egress_id`, `recording_ref`, `livekit_metadata_synced_at`, UNIQUE `(org_id, meeting_id)`, UNIQUE `(org_id, livekit_room)` | Postgres | RLS by `org_id` (`ENABLE` + `FORCE`, `tenant_isolation`). The LiveKit room ↔ meeting map ([ADR-0003](../adr/0003-meeting-sdk-livekit.md)): one row per meeting, bounded by meeting count, so not partitioned. `status` is CHECK-constrained to the three values above. `recording_ref` points into the `nexus-recordings` bucket (§6); `egress_id` is the LiveKit egress handle. `org_id` FK is `ON DELETE RESTRICT`. Owner is `meeting-service` **in the Service Catalog sense** (the LiveKit transport adapter) - the one table where this document's overloaded `meeting-service` label and the catalog service of the same name refer to the same thing (see [Glossary §10](../24-glossary-and-naming.md)). |
+
+> [SaaS-scale adjustment] `meeting_rooms` is new relative to the PDF but is not a commercial-SaaS table like the rest of this subsection: it exists because the SaaS build adopted LiveKit as the meeting transport ([ADR-0003](../adr/0003-meeting-sdk-livekit.md)), which needs a materialization of the provider's room for each `meetings` row. It sits here rather than in §2.1 because §2.1 is reserved for tables carried verbatim from the PDF, and the PDF had no meeting-transport provider at all.
 
 #### 2.2.1 Billing & metering entity relationships
 

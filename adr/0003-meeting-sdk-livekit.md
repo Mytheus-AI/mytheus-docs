@@ -94,7 +94,7 @@ class LiveKitTransport(MeetingTransport):
 
 ### 3. `meeting-service` owns the transport surface; `meeting_rooms` is its only store
 
-`meeting-service` ([Service Catalog §3](../_canon/01-service-catalog.md)) owns the LiveKit transport adapter and exactly two public paths — `POST /api/meetings/:id/token` (participant-verified token mint, p95 < 250 ms per [Capacity §11.1](../_canon/05-capacity-math.md)) and `POST /livekit/webhook` (`room.created`, `participant.joined`, `recording.ready`). It owns one table, **`meeting_rooms`** (LiveKit room ↔ meeting map, egress/recording refs — [Data Model §2.1](../_canon/02-data-model.md)), and emits `meeting-room-events`. It does **not** own `meetings` (that is `core-api`/meeting domain) or `transcript_chunks` (that is `transcription-service`).
+`meeting-service` ([Service Catalog §3](../_canon/01-service-catalog.md)) owns the LiveKit transport adapter and exactly two public paths — `POST /api/meetings/:id/token` (participant-verified token mint, p95 < 250 ms per [Capacity §11.1](../_canon/05-capacity-math.md)) and `POST /livekit/webhook` (`room.created`, `participant.joined`, `recording.ready`). It owns one table, **`meeting_rooms`** (LiveKit room ↔ meeting map, egress/recording refs — [Data Model §2.2](../_canon/02-data-model.md)), and emits `meeting-room-events`. It does **not** own `meetings` (that is `core-api`/meeting domain) or `transcript_chunks` (that is `transcription-service`).
 
 ```mermaid
 flowchart LR
