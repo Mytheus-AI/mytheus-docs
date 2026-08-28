@@ -17,8 +17,9 @@ deliberately assigns to compliance rather than answering (§ The unavailable-NER
 
 - [_canon/02-data-model.md §2.2](../_canon/02-data-model.md) - amended by this ADR to add
   `pii_tokens`.
-- [_canon/01-service-catalog.md §3](../_canon/01-service-catalog.md) - `identity-tenant-service`
-  gains the vault; the NER responsibility is placed on the inference tier.
+- [_canon/01-service-catalog.md §3](../_canon/01-service-catalog.md) - amended by this ADR twice:
+  `identity-tenant-service`'s owned data gains `pii_tokens`, and a new `ner-service` is added to
+  the AI/inference tier.
 - [_canon/06-tech-decisions.md §2.5](../_canon/06-tech-decisions.md) - "Dedicated autoscaling
   inference services ... OFF the API tier", the locked decision that determines where NER runs.
 - [12-compliance-and-privacy.md §5.1, §5.2](../12-compliance-and-privacy.md) - the three
@@ -115,6 +116,26 @@ NER model in that process couples GPU/CPU-bound inference to the live audio prox
 exact coupling ADR-0008 and §2.5 exist to prevent.
 
 NER therefore lives in `mytheus-intelligence` and is called over the internal mesh.
+
+### D5. The NER model gets its own service, `ner-service`
+
+"The inference tier" is not a name a code repo can build against, and the Service Catalog is the
+service-naming authority, so this ADR adds one rather than leaving the responsibility
+unassigned. `ner-service` follows `reranker-service`'s shape exactly: a dedicated model server,
+owning no data, called synchronously and internally only (`POST /ner`), scaling on its own
+signal.
+
+One service per model is the pattern §2.5 already locks (`embedding-service` and
+`reranker-service` are separate for precisely this reason), and the two models it names have
+opposite cost profiles and independent autoscalers. Folding a third model into
+`embedding-service` would couple three lifecycles - a model swap, a batch-size change or a
+scale event in one would move the others - for no benefit beyond one fewer deployment.
+
+Note the deliberate split of concerns this creates: `ner-service` **detects**, it does not
+redact. Each boundary keeps its own redaction pass, calls `ner-service` for spans and
+`identity-tenant-service` for tokens, and assembles the result itself. Canon already places the
+"PII redaction pass" responsibility on `ingestion-service` for the document path, and that
+stays true - what moves to `ner-service` is the model, not the pass.
 
 ## Consequences
 
