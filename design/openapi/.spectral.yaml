@@ -1,13 +1,20 @@
-# Spectral ruleset for the Mytheus /api/v1 surface.
+# MOVED 2026-08-28 to `mytheus-backend/design/.spectral.yaml`, and repaired on the way.
 #
-# P1 design artifact (Plan 1-2 section 3.1 step 4 acceptance checks). This ruleset is what
-# makes those checks executable rather than aspirational, and it is wired into CI in
-# section 3.11 step 5 alongside the oasdiff breaking-change gate.
+# A ruleset is an executable gate, so it now lives in the repo whose CI runs it, in the same
+# checkout as the documents it lints. This copy is the P1 record and is not the one that runs.
 #
-# Run:  npx @stoplight/spectral-cli lint design/openapi/*.yaml --ruleset design/openapi/.spectral.yaml
+# It had never been executed. Running it for the first time found three defects in it:
 #
-# Every rule below encodes an invariant from 19-api-architecture.md or ADR-0002. A rule at
-# `severity: error` fails the build.
+#   1. It did not parse. `org-id-never-in-path` and `snake-case-properties` put `field` as a
+#      sibling of `given` instead of inside `then`, which Spectral rejects outright.
+#   2. Three rules used `(?i)` for case-insensitivity. That is PCRE; Spectral is JavaScript
+#      and needs the `/pattern/i` form. Those rules threw "Invalid regular expression".
+#   3. `error-code-enum-is-frozen` claimed "oasdiff enforces the removal half in CI". It does
+#      not - `ErrorCode` is reachable only from a response schema, and narrowing a response
+#      enum is not breaking by oasdiff's definition. That half is now asserted by
+#      `tests/test_openapi_contract.py::test_no_published_error_code_is_ever_removed`.
+#
+# All thirteen rules pass against the emitted documents once repaired. See ADR-0022.
 
 extends: ["spectral:oas"]
 

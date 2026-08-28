@@ -79,7 +79,7 @@ Against section 10 of [plan-1-2-foundation-and-tenancy.md](../plan/plan-1-2-foun
 | All section 3.1 artifacts exist | **MET** | Seventeen files listed in section 1.2. |
 | Artifacts are PR-reviewed | **NOT MET** | Uncommitted. No PR raised. |
 | `design/tech-lock.md` is signed off (initials present) | **NOT MET** | The table exists and is deliberately empty. Marked `UNSIGNED`, and section 3.3 is gated on it. |
-| OpenAPI specs pass Spectral | **PARTIAL** | All five parse as valid YAML (verified). `spectral lint` has **not** been run: the CLI is a Node dependency and no repo has CI yet. |
+| OpenAPI specs pass Spectral | **MET 2026-08-28**, against emitted specs rather than these. `spectral lint` ran for the first time and the ruleset **did not parse**: two rules put `field` beside `given` instead of inside `then`, and three more used PCRE `(?i)` against a JavaScript engine. Repaired, and all thirteen rules now pass with zero errors over the four emitted documents. See [ADR-0022](../adr/0022-openapi-emitted-from-code.md) and section 17. |
 | Avro drafts validate BACKWARD | **MET, differently** | No drafts were produced. `mytheus-events` already ships all four band schemas, registered under a BACKWARD gate. The check is redirected there and recorded as a deviation. |
 | STRIDE model authored | **MET** | Auth and APIs rows complete; the other four stubbed to canon controls, which is what the plan asks for. |
 | Residency region chosen | **MET** | `us`, single-region, with the table populated per tenant regardless. |
@@ -391,7 +391,7 @@ Against section 10 of the plan.
 | `bff` dashboard | **MET** | Section 10.5, 7 tests |
 | `web-app` shell | **NOT MET** | Section 3.10 untouched; `mytheus-ui` has no Clerk and no generated client |
 | `mytheus-mobile` realign | **NOT MET** | Not begun |
-| CI gates | **MET, with one exception** | Six jobs in `mytheus-backend`, three in `mytheus-events`. `spectral lint` and `oasdiff` are still not wired: both are Node tools and no OpenAPI spec is served from code yet |
+| CI gates | **MET** | Seven jobs in `mytheus-backend`, three in `mytheus-events`. `spectral lint` and `oasdiff` landed 2026-08-28 in the net-new `openapi` job, alongside the regeneration check; `deploy` is gated on it. See section 17. |
 
 **P2 verdict at the end of session 3: the backend is complete. Section 14 records the mobile realign that followed.**
 
@@ -407,7 +407,7 @@ Gap 2 is superseded by section 14: the mobile realign landed.
 | 2 | **`mytheus-mobile` realign** - LANDED in session 4. See section 14. | - | Done |
 | 3 | **`Idempotency-Key` reuse with a different body replays instead of returning 409.** The middleware caches by key without fingerprinting the body. `ErrorCode.IDEMPOTENCY_KEY_REUSED` exists and is unused. | Plan section 3.6 step 4's acceptance check | Next backend session |
 | 4 | **Tenant provisioning still has no reachable path.** `POST /api/v1/orgs` is deferred by decision and the operator seed script standing in for it is still unwritten, so a tenant can only be created by a manual INSERT as `mytheus_admin`. | Onboarding anyone | Deferred, needs a decision |
-| 5 | **`spectral lint` and `oasdiff` are not wired.** Both are Node tools; the specs in `design/openapi/` are hand-written and not yet generated from the code, so they can drift from the routes that now exist. | The P1 DoD line and two acceptance checks | Next session, with generated specs |
+| 5 | ~~**`spectral lint` and `oasdiff` are not wired.**~~ **CLOSED 2026-08-28** by `mytheus-backend` `4b948d1` and [ADR-0022](../adr/0022-openapi-emitted-from-code.md). The specs are emitted from the FastAPI apps into `mytheus-backend/design/openapi/` and gated three ways: a regeneration check, `spectral lint`, and an `oasdiff` breaking-change diff against the base branch. Running the two Node tools for the first time found four latent defects, three of them in the ruleset itself. See section 17. | - | Done. |
 | 6 | **The outbox relay has never run against these events.** `meeting-events` rows are being written by the routes and nothing has drained them, because the real-bus test is the one skipped test. | Nothing yet; the first thing a consumer needs | Plan 3-4 |
 | 7 | **Stale Railway/Render references** in reader docs 00, 01, 03, 04, 13, 22 and plan bands 0, 3-4, 5-6, 10-13, 14. Plan 14 needs rewriting, not substituting: its premise is a PaaS-to-Kubernetes migration and the source is now the VPS. | Nothing technically | Docs pass |
 | 8 | **`design/tech-lock.md` is unsigned**, and section 3.3 was gated on it. The gate was not honored: 3.3 landed unsigned. Recorded rather than left implicit. | Nothing now | The team |
@@ -419,7 +419,7 @@ Gap 2 is superseded by section 14: the mobile realign landed.
 ## 13. What to do next
 
 1. **Section 3.10, `mytheus-ui`**, once the maintainer confirms it is safe to touch (see 14.3). A reconciliation, not a scaffold: add Clerk, generate the API client, and point the existing `(app)/dashboard` page at `GET /bff/dashboard`, whose shape is now fixed and tested. The mobile client in section 14 is the working reference for the whole client-side contract.
-2. **Generate the OpenAPI specs from the code** and point Spectral plus `oasdiff` at them, closing gap 5 and removing the drift risk in its own artifacts.
+2. ~~**Generate the OpenAPI specs from the code**~~ **DONE 2026-08-28** ([ADR-0022](../adr/0022-openapi-emitted-from-code.md), section 17). This also unblocks B8, the generated TypeScript client, which Plan 1-2 correctly refused to build against the hand-written specs.
 3. **Close gap 3**, the idempotency body fingerprint. Small, and a stated acceptance check.
 4. **Write the operator seed script** (gap 4) so a tenant can be created without a manual INSERT.
 
@@ -525,6 +525,82 @@ Four decisions worth stating, because in each case the obvious implementation wo
 **Not verified, and not claimed:** no browser run against a live Clerk instance or a live gateway, because that needs real Clerk keys and a deployed backend. The end-to-end acceptance checks in step 3.10 (two different-tenant users seeing disjoint data, and a network capture showing no `org_id`) remain outstanding and are listed as an open gap. The `org_id`-never-sent property is structurally enforced (no parameter exists for it) and is unit-tested on the mobile client, which shares the contract.
 
 ---
+
+## 17. Follow-up session, 2026-08-28: the OpenAPI specs are emitted, and the gates finally run
+
+`mytheus-backend` `4b948d1`. Ratified as [ADR-0022](../adr/0022-openapi-emitted-from-code.md),
+with the reversal propagated into [19-api-architecture.md](../19-api-architecture.md) section
+11, the ADR index and the matrix. No canon edit was needed: canon names no OpenAPI artifact and
+takes no position on spec-first, so this changes no name, number or canonical decision.
+
+**What changed.** Each service's document is now emitted from its FastAPI app by
+`make openapi` and committed under `mytheus-backend/design/openapi/`: four documents, 22 paths,
+services discovered by walking `services/*/main.py` rather than listed. The five hand-written
+specs here are superseded and carry a banner saying so; they remain the P1 design record.
+
+**Why the direction reversed** is in the ADR, but the short version is that doc 19's stated
+mechanism - "FastAPI's generated schema is reconciled against it in CI" - was never built, and
+is the harder direction by construction. Comparing a hand-written document to a generated one
+needs a differ that understands OpenAPI equivalence, and every such differ needs a suppression
+list, which is where real drift hides. Emitting needs no differ: regenerate and compare bytes.
+
+**Four latent defects, every one found by running something that had never been run.** This is
+the part worth carrying forward, because it is the same shape as the partition-grant finding in
+[03](03-plan-3-4-meeting-and-transcription.md) section 5.3 four hours earlier.
+
+| # | Defect | How long it had been there |
+|---|---|---|
+| 1 | The Spectral ruleset **did not parse**. `org-id-never-in-path` and `snake-case-properties` put `field` as a sibling of `given` instead of inside `then`. | Since P1, 2026-07-27 |
+| 2 | Three rules used `(?i)` for case-insensitivity. That is PCRE; Spectral is JavaScript and needs `/pattern/i`. They threw "Invalid regular expression". | Since P1 |
+| 3 | The ruleset claimed "oasdiff enforces the removal half in CI" for the frozen `ErrorCode` enum. **It does not.** The enum is reachable only from a response schema, and narrowing a response enum is not breaking by oasdiff's definition. | Since P1 |
+| 4 | FastAPI 0.138 does not flatten included routers into `app.routes`; it appends one `_IncludedRouter` per router, holding its child on `original_router`. A flat scan saw only `/healthz`. | Introduced this session, found by looking at the output |
+
+Defect 3 is the one to read twice. It is a **documented control that did not exist**, and it
+was believed for eight months because nobody ran the tool it named. Proven by deleting
+`NOT_FOUND` from a copy of `core-api.yaml` and running `oasdiff breaking`: it reported the two
+paths the same probe deleted and said nothing about the enum. Removing a code IS breaking in
+this program, because both clients branch on `code`, so it is now asserted directly by
+`test_no_published_error_code_is_ever_removed`, which holds the published list. The false claim
+is corrected in both places it appeared.
+
+Defect 4 is worth recording for a different reason: it was mine, it was silent, and the only
+thing that surfaced it was reading the generated file instead of trusting that the code had
+worked. The first cut shortened exactly one operationId - `healthz`, the one route mounted on
+the app itself - and left every real route untouched, which reads as "the uniqueness check
+rejected everything" rather than "the walk never saw them".
+
+**The emitted document says three things FastAPI cannot know**, all of which the running app
+genuinely does: the RFC 7807 error shape (FastAPI documents `422` as `application/json` and no
+other error at all), the `Idempotency-Key` header the middleware reads, and the document-level
+bearer scheme that arrives through a `Depends` chain. Before this, a client generated from
+these documents could not have parsed a single error the service emits, nor sent the one header
+the write contract is built on. The `ErrorCode` enum is emitted from `libs.shared.errors`, which
+deletes the "keep the two in sync" instruction `errors.py` had been carrying rather than
+restating it.
+
+**Verification.** Every command run and its output observed.
+
+| Command | Result |
+|---|---|
+| `uv run pytest -q` | **313 passed** (was 304; nine new contract tests) |
+| `emit_openapi --check` | Green; then **exit 1** on a hand-edited spec, then green again after regeneration |
+| `spectral lint --fail-severity=error` | **0 errors**, 71 warnings (all built-in `spectral:oas` style: missing descriptions, tags, `servers`) |
+| Spectral guard-fires: add `/api/v1/orgs/{org_id}/teams` and an `offset` query parameter | `org-id-never-in-path` and `list-endpoints-are-cursor-paginated` both fire, plus two built-in rules |
+| `oasdiff breaking` guard-fires: delete a path from a copy | 2 errors, `api-path-removed-without-deprecation` |
+| `oasdiff breaking`: delete `NOT_FOUND` from the enum in the same copy | **Not detected.** Defect 3 above |
+| `actionlint` on the new `openapi` job | Clean |
+| `scripts/check_authz.py` after moving its allowlist to `libs/shared/public_routes.py` | Passes, and still **exits 1** on a deliberately unguarded probe route |
+| `emit_openapi --check` with `DATABASE_URL`, `REDIS_URL` and the broker vars unset | Green - the CI job has no database, and this confirms it does not need one |
+| `ruff` / `black --check` / `mypy` | Clean; mypy over 93 source files |
+
+**NOT run, and not claimed.** The `oasdiff` job itself has never executed in GitHub Actions; it
+was exercised locally through the same `tufin/oasdiff` container the workflow uses, on the same
+inputs, but the `pull_request`-only path in CI has not fired. It fires on the next PR.
+
+**One thing deliberately not done.** `api-gateway` publishes no document. It proxies, its routes
+live in `edge.ROUTE_MAP`, and emitting it produced a zero-path document that failed the ruleset
+for an accurate reason - there is no contract in it. Recorded in ADR-0022 D6 rather than left
+looking like an oversight.
 
 ## 16. Related
 

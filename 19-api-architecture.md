@@ -405,7 +405,9 @@ Outbound: NEXUS → Jira/Linear ticket creation/update is **not** a fire-and-for
 
 ## 11. OpenAPI governance
 
-The REST contract is **spec-first**, not code-first. Every service publishes an **OpenAPI 3.1** document; the spec is the source of truth and the implementation conforms to it.
+The REST contract is **code-first**. Every service publishes an **OpenAPI 3.1** document, emitted from its FastAPI app and committed; the code is the source of truth and the document conforms to it by construction.
+
+> [SaaS-scale adjustment] **Reversed by [ADR-0022](adr/0022-openapi-emitted-from-code.md).** This section previously specified spec-first, with FastAPI's generated schema "reconciled against it in CI, not the other way around". That reconciliation was never built, and in the eight months it was policy the hand-written specs drifted (`bff.yaml` still described a `Dashboard` shape `dashboard.py` had stopped returning), `spectral lint` was never run, `oasdiff` was never wired, and the spec set disagreed with the code about which services existed. Spec-first's correctness rests entirely on the reconciliation step, and that step is the part nobody builds: comparing a hand-written document to a generated one needs a differ that understands OpenAPI equivalence, and every such differ needs a suppression list, which is where real drift hides. Emitting needs no differ - regenerate and compare bytes. **The governance below is unchanged in full**; only the direction of authority is reversed, because Spectral and `oasdiff` lint a document regardless of who wrote it.
 
 ```mermaid
 flowchart LR
@@ -419,11 +421,11 @@ flowchart LR
 
 | Control | Mechanism |
 |---|---|
-| Single source | OpenAPI 3.1 YAML per service, committed and reviewed in the service repo; FastAPI's generated schema is reconciled against it in CI, not the other way around. |
+| Single source | OpenAPI 3.1 YAML per service, **emitted from the app** and committed in the service repo. CI regenerates and fails the build on any difference, so a route change without a regeneration is a red build rather than a document that quietly stops being true. Services are discovered, not listed ([ADR-0022](adr/0022-openapi-emitted-from-code.md) D1). |
 | Linting | Spectral ruleset enforces the conventions in this doc: `snake_case` fields, RFC 7807 errors with a `code` enum (§7), cursor pagination shape (§6), `Idempotency-Key` on mutating `POST`s (§8), `org_id`-never-in-path, security scheme present. A spec that violates a rule fails the PR. |
 | Breaking-change gate | `oasdiff` compares the PR spec to `main`; a breaking change ([§3](#3-versioning) definition) without a major-version bump fails CI. This is the automated enforcement of the versioning policy. |
-| Code generation | The TypeScript client for `web-app`/`bff` and the Pydantic v2 models are **generated** from the spec, so wire drift between client and server is structurally impossible. |
-| Aggregation | `api-gateway` publishes a merged `/api/v1` spec and a docs portal; internal-only endpoints (§5.8) are excluded from the public spec. |
+| Code generation | The TypeScript client for `web-app`/`bff` is **generated** from the emitted spec, so wire drift between client and server is structurally impossible. Not yet built: both clients still hold a hand-written types file, which was the correct call while the specs were hand-written and drifting, and is what emitting them unblocks. The Pydantic v2 models are the source rather than an output - they are what the document is emitted from. |
+| Aggregation | `api-gateway` publishes no document of its own. It proxies, so its routes live in `edge.ROUTE_MAP` rather than its own decorators, and emitting it yields a zero-path document. A merged `/api/v1` spec and a docs portal remain the intent and are unbuilt; clients generate per service and point at the gateway origin ([ADR-0022](adr/0022-openapi-emitted-from-code.md) D6). |
 | Authz-in-every-PR | Per the locked shift-left posture ([Tech Decisions §2.11](_canon/06-tech-decisions.md), [Security §3](11-security-architecture.md)), each endpoint's security requirement (Clerk JWT + RBAC scope, or signature-authenticated for webhooks) is declared in the spec and reviewed in every PR — an endpoint with no declared auth fails review. |
 
 > [SaaS-scale adjustment] The PDF listed an "OpenAPI draft" as a Phase-1 artifact for a single app. At SaaS scale with ~20 services, external integrators, and a versioned public contract, OpenAPI becomes a **governed, linted, breaking-change-gated, client-generating** pipeline rather than a one-time draft. The spec-first discipline and the breaking-change gate are the additions; the choice of OpenAPI is the PDF's.

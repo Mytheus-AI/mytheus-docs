@@ -1,3 +1,13 @@
+# SUPERSEDED 2026-08-28. This is the P1 design draft, not the contract.
+#
+# The contract is now emitted from the FastAPI app into
+# `mytheus-backend/design/openapi/`, where CI regenerates it and fails the build if the
+# committed file and the code disagree. This file was hand-written in Plan 1-2's design
+# phase before a single route existed, and has drifted since: it is kept as the record of
+# what was designed, and is not maintained against the code.
+#
+# See `mytheus-backend/design/openapi/README.md` and ADR-0022.
+
 openapi: 3.1.0
 
 # P1 design artifact (Plan 1-2 section 3.1 step 4). Frozen contract for core-api.
