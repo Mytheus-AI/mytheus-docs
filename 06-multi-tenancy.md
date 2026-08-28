@@ -122,11 +122,17 @@ SELECT set_config('app.current_org', :org_id_from_jwt, true);  -- true = transac
 
 > [SaaS-scale adjustment] The session-setting name is canonical: **`app.current_org`** (per [Data Model §7](_canon/02-data-model.md)). It is set transaction-locally (`set_config(..., true)`) so a pooled connection (PgBouncer/Supabase pooler) can never leak one tenant's GUC into another tenant's reuse of the connection. This connection-pool hazard does not exist in the single-tenant PDF; it is the single most important RLS operational rule at SaaS scale.
 
-Three RLS rules bind the relational layer:
+Four RLS rules bind the relational layer:
 
 1. **No service connects as a superuser or RLS-bypassing role in the request path.** The application role has no `BYPASSRLS`. Migrations and the right-to-be-forgotten purge run as a separate elevated role, never reachable from request handlers.
+
+   > [SaaS-scale adjustment] Widened by [ADR-0021](adr/0021-explicit-grants-no-schema-wide-default-privileges.md) from the roles this program defines to the property that matters: **no role holding `rolbypassrls` holds any privilege on a tenant table, whoever created it**. The narrower wording was asserted in CI and passed while `service_role` - a role the `supabase/postgres` image ships holding `rolbypassrls`, granted the full DML set on every new table by the image's own default privilege - could read and delete every tenant's `audit_logs` rows with no `app.current_org` set. An assertion scoped to our own roster cannot see a role the substrate provides.
 2. **Join tables denormalize `org_id`** (`team_members`, `meeting_participants`) so the policy is a simple column comparison, not a subquery — critical for the high-volume tables. [Data Model §2.1](_canon/02-data-model.md) notes this verbatim.
 3. **High-volume tables are range-partitioned by time** (`transcript_chunks`, `chat_messages`, `meetings`, `usage_events`, `audit_logs`). At **T3 = 1.728B `transcript_chunks` rows/month** ([Capacity §4](_canon/05-capacity-math.md)) the RLS predicate runs against monthly partitions, and right-to-be-forgotten drops partitions instead of scanning. Partitioning is orthogonal to RLS — the policy is inherited by every partition.
+
+   > [SaaS-scale adjustment] "The policy is inherited by every partition" holds only for access **through the parent**. A partition named directly is checked against its own row-security state, which is off, and against its own grants. That is why rule 4 exists: partitioning is orthogonal to RLS in the sense that it does not weaken the policy, but it is not orthogonal to the GRANT beneath it.
+
+4. **A partition carries no direct grant, and grants are explicit.** No schema-wide default privilege grants on TABLES in `public`, because a partition created by `CREATE TABLE ... PARTITION OF` is itself a newly created table and inherits one. Every migration that creates a tenant table issues its own GRANT; every partition's ACL holds nothing but its owner. Asserted in CI over `pg_class.relacl` and `pg_default_acl`. See [ADR-0021](adr/0021-explicit-grants-no-schema-wide-default-privileges.md) and [Data Model §7 rule 8](_canon/02-data-model.md).
 
 ```mermaid
 sequenceDiagram

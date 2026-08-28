@@ -110,6 +110,7 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0018](adr/0018-consent-entity-behind-flag.md) | Consent entity landed schema-first behind `tenant_settings.consent_required`, defaulted off. |
 | [ADR-0019](adr/0019-ai-tier-verifies-jwt-and-reads-resolved-org-claim.md) | `mytheus-intelligence` verifies the Clerk JWT itself and reads a pre-resolved internal `org_id` claim; no `org_id` from a request header. |
 | [ADR-0020](adr/0020-pii-token-vault-and-ner-placement.md) | The per-tenant PII token vault (`pii_tokens`) is owned and written only by `identity-tenant-service`; the three redaction boundaries call it. NER runs on the inference tier, never in `transcription-service`. Implementation blocked on key custody. |
+| [ADR-0021](adr/0021-explicit-grants-no-schema-wide-default-privileges.md) | No schema-wide default privilege grants on TABLES in `public`; every migration grants its own tenant table, no partition carries a direct grant, and no `rolbypassrls` role holds a privilege on a tenant table. |
 
 ---
 
