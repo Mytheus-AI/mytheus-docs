@@ -238,7 +238,9 @@ The PDF's 36-week, 13-phase backbone is kept verbatim, with five SaaS overlay st
 
 ### Deployment posture
 
-**The MVP deploys as a modular monolith on Railway / Render.** Kubernetes is **post-W36 scale-out**, not an MVP requirement. The ten `mytheus-backend` services ship as one deployable monolith; the boundaries are enforced in code (module ownership, no cross-service table access) so that extraction later is mechanical.
+**The MVP deploys as a modular monolith on a self-hosted single-node VPS** under Docker Compose, with PostgreSQL, Redis, Redpanda and Temporal on the same box ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md)). Kubernetes is **post-W36 scale-out**, not an MVP requirement. The ten `mytheus-backend` services ship as one deployable monolith; the boundaries are enforced in code (module ownership, no cross-service table access) so that extraction later is mechanical.
+
+> Railway and Render are **struck**, not a fallback. This line previously named them; ADR-0016 superseded that and this file had not been propagated.
 
 ### Post-W36 scale-out
 
@@ -255,7 +257,13 @@ Services are extracted in a frozen **Wave 1–4** order:
 
 ## 10. Current state of each repo (the starting line)
 
-> **Ground truth as of today: across all seven repos there is almost no working application code.** One repo (`mytheus-backend`) has a small real shared library and full local infra; one (`mytheus-mobile`) has a polished but divergent mock-only UI prototype; **the other five are documentation-only**.
+> **SUPERSEDED as of 2026-08-28. Section 10 describes the starting line, not the current state, and every "DOCUMENTATION-ONLY" label below is now false.** It is kept because the plan bands were authored against it and their entry preconditions only make sense next to it. Do not use it to decide what to build.
+>
+> For current state, read [work-done-till-now/](../work-done-till-now/): `00-status-overview.md` for the band-by-repo matrix and the live gap list, then the numbered band file. That folder is the single home for what has actually been built.
+>
+> What has changed since this section was written, in one line each: `mytheus-events` ships 21 registered Avro subjects with Python and TypeScript clients; `mytheus-backend` ships four migration chains, every service's `/api/v1` surface, and a six-job CI pipeline that deploys to a live VPS; `mytheus-realtime` ships `realtime-gateway` (42 tests) and `transcription-service` (41 tests); `mytheus-intelligence` ships `embedding-service`, `reranker-service`, `ingestion-service` and `search-service` against real Qdrant, MinIO and Redpanda; `mytheus-ui` ships 40 pages wired to Clerk and the real `bff`; `mytheus-platform` ships the deploy descriptor and the CI/CD path that runs it.
+>
+> **Why this banner exists rather than a rewrite.** This file is what [README.md](README.md) tells an execution agent to read *first*, as "the canonical-name reference and the current-state ground truth". An agent that trusts section 10 concludes the AI tier has zero code and rebuilds services that exist, which is a documented failure mode in this program rather than a hypothetical one: the Plan 6 close-out re-scheduled an already-completed security fix on exactly that basis. The canonical **names** in sections 1 to 9 remain correct and are why this file is still the right first read.
 
 ### `mytheus-backend` — EARLY-STAGE SCAFFOLD *(the only repo with real backend code)*
 
@@ -305,7 +313,7 @@ The docs describe a multi-tenant LiveKit / Socket.io enterprise client. The actu
 
 1. **Identity = Clerk.** The `mytheus-backend` code/.env/SQL drift to Supabase Auth **will be reverted**. JWT verification, the `org_id` claim injection, the user-sync mechanism, and SSO/SAML/SCIM are all built against the **Clerk** contract (JWKS, Svix webhooks). The Supabase `custom_access_token_hook` path is dropped in favor of the Clerk equivalent. This must land **before P2**.
 2. **`mytheus-mobile` is realigned into a first-class client.** The off-spec single-device **"Meeting Pod"** mock is *not* the product. Mobile is re-aligned to the documented multi-participant LiveKit / agent-sidebar client and built against the same `api-gateway` / `realtime-gateway` contracts as `web-app` (including Clerk auth). The well-crafted UI shell is retained as a starting point where it fits the real contract.
-3. **MVP deploys as a modular monolith on Railway / Render.** Kubernetes is **post-W36 scale-out**, not an MVP requirement. `mytheus-platform` provisions Railway / Render for the MVP; the K8s / Helm / cells work is staged for the Wave 1–4 extraction.
+3. **MVP deploys as a modular monolith on a self-hosted single-node VPS** ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md), which supersedes the Railway/Render fast path this item originally named). Kubernetes is **post-W36 scale-out**, not an MVP requirement. `mytheus-platform` owns the Docker Compose deploy descriptor and the CI/CD path that runs it; the K8s / Helm / cells work is staged for the Wave 1-4 extraction.
 
 ### Open-decisions register (assign owners before the relevant band)
 
