@@ -346,7 +346,9 @@ Cache/pubsub is **Redis (Upstash)**. Every key is **tenant-namespaced** so evict
 
 ## 6. Object-storage buckets
 
-Object storage is **S3-compatible** blob storage, regionally placed per tenant via `data_residency.object_bucket_region`.
+Object storage is **Cloudflare R2**, an S3-compatible blob store, placed per tenant via `data_residency.object_bucket_region` ([Tech Decisions §2.3](06-tech-decisions.md), [ADR-0023](../adr/0023-object-storage-cloudflare-r2.md)). The API is S3-compatible, so every "S3-compatible" statement elsewhere in the set remains literally true and no SDK changes; R2 is the implementation behind it.
+
+> [SaaS-scale adjustment] R2's placement model is not S3's, and the difference is load-bearing for residency. R2 offers a hard **EU jurisdiction** guarantee and *location hints* elsewhere, so `object_bucket_region = eu` is enforceable while `ap` is best-effort until a matching jurisdiction exists. ADR-0023 records this as an accepted, disclosed limit rather than a solved problem; a tenant contractually requiring APAC-resident blobs cannot be served by R2 alone today.
 
 > [SaaS-scale adjustment] The PDF stored recordings/attachments implicitly. We define explicit, regionally-placed, lifecycle-managed buckets with per-tenant prefixes for data residency and retention enforcement.
 

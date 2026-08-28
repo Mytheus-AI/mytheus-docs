@@ -138,6 +138,7 @@ sequenceDiagram
 | Vector DB | Qdrant Cloud | locked | PDF | Managed ANN store for hybrid retrieval; per-tenant collections at scale. |
 | Embedding model | BGE-small-en, 384-dim, via ONNX runtime | locked | PDF | Small, fast, good-enough recall; 384-dim keeps Qdrant memory low. |
 | Cache / pub-sub | Redis (Upstash) | locked | PDF | `get_user_context` cache (TTL 5 min), RAG cache (10-min TTL), Socket.io fan-out, priority queues. |
+| Object storage | **Cloudflare R2** (S3-compatible API) | locked | SaaS-add | The blob store behind every `nexus-*` bucket ([Data Model §6](02-data-model.md), [ADR-0023](../adr/0023-object-storage-cloudflare-r2.md)). S3-compatible, so the "S3-compatible" contract every doc already states stays literally true and the SDK is unchanged. Chosen over S3 primarily for **zero egress fees**: recordings and export downloads are read-heavy and egress-billed elsewhere, and Cloudflare is already the CDN/WAF vendor, so this adds no new vendor relationship. Data-residency caveat is recorded in the ADR: R2's **EU jurisdiction** is a hard placement guarantee, while other placements are location *hints*, so `ap` is best-effort until a jurisdiction exists for it. |
 | Backups / DR | Production Postgres backups + PITR + read replica | locked | PDF | PDF Phase 13; standard RPO/RTO posture for the system of record. |
 
 ### 2.4 Event streaming, serialization & delivery

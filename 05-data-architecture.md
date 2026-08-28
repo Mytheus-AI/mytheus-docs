@@ -214,7 +214,7 @@ flowchart TB
   subgraph RD["Redis (Upstash, namespaced nexus:{org_id}:*)"]
     RDc["caches · pub/sub · queues · dedupe · budgets"]
   end
-  subgraph OBJ["Object storage (S3-compatible, region-pinned)"]
+  subgraph OBJ["Object storage (Cloudflare R2, S3-compatible)"]
     OBJr["nexus-recordings · nexus-documents ·<br/>nexus-attachments · nexus-invoices ·<br/>nexus-audit-archive · nexus-exports"]
   end
   PGcore --> AGE

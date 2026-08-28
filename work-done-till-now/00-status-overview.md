@@ -43,7 +43,7 @@ name. The canonical repo name and the GitHub name are now the same string.
 
 | Canonical repo | GitHub | On-disk | State |
 |---|---|---|---|
-| `mytheus-docs` | `Mytheus-AI/mytheus-docs` | `mytheus-docs` | Canon, **20 ADRs**, diagrams, eight band plans, this folder. |
+| `mytheus-docs` | `Mytheus-AI/mytheus-docs` | `mytheus-docs` | Canon, **22 ADRs**, diagrams, eight band plans, this folder. |
 | `mytheus-backend` | `Mytheus-AI/mytheus-backend` | `mytheus-backend` | Ten bounded contexts; full six-job `ci.yml` gating a VPS deploy. The only repo with real CI. |
 | `mytheus-events` | `Mytheus-AI/mytheus-events` | `mytheus-events` | 21 topics registered, BACKWARD gate green against the live registry. |
 | `mytheus-intelligence` | `Mytheus-AI/mytheus-intelligence` | `mytheus-intelligence` | Seven services; `embedding`/`reranker`/`ingestion`/`search` built. `ner-service` is now named in canon ([ADR-0020](../adr/0020-pii-token-vault-and-ner-placement.md)) and unbuilt. |

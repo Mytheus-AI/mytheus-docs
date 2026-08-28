@@ -112,6 +112,7 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0020](adr/0020-pii-token-vault-and-ner-placement.md) | The per-tenant PII token vault (`pii_tokens`) is owned and written only by `identity-tenant-service`; the three redaction boundaries call it. NER runs on the inference tier, never in `transcription-service`. Implementation blocked on key custody. |
 | [ADR-0021](adr/0021-explicit-grants-no-schema-wide-default-privileges.md) | No schema-wide default privilege grants on TABLES in `public`; every migration grants its own tenant table, no partition carries a direct grant, and no `rolbypassrls` role holds a privilege on a tenant table. |
 | [ADR-0022](adr/0022-openapi-emitted-from-code.md) | The REST contract is code-first: each service's OpenAPI document is emitted from its FastAPI app and committed, governed by a regeneration check, `spectral lint` and an `oasdiff` breaking-change gate. Reverses doc 19 section 11's spec-first direction. |
+| [ADR-0023](adr/0023-object-storage-cloudflare-r2.md) | Object storage is Cloudflare R2 over its S3-compatible API; chosen for zero egress on a read-heavy recordings workload, with R2's EU-jurisdiction-only residency guarantee recorded as a disclosed limit. |
 
 ---
 

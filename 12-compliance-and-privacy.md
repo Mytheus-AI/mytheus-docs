@@ -230,7 +230,7 @@ A tenant's data is pinned to one region by `data_residency.region ∈ {us, eu, a
 | Postgres | Tenant routed to a region-local primary/replica pair (or a cell in-region) | `data_residency.db_cell` |
 | Qdrant | Per-tenant collection on a region-local cluster | `data_residency.qdrant_region` |
 | AGE `nexus_knowledge` | Co-located with the region-local Postgres | `data_residency.db_cell` |
-| Object storage | Region-pinned bucket, `{org_id}/…` prefix | `data_residency.object_bucket_region` |
+| Object storage | **Cloudflare R2** bucket, `{org_id}/…` prefix ([ADR-0023](adr/0023-object-storage-cloudflare-r2.md)) | `data_residency.object_bucket_region`. R2's **EU jurisdiction** is a hard placement guarantee; `us` and `ap` are location hints, so an `ap` pin is best-effort for blobs only and cannot be offered contractually today. Postgres, Qdrant and Redpanda residency are unaffected. |
 | Redpanda | Region-local cluster; topics tenant-partitioned | `data_residency.region` |
 | LLM / Deepgram egress | Regional endpoint preferred; SCC fallback (§4.2) | `data_residency.region` |
 
