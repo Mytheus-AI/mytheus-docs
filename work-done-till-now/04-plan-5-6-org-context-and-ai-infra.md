@@ -530,7 +530,123 @@ database image shipped.
 
 ---
 
-## 9. Related
+## 9. Follow-up session, 2026-08-29: sustained load, and the consumer that stopped after one message (B12)
+
+`mytheus-intelligence`. This is the clearest case yet of the program's own theme: the task was
+to measure an SLO, and measuring it found the service could not run at all.
+
+### 9.1 What B12 was, and what the first run showed
+
+Band gap 7 read: "No sustained-load test exists for `embedding-service`'s sub-5 s consumer-lag
+SLO. Only single-message tests were run." Every embedding test called `process_raw` directly
+with a hand-built message. That proves the handler and cannot prove the SLO, because consumer
+lag is a property of a subscribed group against the broker's high-watermark: it is only
+observable through the real loop.
+
+`tests/test_embedding_sustained_load.py` produces a real backlog to real Redpanda, runs the
+real `BaseConsumer.run_forever` in a thread with a dedicated consumer group, and reads lag from
+the broker with `committed()` against `get_watermark_offsets()` - the same quantity KEDA's
+kafka trigger scales on, rather than a number the test computes for itself.
+
+**The first run drained one message in ten minutes.** Lag went from 24 to 23 and stopped.
+
+### 9.2 The defect
+
+`BaseConsumer.run_forever` called `asyncio.run(self.process_raw(...))` **per message**, which
+creates and closes a fresh event loop each time. The async clients a consumer holds are
+constructed once in the worker entrypoint, and `redis.asyncio` binds its connection pool to the
+first loop that uses it. So message 2 raised `RuntimeError: Event loop is closed`, the
+exception escaped the `while True`, and the consumer died having committed exactly one offset.
+
+Diagnosed rather than guessed. The first hypothesis was the Qdrant client, and a probe
+disproved it: `AsyncQdrantClient` survives fresh loops (three sequential `asyncio.run` calls,
+all fine). The same probe against `redis.asyncio.Redis` reproduced the failure exactly, on
+message 2.
+
+**This is production behaviour, not a test artifact.** `services/embedding_service/worker.py`,
+`services/ingestion_service/worker.py` and `services/search_service/worker.py` all construct
+their clients once and call `run_forever`, so **all three of this repo's consumers would have
+processed exactly one message and then stopped**, in production, silently: the offset for that
+one message is committed, so a restart resumes and processes one more.
+
+It was invisible because no test had ever put a second message through `run_forever`. The
+method's own docstring said "Not exercised in unit tests (it blocks forever)", which is an
+accurate description of why nobody found it.
+
+Fixed by giving the consumer one event loop for its lifetime: `asyncio.new_event_loop()` once,
+`loop.run_until_complete(...)` per message, `loop.close()` in the `finally` beside
+`consumer.close()`.
+
+### 9.3 The measurement, now that it is possible
+
+| Metric | Value |
+|---|---|
+| Backlog drained | 12 messages in **8.7 s** |
+| Throughput | **1.39 msg/s**, 0.72 s/message, CPU |
+| Lag after drain | 0, offsets at the high-watermark |
+| Vectors written | 12 of 12, none dropped |
+
+The test asserts the properties that hold on any hardware (the backlog drains, every message
+produces its vector, lag returns to zero) and **deliberately does not assert lag under 5 s**.
+At 0.72 s/message a steady arrival rate above 1.39 msg/s grows the backlog without bound on
+this hardware, so the frozen SLO is GPU-dependent, which is what gap 18 already says is
+unbuilt. The number is printed so it is on the record rather than claimed.
+
+A second test guards the measurement itself: `_group_lag` must report a real backlog, because a
+probe that always returned 0 would make the drain assertion pass with no consumer running at
+all. That is the same failure shape as the Qdrant tests that skipped silently for want of a
+container.
+
+**Guard-fire.** Reintroducing the per-message `asyncio.run` fails the drain test with "lag
+still 53" while the probe test stays green, then both pass again after repair.
+
+### 9.4 Also landed
+
+`docker-compose.yml` gains MinIO on 9002, matching what `.env.example` and `conftest.py`
+already expected. Same root cause as the Qdrant entry added earlier today: a hand-started
+container with no definition anywhere, so the MinIO probe skipped silently and the
+ingestion-to-embedding hop could not be run connected.
+
+### 9.5 NOT done, and not claimed
+
+- **The connected `ingestion-service` to `embedding-service` run is still not done.** It was
+  the second half of B12 and it is unblocked rather than finished: the hop is
+  `POST /ingest` to outbox to relay to `document-chunks` to the embedding consumer, and until
+  the fix above the consuming end could not process more than one message, so the run was not
+  merely unperformed but impossible. MinIO now exists for it.
+- **The lag and DLQ Grafana panels are not built, and should not be until something can feed
+  them.** There is no Prometheus and no Grafana anywhere in the program - not in
+  `mytheus-platform/deploy/compose.prod.yml`, not in any repo's compose - and no service in
+  this repo exposes a metrics endpoint or imports a metrics client. Shipping dashboard JSON
+  against a datasource that does not exist would be a documented control that does not exist,
+  which is the exact pattern already recorded three times in this program. Filed as a gap
+  instead.
+### 9.6 A third finding, from a test that failed for an unrelated-looking reason
+
+`test_redacted_chunk_is_not_indexed` failed while checking for regressions, and it failed
+identically with this session's changes stashed, so it was pre-existing. The cause is worth
+recording because the gate designed to catch it structurally cannot.
+
+The registered `transcript-chunks-value` was version 1 and had no `redacted` field, while
+`mytheus-events/schemas/transcript-chunks/v1.avsc` has carried one since the Plan 3-4 work.
+Avro serializes to the REGISTERED schema, so `redacted` was dropped from every message and
+`search-service`'s "a chunk arriving with `redacted=true` is never indexed here" check was dead
+code: **redacted transcript text was being written into the Postgres FTS index.**
+
+`make register` fixed it - the same provisioning path B4 built earlier today - and the subject
+is now version 2 with the suite green at 8 passed.
+
+`check-compatibility` passed throughout and always would have, because adding a field with a
+default IS backward compatible. Compatibility answers "can consumers still read this?", never
+"does the registry match the repo?". That is the drift problem ADR-0022 solved for OpenAPI by
+emitting and byte-comparing, and it is unsolved for Avro. Recorded as gap 38.
+
+- The full `mytheus-intelligence` suite still has not been run to completion in one pass; it
+  loads real models. The consumer suites plus the whole lint and type gate were run instead.
+
+---
+
+## 10. Related
 
 - [00-status-overview.md](00-status-overview.md) for program-wide state.
 - [03-plan-3-4-meeting-and-transcription.md](03-plan-3-4-meeting-and-transcription.md) for the meeting and transcription tier this band builds on, including the `transcript_chunks` partition-grant defect and its fix, directly relevant to gap 15 above.
