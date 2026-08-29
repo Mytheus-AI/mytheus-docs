@@ -96,7 +96,7 @@ So the file number = the phase range. Each band is self-contained, one theme, an
 
 **Plain words:** Before anyone builds a feature, make the whole project *actually buildable and wired together.* Right now the repos can't talk to each other and the database tables don't exist. This band fixes the foundation under the foundation.
 
-**What gets built (technical):** Reconcile the **Clerk → Supabase** identity drift in the docs (code already moved to Supabase Auth; docs still say Clerk). Stand up the missing **mytheus-intelligence** repo. Build **mytheus-events** for real — author the **7 frozen Avro schemas** plus the shared event envelope, wire up Schema Registry subjects, a `BACKWARD`-compatibility gate, and **codegen** for Python + TypeScript clients. In `mytheus-backend`, generate the **first Alembic migrations** and the **SQLAlchemy model layer** so the `outbox`/`inbox`/`users` tables the shared library writes to finally exist; mount the idempotency middleware; build the **outbox relay** and a **gRPC server**. Scaffold the UI/realtime repos so they build and lint. Stand up **CI/CD** (lint, test, secret-scan, schema gate, image build) and a **Railway/Render** deploy target.
+**What gets built (technical):** Reconcile the **Clerk → Supabase** identity drift in the docs (code already moved to Supabase Auth; docs still say Clerk). Stand up the missing **mytheus-intelligence** repo. Build **mytheus-events** for real — author the **7 frozen Avro schemas** plus the shared event envelope, wire up Schema Registry subjects, a `BACKWARD`-compatibility gate, and **codegen** for Python + TypeScript clients. In `mytheus-backend`, generate the **first Alembic migrations** and the **SQLAlchemy model layer** so the `outbox`/`inbox`/`users` tables the shared library writes to finally exist; mount the idempotency middleware; build the **outbox relay** and a **gRPC server**. Scaffold the UI/realtime repos so they build and lint. Stand up **CI/CD** (lint, test, secret-scan, schema gate, image build) and a **self-hosted single-node VPS** deploy target ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md)).
 
 **Demoable:** Every repo compiles and passes CI; a generated event client can be imported; the first real database tables exist and the shared library can write to them.
 
@@ -194,7 +194,7 @@ The finish line of the MVP is **the end of Plan 10-13**: a complete, differentia
 
 - **Identity provider:** moving to **Clerk reconciliation** is being resolved in Plan 0 — the *code* has moved to **Supabase Auth** (custom access-token hook injecting `org_id`, auth→public user-sync trigger), and the plan reconciles the lingering Clerk references in the docs to match. (Confirm the canonical IdP before P2 — see open items.)
 - **Mobile realignment:** `mytheus-mobile`'s "Meeting Pod" prototype is acknowledged as **off-spec**; a realignment decision is on the table (keep it as a separate surface, re-align to the web contract, or defer mobile entirely).
-- **MVP deployment target:** the early-stage product runs as a **modular monolith on Railway/Render**, with Kubernetes deferred to the post-W36 scale-out (Plan 14).
+- **MVP deployment target:** the early-stage product runs as a **modular monolith on a self-hosted single-node VPS** ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md)), with Kubernetes deferred to the post-W36 scale-out (Plan 14).
 
 ### Decisions still open (the register)
 

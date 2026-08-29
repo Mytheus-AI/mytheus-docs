@@ -105,7 +105,7 @@ flowchart LR
   D -.->|KEDA| K
 ```
 
-> [SaaS-scale adjustment] The PDF ran every service as one FastAPI process on Railway/Render with a single deployment and no autoscaler. NEXUS keeps Railway/Render only for the early-stage modular monolith and runs production on Kubernetes (EKS/GKE) + Terraform IaC, with four independent autoscaler signals so the GPU-bound inference cost center scales and bills separately from request/s-bound CRUD serving. This is the locked architecture-style decision in [Tech Decisions §2.1](_canon/06-tech-decisions.md).
+> [SaaS-scale adjustment] The PDF ran every service as one FastAPI process on Railway/Render with a single deployment and no autoscaler. NEXUS runs the early-stage modular monolith on a self-hosted single-node VPS running Docker Compose ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)), Railway and Render being struck entirely, and runs production on Kubernetes (EKS/GKE) + Terraform IaC, with four independent autoscaler signals so the GPU-bound inference cost center scales and bills separately from request/s-bound CRUD serving. This is the locked architecture-style decision in [Tech Decisions §2.1](_canon/06-tech-decisions.md).
 
 ### 3.1 CRUD / control plane — HPA on req/s + p95
 

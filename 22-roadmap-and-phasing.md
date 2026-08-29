@@ -43,7 +43,7 @@ There is exactly one naming rule, and it bites hardest here because two canon fi
 
 Every phase is read on two axes at once:
 
-1. **The PDF backbone (frozen).** Thirteen phases, W1–W36, domain-first, names and week ranges unchanged. This is the build order a small team can actually execute, and it produces a working multi-tenant MVP on the Railway/Render modular monolith.
+1. **The PDF backbone (frozen).** Thirteen phases, W1–W36, domain-first, names and week ranges unchanged. This is the build order a small team can actually execute, and it produces a working multi-tenant MVP on the single-node VPS substrate ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)).
 2. **The SaaS overlay (added).** Five cross-cutting capabilities the PDF deferred or never had — security, compliance, billing/metering, dedicated inference, and multi-region — are pulled *earlier* than "Phase 13, last" because each is a hard precondition for the phase it precedes. The overlay never renumbers a phase; it threads through them.
 
 ```mermaid
@@ -155,13 +155,13 @@ The cost-controlled pipeline itself lands at P7: relevance pre-gating (Haiku) �
 
 ### 4.5 Multi-region & cells — post-W36 scale-out
 
-> [SaaS-scale adjustment] Multi-region (active-passive → active-active) and cell-based isolation for large tenants are **scale-out, not in the 36-week MVP**. The MVP runs single-region pooled + RLS on Railway/Render. The scale-out is sequenced against the per-plan availability tiers from [Capacity & Scaling Math (canon)](_canon/05-capacity-math.md) §11.2: Free stays single-region pooled (99.5%), Pro moves to multi-region active-passive (99.9%), Enterprise gets cell-based isolation and is the active-active candidate (99.95%). See [Reliability & DR](14-reliability-and-dr.md) and [Multi-Tenancy & Isolation](06-multi-tenancy.md).
+> [SaaS-scale adjustment] Multi-region (active-passive → active-active) and cell-based isolation for large tenants are **scale-out, not in the 36-week MVP**. The MVP runs single-region pooled + RLS on a self-hosted single-node VPS running Docker Compose ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)). The scale-out is sequenced against the per-plan availability tiers from [Capacity & Scaling Math (canon)](_canon/05-capacity-math.md) §11.2: Free stays single-region pooled (99.5%), Pro moves to multi-region active-passive (99.9%), Enterprise gets cell-based isolation and is the active-active candidate (99.95%). See [Reliability & DR](14-reliability-and-dr.md) and [Multi-Tenancy & Isolation](06-multi-tenancy.md).
 
 ---
 
 ## 5. Modular-monolith → microservices evolution
 
-The MVP (W1–W36) ships as a **modular monolith on Railway/Render**, with the 20 catalog modules drawn along their final service seams from day one. Extraction happens *after* the MVP, as load arrives, in the wave order frozen in [Service Catalog (canon)](_canon/01-service-catalog.md) §7. Each wave is aligned to a single scaling family so no extraction re-cuts a domain seam.
+The MVP (W1–W36) ships as a **modular monolith on a self-hosted single-node VPS running Docker Compose** ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)), with the 20 catalog modules drawn along their final service seams from day one. Extraction happens *after* the MVP, as load arrives, in the wave order frozen in [Service Catalog (canon)](_canon/01-service-catalog.md) §7. Each wave is aligned to a single scaling family so no extraction re-cuts a domain seam.
 
 | Wave | When | Services extracted | Trigger to extract |
 |---|---|---|---|
@@ -172,7 +172,7 @@ The MVP (W1–W36) ships as a **modular monolith on Railway/Render**, with the 2
 
 ```mermaid
 flowchart TB
-  M["Modular monolith<br/>(Railway/Render, W1–W36 MVP)"]
+  M["Modular monolith<br/>(single-node VPS, W1–W36 MVP)"]
   M --> W1["Wave 1: GPU + real-time + workers<br/>embedding / reranker / agent-runtime /<br/>transcription / realtime-gateway / workflow"]
   M --> W2["Wave 2: CRUD core<br/>core-api / identity-tenant-service"]
   M --> W3["Wave 3: SaaS business<br/>billing-metering / integration / admin-ops"]
@@ -180,7 +180,7 @@ flowchart TB
   W1 & W2 & W3 & W4 --> K[("Kubernetes EKS/GKE<br/>Terraform IaC")]
 ```
 
-> [SaaS-scale adjustment] The PDF never split anything — it was one deployable for a 4-person team. Kubernetes (EKS/GKE) + Terraform IaC is the production substrate the waves land on; Railway/Render remain the sanctioned fast path only until the first paying tenants justify the K8s move. This is `PDF→SaaS` per [Tech & Architecture Decisions (canon)](_canon/06-tech-decisions.md) §2.1.
+> [SaaS-scale adjustment] The PDF never split anything — it was one deployable for a 4-person team. Kubernetes (EKS/GKE) + Terraform IaC is the production substrate the waves land on; the MVP substrate is the single-node VPS, Railway and Render being struck entirely ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)). This is `PDF→SaaS` per [Tech & Architecture Decisions (canon)](_canon/06-tech-decisions.md) §2.1.
 
 ### 5.1 How waves overlay the phase axis
 
@@ -226,7 +226,7 @@ Two stages, one boundary at W36. Stage 1 is the frozen 13-phase plan and produce
 | Dimension | Stage 1 — MVP (W1–W36) | Stage 2 — Scale-out (post-W36) |
 |---|---|---|
 | Target load | Seeder (`2 orgs x 10 users x 5 meetings`) → first paying tenants | A1 = 5M users, A4 = 3,000 tenants, A5 = 20k peak meetings, A6 = 100k peak participants |
-| Compute | Modular monolith on Railway/Render | Kubernetes (EKS/GKE) + Terraform; Wave 1–4 extraction |
+| Compute | Modular monolith on a single-node VPS | Kubernetes (EKS/GKE) + Terraform; Wave 1–4 extraction |
 | Tenancy | Pooled + PostgreSQL RLS, single region | + cell-based isolation for large/enterprise tenants |
 | Regions | Single region | Multi-region active-passive → active-active (per-plan tiers, §4.5) |
 | Event bus | Redpanda Serverless (30-day trial → small dedicated) | BYOC/dedicated multi-AZ Redpanda; ~17.9k ev/s peak (E12), ~13.9 TB/mo (E13) |
@@ -240,7 +240,7 @@ Two stages, one boundary at W36. Stage 1 is the frozen 13-phase plan and produce
 flowchart LR
   subgraph S1["Stage 1 — MVP (W1–W36, frozen phases)"]
     direction TB
-    A["Modular monolith · Railway/Render"]
+    A["Modular monolith · single-node VPS"]
     B["Pooled + RLS · single region"]
     C["Redpanda Serverless trial"]
     D["Cost-controlled LLM pipeline live"]

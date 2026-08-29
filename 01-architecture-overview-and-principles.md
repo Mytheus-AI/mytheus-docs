@@ -29,7 +29,7 @@ The six agents — `PersonalListenerAgent`, `DecisionAgent`, `ActionAgent`, `Que
 
 The locked style is **event-driven microservices with an explicit modular-monolith → services evolution path** ([Tech & Architecture Decisions](_canon/06-tech-decisions.md), *Architecture style*).
 
-> [SaaS-scale adjustment] The PDF was a modular monolith with role-rotating ownership and no service decomposition. The style above is `SaaS-add`: the architecture is cut into bounded contexts from day one, but those contexts ship as modules inside a single deployable during the early-stage build (Railway/Render) and split out at seams already drawn here once they hit independent scaling or team-ownership pressure. The seams are real from the start; the deployment topology consolidates early and decomposes on load.
+> [SaaS-scale adjustment] The PDF was a modular monolith with role-rotating ownership and no service decomposition. The style above is `SaaS-add`: the architecture is cut into bounded contexts from day one, but those contexts ship as modules inside a single deployable during the early-stage build (a self-hosted single-node VPS running Docker Compose) and split out at seams already drawn here once they hit independent scaling or team-ownership pressure. The seams are real from the start; the deployment topology consolidates early and decomposes on load.
 
 ### 2.2 Why event-driven, why microservices
 
@@ -131,7 +131,7 @@ Deployment consolidates early and decomposes along the seams above as load arriv
 3. **Extract on SaaS-business pressure:** `billing-metering-service`, `integration-service`, `admin-ops-service`.
 4. **Extract last:** `knowledge-graph-service`, `search-service` (start as libraries inside `rag-service`; split once Qdrant/AGE/FTS each warrant dedicated ops).
 
-> [SaaS-scale adjustment] The compute substrate is **Kubernetes (EKS/GKE) + Terraform IaC**, multi-region active-passive evolving to active-active; Railway/Render remain the sanctioned fast path only for the early-stage build. The PDF specified Railway/Render-only hosting. Every split above keeps a service aligned to a single scaling family and a single team-ownership boundary, so no extraction re-cuts a domain seam.
+> [SaaS-scale adjustment] The compute substrate is **Kubernetes (EKS/GKE) + Terraform IaC**, multi-region active-passive evolving to active-active; the early-stage build runs on a self-hosted single-node VPS running Docker Compose ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)). The PDF specified Railway/Render-only hosting, and both are now struck entirely. Every split above keeps a service aligned to a single scaling family and a single team-ownership boundary, so no extraction re-cuts a domain seam.
 
 ---
 

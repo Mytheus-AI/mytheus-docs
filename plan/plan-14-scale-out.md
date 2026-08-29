@@ -1,6 +1,13 @@
 # Plan 14 — Post-W36 Scale-Out  (Scale-Out)
 
-> Evolve the W36 modular monolith on Railway/Render into independently-scaling Kubernetes (EKS/GKE) services along the FROZEN Wave 1-4 seams, then add cells, multi-region active-passive -> active-active, and the documented sharding/graph escalation paths — all demand-driven, sized against the capacity anchors A1=5M users, A4=3,000 tenants, A5=20k peak meetings, A6=100k peak participants.
+> **SUBSTRATE SUPERSEDED (2026-08-29).** Where this band names **Railway/Render** as the deploy
+> target, read **a self-hosted single-node VPS running Docker Compose**
+> ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md), `_canon/06-tech-decisions.md` 2.1).
+> Railway and Render are struck entirely: not the fast path, not a fallback. The band's phase
+> order, acceptance checks and everything else it says are unchanged, and the PaaS name is left
+> in place below only where it records what the source PDF specified.
+
+> Evolve the W36 modular monolith on the single-node VPS into independently-scaling Kubernetes (EKS/GKE) services along the FROZEN Wave 1-4 seams, then add cells, multi-region active-passive -> active-active, and the documented sharding/graph escalation paths — all demand-driven, sized against the capacity anchors A1=5M users, A4=3,000 tenants, A5=20k peak meetings, A6=100k peak participants.
 
 ---
 
@@ -20,7 +27,7 @@
 
 ## 1. Entry preconditions  (must be GREEN before starting)
 
-This band assumes the **entire MVP (P1-P13 / W1-W36) is shipped and GA** as a modular monolith on Railway/Render, single region, pooled + PostgreSQL RLS. Specifically:
+This band assumes the **entire MVP (P1-P13 / W1-W36) is shipped and GA** as a modular monolith on a self-hosted single-node VPS running Docker Compose, single region, pooled + PostgreSQL RLS. Specifically:
 
 1. **All 20 services exist as modules** behind the locked sync transport (gRPC for AI/real-time tiers, REST for `bff`/CRUD) and the Redpanda bus. The Wave 1-4 seams from [Service Catalog §7](../_canon/01-service-catalog.md) are real boundaries in code, not aspirations.
 2. **Identity is Clerk (RESOLVED DECISION 1).** Clerk JWKS verification lives in `mytheus-backend/libs/shared`; the Svix webhook user-sync handler in `identity-tenant-service` is implemented; `CLERK_*` env is present; the Supabase Auth `custom_access_token_hook` + `auth.users -> public.users` trigger have been reverted/removed. `api-gateway` extracts `org_id` once at the edge from the Clerk JWT. **If this is not done, STOP — it is a Band-0/identity precondition, not scale-out work.**
@@ -28,6 +35,16 @@ This band assumes the **entire MVP (P1-P13 / W1-W36) is shipped and GA** as a mo
 4. **RLS FORCE on every tenant-scoped table**, `app.current_org` set transaction-locally via `set_config(..., true)`, PgBouncer transaction pooling. Consumers rehydrate `org_id` from the event header before any write ([Multi-Tenancy §3.1, §4](../06-multi-tenancy.md)).
 5. **Observability stack** (Prometheus + Grafana, Sentry, structured JSON logs carrying `org_id`/`family`/`version`/trace IDs) and **GitHub Actions CI/CD with staging-on-merge** are running from MVP and survive verbatim ([Deployment §13, §5](../16-deployment-and-infrastructure.md)).
 6. **Capacity anchors are the production sizing target**, never the `2 orgs x 10 users x 5 meetings` seeder ([Capacity §1, §2](../_canon/05-capacity-math.md)).
+
+> **The migration SOURCE changed, and this band was written against the old one.** It was
+> drafted as a PaaS-to-Kubernetes move; the source is now a self-hosted single-node VPS
+> ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md)). Renaming the substrate is not
+> sufficient, and the differences are real work this band does not yet cost: there are no
+> build packs to replace, the box and its Docker volumes are owned rather than managed, so
+> every store (PostgreSQL, Redis, Redpanda, and object storage) is a self-hosted data
+> migration rather than a managed-service repoint, and the "push deploy from CI" step this
+> band assumes it is replacing is already an SSH forced command. Re-cost the substrate phases
+> against that before executing; the Wave 1-4 service seams and their triggers are unaffected.
 
 > WARNING — **Do NOT start this band to "modernize the platform."** Per ADR-0014 §"Trigger conditions", Kubernetes is adopted only when one of these bites: (a) first paying tenants land contractually requiring SLA; (b) GPU inference needs a dedicated node pool; (c) an Enterprise tenant requires a cell; (d) a second residency region is sold. Until a trigger fires, Railway/Render is correct and K8s is deferred overhead.
 

@@ -118,7 +118,7 @@ The authoritative decision register is [Tech & Architecture Decisions](_canon/06
 |---|---|---|
 | Architecture style | Event-driven microservices with a modular-monolith → services evolution path | SaaS-add |
 | Inference/CRUD separation | Agent + inference tier scales and is billed separately from the CRUD tier | SaaS-add |
-| Compute platform | Kubernetes (EKS/GKE) + Terraform IaC; Railway/Render only for the early-stage build | PDF→SaaS |
+| Compute platform | Kubernetes (EKS/GKE) + Terraform IaC; a self-hosted single-node VPS running Docker Compose is the MVP substrate | PDF→SaaS |
 | Region strategy | Multi-region active-passive, evolving to active-active | SaaS-add |
 | Tenancy model | Pooled + PostgreSQL RLS for the long tail; cell-based isolation for large/enterprise tenants | SaaS-add |
 | Authz injection | Authz middleware injects `org_id` on every query; RLS is the backstop | SaaS-add |
@@ -155,7 +155,7 @@ The PDF was a single-deployment student build. Eight changes turn it into a comm
 
 > [SaaS-scale adjustment] **Compliance.** Wholly added: GDPR/CCPA, subprocessor DPAs (Deepgram/OpenAI/Anthropic/LiveKit) + SCCs, data residency and regional placement, PII redaction, retention + right-to-be-forgotten deletion workflows, append-only audit logging, and SOC2 readiness — table-stakes for selling to thousands of orgs.
 
-> [SaaS-scale adjustment] **Multi-region.** The PDF was single-region Railway/Render. Production runs on Kubernetes (EKS/GKE) + Terraform IaC, multi-region active-passive evolving to active-active, with per-plan availability tiers (Free 99.5%, Pro 99.9%, Enterprise 99.95%). Railway/Render remain the sanctioned early-stage build path.
+> [SaaS-scale adjustment] **Multi-region.** The PDF was single-region Railway/Render. Production runs on Kubernetes (EKS/GKE) + Terraform IaC, multi-region active-passive evolving to active-active, with per-plan availability tiers (Free 99.5%, Pro 99.9%, Enterprise 99.95%). Railway and Render are struck entirely; the early-stage substrate is a self-hosted single-node VPS running Docker Compose ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)).
 
 > [SaaS-scale adjustment] **Shift-left security.** The PDF batched a single security audit into Phase 13. Security is now continuous — threat modeling in Phase 1, an authorization check reviewed in every PR, dependency + secret scanning from day one, an API gateway + WAF + global rate limiting, and deny-by-default agent-to-agent authorization.
 

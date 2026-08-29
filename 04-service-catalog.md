@@ -19,7 +19,7 @@ The production-grade expansion of every NEXUS microservice — responsibility, o
 
 This catalog turns each of the **20 canonical services** in [Service Catalog (canon)](_canon/01-service-catalog.md) into a full subsection. It adds nothing to the service list and renames nothing. The canon service catalog self-declares as **the single source of truth for service names** in kebab-case; this document obeys that verbatim.
 
-> [SaaS-scale adjustment] The original NEXUS PDF was phase-and-domain organized (13 phases, role-agnostic, 4-person team) and named no services. The bounded-context decomposition below exists because the agent/inference tier scales and costs completely differently from the CRUD tier and **must scale independently**. Service seams are drawn so the early modular monolith (Railway/Render) peels into services without re-cutting any domain boundary.
+> [SaaS-scale adjustment] The original NEXUS PDF was phase-and-domain organized (13 phases, role-agnostic, 4-person team) and named no services. The bounded-context decomposition below exists because the agent/inference tier scales and costs completely differently from the CRUD tier and **must scale independently**. Service seams are drawn so the early modular monolith (a self-hosted single-node VPS running Docker Compose, [ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)) peels into services without re-cutting any domain boundary.
 
 Two cross-cutting invariants bind every service and are repeated in each subsection's failure-mode analysis rather than re-derived:
 
@@ -666,11 +666,11 @@ Canon topics carried verbatim from the PDF: `transcript-chunks`, `document-chunk
 
 ## 9. Modular-monolith → services split order
 
-The seams above are real from day one, but deployment consolidates early (Railway/Render). Extraction order as load arrives (canon §7):
+The seams above are real from day one, but deployment consolidates early (a self-hosted single-node VPS running Docker Compose, [ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)). Extraction order as load arrives (canon §7):
 
 ```mermaid
 flowchart TB
-  M["Modular monolith<br/>(Railway/Render, early stage)"]
+  M["Modular monolith<br/>(single-node VPS, early stage)"]
   M --> S1["Wave 1: GPU + real-time + workers<br/>embedding-service · reranker-service · agent-runtime-service ·<br/>transcription-service · realtime-gateway · workflow-service"]
   M --> S2["Wave 2: CRUD core<br/>core-api · identity-tenant-service"]
   M --> S3["Wave 3: SaaS business<br/>billing-metering-service · integration-service · admin-ops-service"]

@@ -55,7 +55,7 @@ Read top-to-bottom for the narrative; the rest is reference you dip into.
 | 13 | [Scalability & Performance](13-scalability-and-performance.md) | The frozen capacity model, autoscaler signals, and the SLO targets every tier is sized against. |
 | 14 | [Reliability & Disaster Recovery](14-reliability-and-dr.md) | Availability tiers, RPO/RTO, multi-region active-passive→active-active, and failure-mode handling. |
 | 15 | [Observability & SRE](15-observability-and-sre.md) | Structured logs, metrics/dashboards, tracing, consumer-lag and quota alerts, and on-call practice. |
-| 16 | [Deployment & Infrastructure](16-deployment-and-infrastructure.md) | Kubernetes (EKS/GKE) + Terraform IaC, the Railway/Render early path, and CI/CD via GitHub Actions. |
+| 16 | [Deployment & Infrastructure](16-deployment-and-infrastructure.md) | Kubernetes (EKS/GKE) + Terraform IaC, the single-node VPS MVP substrate, and CI/CD via GitHub Actions. |
 | 17 | [Cost Architecture & FinOps](17-cost-and-finops.md) | Per-tier cost centers, the variable cost model, unit economics, and the R4 cost levers. |
 | 18 | [SaaS Business Architecture](18-saas-business-architecture.md) | Tenant lifecycle, Stripe billing/seats/dunning/tax, usage metering→quota enforcement, plans, and consoles. |
 | 19 | [API Architecture](19-api-architecture.md) | Sync API ownership, the `bff`/`api-gateway` edge, versioning, and the OpenAPI surface. |

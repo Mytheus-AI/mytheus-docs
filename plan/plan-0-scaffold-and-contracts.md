@@ -1,5 +1,12 @@
 # Plan 0 — Scaffold, Tooling & Event Contracts  (Scaffold)
 
+> **SUBSTRATE SUPERSEDED (2026-08-29).** Where this band names **Railway/Render** as the deploy
+> target, read **a self-hosted single-node VPS running Docker Compose**
+> ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md), `_canon/06-tech-decisions.md` 2.1).
+> Railway and Render are struck entirely: not the fast path, not a fallback. The band's phase
+> order, acceptance checks and everything else it says are unchanged, and the PaaS name is left
+> in place below only where it records what the source PDF specified.
+
 > Make every Mytheus (NEXUS) repo buildable, testable and wired together — frozen Avro event contracts, real Alembic/SQLAlchemy DDL, mounted idempotency + outbox relay + gRPC, the Supabase→Clerk auth revert, and CI/CD onto Railway/Render — **before** any feature band starts.
 
 ---

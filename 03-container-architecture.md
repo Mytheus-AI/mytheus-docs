@@ -29,7 +29,7 @@ It answers three questions and nothing else:
 
 Service names, store names, topic names, and capacity numbers are used **verbatim from the canon**. This document introduces no new names. Where the SaaS posture adds a container or an edge that the original PDF execution plan did not have, it is marked with a `[SaaS-scale adjustment]` callout.
 
-> [SaaS-scale adjustment] The original PDF was a 13-phase, role-rotating plan for a 4-person team building a single deployable; it contained no container decomposition. This C4 L2 view imposes the bounded-context split from the [Service Catalog](_canon/01-service-catalog.md) so the three scaling families — CRUD/control plane, real-time, and AI/inference — each deploy and autoscale independently. In the early stage these containers run as a modular monolith on Railway/Render; the seams drawn here are the extraction points.
+> [SaaS-scale adjustment] The original PDF was a 13-phase, role-rotating plan for a 4-person team building a single deployable; it contained no container decomposition. This C4 L2 view imposes the bounded-context split from the [Service Catalog](_canon/01-service-catalog.md) so the three scaling families — CRUD/control plane, real-time, and AI/inference — each deploy and autoscale independently. In the early stage these containers run as a modular monolith on a self-hosted single-node VPS running Docker Compose ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)); the seams drawn here are the extraction points.
 
 ### 1.1 Communication-style legend
 
@@ -487,7 +487,7 @@ flowchart LR
   D["Temporal queue depth<br/>→ async tier"] -.->|KEDA| K
 ```
 
-> [SaaS-scale adjustment] Kubernetes (EKS/GKE) + Terraform IaC is the production substrate; Railway/Render runs the early-stage modular monolith where all containers above are modules in one deployable. The seams in §2 are the extraction points, peeled off in the order frozen in [Service Catalog](_canon/01-service-catalog.md) §7 (Wave 1: GPU + real-time + workers; Wave 2: CRUD core; Wave 3: SaaS business; Wave 4: retrieval stores).
+> [SaaS-scale adjustment] Kubernetes (EKS/GKE) + Terraform IaC is the production substrate; A self-hosted single-node VPS running Docker Compose runs the early-stage modular monolith where all containers above are modules in one deployable ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)). The seams in §2 are the extraction points, peeled off in the order frozen in [Service Catalog](_canon/01-service-catalog.md) §7 (Wave 1: GPU + real-time + workers; Wave 2: CRUD core; Wave 3: SaaS business; Wave 4: retrieval stores).
 
 ---
 

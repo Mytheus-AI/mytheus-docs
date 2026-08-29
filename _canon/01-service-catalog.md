@@ -20,7 +20,7 @@ The canonical, frozen list of NEXUS microservices and bounded contexts, their da
 
 This catalog is the **single source of truth for service names**. Every service is named exactly **once**, in kebab-case. No other document, ADR, or diagram in this set may introduce an alternative name for a service listed here; if a rename is ever required it must be recorded in the [Glossary](../24-glossary-and-naming.md) as `old -> new` before use.
 
-The architecture style is **event-driven microservices with an explicit modular-monolith → services evolution path**. Several services below ship as modules inside a single deployable in the early stage (Railway/Render) and split out at the seams already drawn here once they hit independent scaling or team-ownership pressure.
+The architecture style is **event-driven microservices with an explicit modular-monolith → services evolution path**. Several services below ship as modules inside a single deployable in the early stage (a self-hosted single-node VPS running Docker Compose, [ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md)) and split out at the seams already drawn here once they hit independent scaling or team-ownership pressure.
 
 > [SaaS-scale adjustment] The original PDF was phase-and-domain organized (13 phases, role-agnostic, 4-person team) and did not name services. This catalog imposes a bounded-context decomposition because the agent/inference tier scales and costs completely differently from the CRUD tier and **must scale independently**. Service boundaries are drawn so the modular monolith can be peeled into services without re-cutting domain seams.
 
@@ -127,7 +127,7 @@ The three scaling families — **CRUD/control plane**, **real-time**, and **AI/i
 
 ## 4. Scaling families and autoscaler signals
 
-The three families below each get an independent Kubernetes HPA/KEDA signal so cost tracks load per tier. Early stage runs these as a modular monolith on Railway/Render; the seams here are where it splits.
+The three families below each get an independent Kubernetes HPA/KEDA signal so cost tracks load per tier. Early stage runs these as a modular monolith on the single-node VPS; the seams here are where it splits.
 
 | Family | Services | Primary autoscaler signal | Cost driver |
 |---|---|---|---|
@@ -226,7 +226,7 @@ The seams above are real from day one, but deployment consolidates early. Recomm
 
 ```mermaid
 flowchart TB
-  M["Modular monolith<br/>(Railway/Render, early stage)"]
+  M["Modular monolith<br/>(single-node VPS, early stage)"]
   M --> S1["Wave 1: GPU + real-time + workers<br/>embedding / reranker / agent-runtime /<br/>transcription / realtime-gateway / workflow"]
   M --> S2["Wave 2: CRUD core<br/>core-api / identity-tenant"]
   M --> S3["Wave 3: SaaS business<br/>billing-metering / integration / admin-ops"]

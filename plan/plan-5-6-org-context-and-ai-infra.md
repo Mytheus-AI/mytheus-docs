@@ -603,7 +603,7 @@ All **21** topics + **21** DLQs are *created and registered* in §3.6 even thoug
 - **Dedicated inference (ADR-0008) is the substrate, not optional.** `embedding-service` + `reranker-service` are off the API tier with their own cost center from the first commit — even co-located in the MVP modular monolith they run as separate worker/Ray processes, never inside the request path. This is the precondition for R4 (cost) and R5 (latency) in later agent bands.
 - **PII redaction shift-left.** Ingestion redacts before the chunk reaches the bus, gated by `tenant_settings.pii_redaction_enabled` — compliance lands at the ingest boundary, before any vector exists.
 - **Per-tenant capacity attribution.** Qdrant collection-level metrics (point count, segment RAM) are tagged with `org_id` at emission (one-way hex name; never reverse the collection name) — the input to later usage metering and noisy-neighbor detection.
-- **No K8s/Terraform/cells here.** MVP is the modular monolith on Railway/Render, single region, pooled + RLS. KEDA/GPU node pools/cells are POST-W36 (Plan 14); recorded as config intent only.
+- **No K8s/Terraform/cells here.** MVP is the modular monolith on a self-hosted single-node VPS running Docker Compose ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md)), single region, pooled + RLS. KEDA/GPU node pools/cells are POST-W36 (Plan 14); recorded as config intent only.
 
 ---
 

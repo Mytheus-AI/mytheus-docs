@@ -1,5 +1,12 @@
 # Plan 10-13 — Multi-Agent, Proactive Intelligence, Integrations & Production GA  (MVP Completion & Go-Live)
 
+> **SUBSTRATE SUPERSEDED (2026-08-29).** Where this band names **Railway/Render** as the deploy
+> target, read **a self-hosted single-node VPS running Docker Compose**
+> ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md), `_canon/06-tech-decisions.md` 2.1).
+> Railway and Render are struck entirely: not the fast path, not a fallback. The band's phase
+> order, acceptance checks and everything else it says are unchanged, and the PaaS name is left
+> in place below only where it records what the source PDF specified.
+
 > Complete the differentiated product and ship it: cross-meeting agent collaboration (`ContextGapAgent` over `agent-requests`/`agent-responses` with deny-by-default A2A authz), proactive intelligence (`ProactiveAgent` over confirmed `decisions`/`actions` + the AGE `nexus_knowledge` graph), external integrations (Google Calendar + Slack + ONE of Jira/Linear, with the live Jira connection as the end goal), the `ActionFollowUpWorkflow`, both `admin-ops-service` consoles, and the full P13 hardening + live production deploy on Railway/Render.
 
 ---
@@ -38,7 +45,7 @@ Plan 10-13 is the *capstone* band. It assumes Plans 0-9 shipped a working multi-
 8. **`notification-service` exists as an event-driven worker (stub or P-earlier).** It is the **sole consumer authorized to fan `notifications` to external channels**. This band lights up its three delivery paths (in-app via `realtime-gateway`, email, Slack) and the priority queue. The `ActionFollowUpWorkflow`, dunning, prep briefs, and summaries all deliver through it — they never send directly.
 9. **Capacity anchors are the sizing target**, never the seeder: `A4` = 3,000 tenants, `A5` = 20,000 peak meetings, `A6` = 100,000 peak participants, `E7` = 12 A2A round-trips/meeting, `L4` = 12 `ContextGapAgent` synthesis calls/meeting, `R4` = 4.8M meetings/month, `C2` ≈ $9.73/MAU → `C4` ≈ $6.99 post-optimization. SLOs imported verbatim from [Capacity §11](../_canon/05-capacity-math.md): A2A round-trip p95 < 1.5s, agent e2e p50 < 2s / p95 < 4s, RAG warm p95 < 500ms.
 
-> WARNING — **The MVP go-live target is Railway/Render single-region, pooled + PostgreSQL RLS (RESOLVED DECISION 3).** This band ships ZERO Kubernetes, ZERO Terraform cells, ZERO multi-region, ZERO Citus, ZERO BYOC Redpanda. Every K8s/HPA/KEDA/cell/Terraform construct quoted from [13](../13-scalability-and-performance.md)/[16](../16-deployment-and-infrastructure.md) is the **post-W36 scale-out** target (Plan 14) and is cited here only to dimension the modular-monolith equivalent. Do not build the K8s substrate in P13.
+> WARNING — **The MVP go-live target is a self-hosted single-node VPS running Docker Compose, single-region, pooled + PostgreSQL RLS ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md), superseding RESOLVED DECISION 3).** This band ships ZERO Kubernetes, ZERO Terraform cells, ZERO multi-region, ZERO Citus, ZERO BYOC Redpanda. Every K8s/HPA/KEDA/cell/Terraform construct quoted from [13](../13-scalability-and-performance.md)/[16](../16-deployment-and-infrastructure.md) is the **post-W36 scale-out** target (Plan 14) and is cited here only to dimension the modular-monolith equivalent. Do not build the K8s substrate in P13.
 
 ---
 
@@ -644,20 +651,20 @@ Ordering is a precondition chain. **P10 before P11** because `ProactiveAgent` re
 - A PITR restore to a pre-incident timestamp succeeds in staging; the read replica serves dashboard reads at < 5s lag.
 - A monthly `audit_logs` partition rolls to `nexus-audit-archive` under object lock.
 
-#### 3.20 Cloudflare + custom domain + live production deploy (Railway/Render)
+#### 3.20 Cloudflare + custom domain + live production deploy (single-node VPS)
 
 **Repo / folder:** `mytheus-platform/edge/`, `mytheus-platform/deploy/`.
 
 **Steps:**
 
 1. **Cloudflare CDN + WAF + custom domain** ([11 §5](../11-security-architecture.md), [16 §8.1](../16-deployment-and-infrastructure.md)): TLS 1.3 termination, L3/L4 DDoS absorption, OWASP CRS WAF, bot management; static `web-app` assets CDN-cached; the API path proxied to `api-gateway`. Global + per-tenant rate limits at the gateway.
-2. **Production deploy on Railway/Render** (RESOLVED DECISION 3): the modular monolith with the 20 catalog modules drawn along their final seams; **single region, pooled + PostgreSQL RLS**. GitHub Actions promotes the digest-pinned image through staging → prod after the staging smoke + load gate ([16 §5](../16-deployment-and-infrastructure.md)). **No K8s, no Terraform cells, no multi-region — that is Plan 14.**
+2. **Production deploy on the single-node VPS** ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md), superseding RESOLVED DECISION 3): the modular monolith with the 20 catalog modules drawn along their final seams; **single region, pooled + PostgreSQL RLS**. GitHub Actions promotes the digest-pinned image through staging → prod after the staging smoke + load gate ([16 §5](../16-deployment-and-infrastructure.md)). **No K8s, no Terraform cells, no multi-region — that is Plan 14.**
 3. **Custom domain DNS + health-checked routing** via Cloudflare; environment secrets (Clerk, Stripe live, LiveKit, Deepgram, LLM, Redpanda) injected as platform env vars (the Railway/Render equivalent of ESO+KMS — KMS still backs the per-tenant `oauth_tokens` DEKs).
 4. **Onboard the first paying tenant** through the self-serve funnel (trial-first, role-capture step 1, Calendar connect as the activation accelerant).
 
 **Acceptance checks:**
 - The app is reachable at the custom domain behind Cloudflare with a valid TLS 1.3 cert; WAF blocks an OWASP-CRS probe; per-tenant rate limit sheds a burst at the gateway.
-- A merge to `main` promotes through staging (smoke + load gate green) to the live Railway/Render prod; a rollback is a digest revert.
+- A merge to `main` promotes through staging (smoke + load gate green) to the live VPS prod; a rollback is a digest revert.
 - A first real tenant signs up, connects Calendar, runs a meeting with the live agent sidebar, and a confirmed action becomes a live Jira ticket.
 
 ---
