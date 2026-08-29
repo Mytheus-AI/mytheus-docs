@@ -34,8 +34,16 @@ deliberately assigns to compliance rather than answering (§ The unavailable-NER
 
 ## Status
 
-**Accepted for the data model and the call graph. Blocked for implementation** on the key-custody
-precondition below. As with ADR-0018, ratifying this does not authorize writing the migration.
+**Accepted for the data model and the call graph. Implementation UNBLOCKED as of
+[ADR-0024](0024-key-custody-envelope-encryption.md)**, which supplies the key custody the
+§ Key custody section below made the precondition, and which supersedes this ADR on that one
+point only. Everything else here - D1 through D5, the vault shape, and the unavailable-NER
+question - stands unchanged.
+
+Read § Key custody below as the requirement that was met, not as a live blocker. Its objection
+is still the governing one: ADR-0024 is judged against it, and the reason that ADR refuses to
+mint under a development-only `KeyProvider` is precisely this section's argument that a vault
+with ad-hoc key management is worse than the irreversible redaction it replaces.
 
 ---
 
@@ -147,24 +155,26 @@ stays true - what moves to `ner-service` is the model, not the pass.
 - Reversal becomes an audited operation: resolving a token is a disclosure of PII and must
   write `audit_logs`, exactly as the session-open residency/redaction decision already does.
 
-## Key custody: an unmet precondition, not a detail
+## Key custody: the precondition, met by ADR-0024
 
 **The vault must not be built until key custody exists.** A reversible vault concentrates every
 tenant's raw PII behind one key; a vault with weak or ad-hoc key management is strictly worse
 than the irreversible redaction shipping today, because it converts a scatter of redacted
 strings into a single high-value target.
 
-Nothing in the program currently provides this. `_canon/02-data-model.md` describes
-`oauth_tokens` as using "envelope encryption, per-tenant KMS data key", but that table has no
-migration, no encryption helper exists in `mytheus-backend`, and no KMS or encryption
-environment variable appears anywhere. `mytheus-platform`'s `secrets` Terraform module - which
-is specified as managing "Cloud KMS keys (incl. per-tenant KMS data keys for `oauth_tokens`)" -
-contains zero `.tf` files.
+**This was true when this ADR was written and is no longer.** At the time: no migration for
+`oauth_tokens`, no encryption helper in `mytheus-backend`, no KMS or encryption environment
+variable anywhere, and `mytheus-platform`'s `secrets` Terraform module - specified as managing
+"Cloud KMS keys (incl. per-tenant KMS data keys for `oauth_tokens`)" - containing zero `.tf`
+files. [ADR-0024](0024-key-custody-envelope-encryption.md) closes it with `tenant_keys` plus a
+`KeyProvider` seam, and deliberately separates the vendor question (still open, still needing
+infrastructure the program does not have) from the design question (now built).
 
-So `pii_tokens` and `oauth_tokens` need the same substrate, and neither has it. Building the
-vault first would mean inventing a second, parallel key story that the `oauth_tokens`
-implementation would later have to unify with. The dependency runs the other way: land KMS +
-envelope encryption once, then both tables use it.
+So `pii_tokens` and `oauth_tokens` need the same substrate. Building the vault first would mean
+inventing a second, parallel key story that the `oauth_tokens` implementation would later have
+to unify with. The dependency runs the other way: land KMS + envelope encryption once, then
+both tables use it. **That is the order ADR-0024 followed** - it builds no vault code at all,
+only the shared substrate both tables sit on.
 
 ## The unavailable-NER decision, assigned to compliance
 
@@ -181,4 +191,10 @@ Option 3 is rejected outright here. The choice between 1 and 2 is a compliance j
 whether losing a meeting's record is preferable to storing names and organizations that the
 regex layer never covered anyway, and it may differ per tenant. This ADR does not decide it, in
 the same way [ADR-0018](0018-consent-entity-behind-flag.md) leaves the consent-enforcement call
-to legal. **Assigned to: Security/Compliance, before implementation.**
+to legal. **Assigned to: Security/Compliance. Still open.**
+
+It is no longer a blocker, because it did not need to be one: implementation makes it the
+per-tenant column `tenant_settings.ner_unavailable_policy` (`drop` | `regex_only`), defaulting
+to `regex_only` and holding no `raw` value at all, so option 3 stays unrepresentable and
+compliance's answer - which this ADR notes may differ per tenant - is a configuration change
+rather than a code change.

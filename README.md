@@ -113,6 +113,7 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0021](adr/0021-explicit-grants-no-schema-wide-default-privileges.md) | No schema-wide default privilege grants on TABLES in `public`; every migration grants its own tenant table, no partition carries a direct grant, and no `rolbypassrls` role holds a privilege on a tenant table. |
 | [ADR-0022](adr/0022-openapi-emitted-from-code.md) | The REST contract is code-first: each service's OpenAPI document is emitted from its FastAPI app and committed, governed by a regeneration check, `spectral lint` and an `oasdiff` breaking-change gate. Reverses doc 19 section 11's spec-first direction. |
 | [ADR-0023](adr/0023-object-storage-cloudflare-r2.md) | Object storage is Cloudflare R2 over its S3-compatible API; chosen for zero egress on a read-heavy recordings workload, with R2's EU-jurisdiction-only residency guarantee recorded as a disclosed limit. |
+| [ADR-0024](adr/0024-key-custody-envelope-encryption.md) | Key custody is per-tenant envelope encryption behind a `KeyProvider` seam: values are encrypted under a per-tenant data key held only in wrapped form in `tenant_keys`, the root key sits behind a two-operation interface a real KMS drops into, and the encryption key rotates while the blind-index key deliberately does not. Unblocks `pii_tokens` ([ADR-0020](adr/0020-pii-token-vault-and-ner-placement.md)) and `oauth_tokens`. |
 
 ---
 

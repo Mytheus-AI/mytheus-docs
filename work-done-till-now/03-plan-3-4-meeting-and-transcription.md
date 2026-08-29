@@ -414,3 +414,159 @@ not only the code under test.
 - [02-plan-1-2-foundation-and-tenancy.md](02-plan-1-2-foundation-and-tenancy.md) for what this band inherited, including the entry preconditions this band's own recon confirmed GREEN.
 - [adr/0017-transcript-chunks-composite-partition-key.md](../adr/0017-transcript-chunks-composite-partition-key.md) and [adr/0018-consent-entity-behind-flag.md](../adr/0018-consent-entity-behind-flag.md) for the two decisions this band ratified.
 - [plan/plan-5-6-org-context-and-ai-infra.md](../plan/plan-5-6-org-context-and-ai-infra.md) for the next band, whose entry preconditions this band's recon already checked: identity live (GREEN), this band's tier live (GREEN once merged), `libs/shared` building blocks (GREEN), infra reachable (PARTIAL - Qdrant, an S3-compatible store, and a GPU runner are still missing), and the partition-key decision (already ratified here, see ADR-0017).
+
+---
+
+## 8. Session 2026-08-29: reversible PII redaction, end to end (live gap 13, and gap 22 under it)
+
+Closes live gap 13 ("NER redaction and the per-tenant reversible token vault are ratified in
+canon but not implemented") and the gap 22 it was blocked on ("No key custody exists anywhere in
+the program"). Also closes gap 28 in passing, because it is a one-line fix in a file this work
+already had open.
+
+Recorded here rather than in `04-plan-5-6-org-context-and-ai-infra.md` because the transcript
+boundary is the consumer that made the feature real and is Plan 3-4 section 3.5's own scope; the
+`ner-service` half belongs to the AI tier and is cross-referenced from there.
+
+### 8.1 Why the blocker was addressed rather than worked around
+
+[ADR-0020](../adr/0020-pii-token-vault-and-ner-placement.md) refused to authorize the vault's
+migration on one precondition: "The vault must not be built until key custody exists", because a
+reversible vault concentrates every tenant's raw PII behind one key, and a vault with ad-hoc key
+management is strictly worse than the irreversible redaction shipping today. That objection is
+correct and was not argued around.
+
+What was wrong was the inference drawn from it. The vendor question (what holds the root key)
+and the design question (how a value gets encrypted, indexed and rotated per tenant) are
+independent, and only the first is blocked on infrastructure the program does not have. On the
+single-node substrate ([ADR-0016](../adr/0016-self-hosted-vps-mvp-substrate.md)) there is no
+cloud KMS to call, and no configuration of one node puts the root key somewhere other than the
+host holding the ciphertext. The second question is the larger body of work, was buildable that
+day, and was what kept two tables unbuildable.
+
+[ADR-0024](../adr/0024-key-custody-envelope-encryption.md) splits them: per-tenant envelope
+encryption behind a two-operation `KeyProvider` seam that a real KMS drops into unchanged.
+
+### 8.2 What landed, per repo
+
+**`mytheus-docs`** - canon first, as the propagation order requires.
+
+- `_canon/02-data-model.md`: `tenant_keys` added; the `pii_tokens` row's "not yet migrated" note
+  replaced with its unblocking; `tenant_settings` gains `ner_unavailable_policy`; the ownership
+  map's tenant-service node updated.
+- `_canon/01-service-catalog.md`: `identity-tenant-service` gains `tenant_keys`. Also fixed
+  three places where ADR-0020's own amendment had added `ner-service` to the service table but
+  not to the AI/inference tier row, the internal-routes table, or the always-separate list.
+- ADR-0024 (new). ADR-0020's status, its § Key custody, and its unavailable-NER assignment
+  updated to record what was met and what is still open.
+- Propagated to `README.md` (ADR index), `24-glossary-and-naming.md` (`tenant_keys` and
+  `KeyProvider` added, `pii_tokens` note corrected), `12-compliance-and-privacy.md`, and
+  `coverage-traceability-matrix.md`.
+
+**`mytheus-backend`** - key custody and the vault.
+
+- `libs/shared/crypto.py`: the `KeyProvider` protocol, `LocalKeyProvider`, AES-256-GCM envelope
+  encryption with `org_id` bound in as AEAD additional authenticated data, HKDF-separated
+  encryption and blind-index keys, keyed `value_hmac`, derived tokens, and `assert_rotatable`.
+- `libs/shared/internal_auth.py`: workload authentication for internal-only routes.
+- `libs/shared/authz.py`: `tenant_session_for_org`, `tenant_session`'s guarantees for a route
+  with no user to derive the org from.
+- Migration `4f81a6c30d92`: `tenant_keys`, `pii_tokens`, and
+  `tenant_settings.ner_unavailable_policy`.
+- `services/identity_tenant_service/vault.py` and `routes/pii_tokens.py`: mint/resolve, mounted
+  at `/internal` so the surface stays out of the emitted OpenAPI document.
+- `pyproject.toml`: a `pip>=26.2` floor. Not part of this feature - the `security` job's
+  `pip-audit` was failing on PYSEC-2026-3721 in `pip`, which arrives transitively through
+  `pip-audit`'s own `pip-api`. Floored rather than allowlisted, matching the `setuptools>=83`
+  precedent three lines above it.
+
+**`mytheus-intelligence`** - the model.
+
+- `services/ner_service/`: `dslim/bert-base-NER` behind `POST /ner`, following
+  `reranker-service`'s shape exactly per ADR-0020 D5. It detects only; it does not redact.
+- `libs/shared/internal_auth.py`: the workload guard, reimplemented rather than imported (the
+  two repos cannot import across each other, same as `libs/shared/auth.py`).
+- `pyproject.toml`: `transformers>=4.40` declared explicitly, since this repo now imports it
+  directly rather than leaning on it transitively through `sentence-transformers`.
+
+**`mytheus-realtime`** - the boundary that assembles the result.
+
+- `redaction.py` refactored from inline substitution to span detection. Necessary, not cosmetic:
+  the deterministic and NER spans must be merged before ANYTHING is substituted, because the two
+  detectors overlap and a two-pass substitution splices one placeholder inside another.
+  `redact()` is kept, implemented over the spans, and its behaviour is unchanged.
+- `pii_clients.py`, `pii_pipeline.py`: the NER and vault calls, and the four-outcome policy.
+- `persistence.py`, `sessions.py`, `tenancy.py`: threading, and the `ner_unavailable_policy` read
+  at stream open rather than per final.
+- Migration `c7a41e0d59b3`: `transcript_chunks.partially_redacted`, plus the `GRANT` that
+  `mytheus-backend`'s `9b2c4d1e6f30` docstring predicted this table would need (live gap 28).
+
+### 8.3 The two decisions worth arguing with
+
+**A degraded key story must not be able to become production by inaction.** `LocalKeyProvider`
+reports `is_production_grade = False`, and the mint route returns `503` unless
+`PII_VAULT_ALLOW_LOCAL_KEK` acknowledges the deployment. The boundaries treat that exactly as
+they treat an unreachable vault and fall back to the irreversible placeholders, so the degraded
+path is the status quo and never anything weaker than it. That property is what makes shipping
+this before a real KMS defensible; without it, this work would be the thing ADR-0020 warned
+against.
+
+**The blind-index key does not rotate, and the schema enforces it.** `value_hmac` carries the
+UNIQUE constraint that is the whole cross-boundary coherence mechanism, so re-keying it would
+orphan every existing row and mint a second token for a value that already had one, silently.
+`tenant_keys`'s `purpose='index'` partial unique index has no `status` predicate precisely so a
+second index key cannot exist, and `assert_rotatable` refuses the call path. The encryption key
+rotates freely, which is what `pii_tokens.dek_id` was in ADR-0020 D3 for.
+
+### 8.4 Verification: what was actually run, and what was not
+
+Run, green:
+
+```
+mytheus-backend        uv run ruff check .                    All checks passed
+                       uv run black --check .                 94 files unchanged
+                       uv run mypy .                          97 source files, no issues
+                       uv run python scripts/check_authz.py   passed
+                       uv run python -m scripts.emit_openapi --check
+                                                              specs match the code
+                       uv run python -m pip_audit --skip-editable
+                                                              no known vulnerabilities
+                       uv run pytest -q                       118 passed, 220 skipped
+mytheus-intelligence   ruff / black / mypy on the new modules clean
+                       pytest tests/test_ner.py               10 passed
+mytheus-realtime       ruff / black / mypy (src)              clean, 25 source files
+                       pytest tests/test_pii_pipeline.py      12 passed
+                       pytest tests/                          41 passed
+```
+
+NOT run, and why:
+
+- **Every database-backed test skipped or errored, in both repos.** Docker Desktop is not running
+  on this machine, so Postgres is unreachable on 5433. `tests/test_pii_vault.py` (7 tests: mint
+  idempotency, request-order preservation, one-active-key-per-purpose, the plaintext key never
+  being stored, the audit row, and RLS isolation of both new tables) has therefore NEVER
+  EXECUTED. Neither has either migration. This is the single largest thing outstanding on this
+  work, and it needs the dev stack up, not more code.
+- The migration DDL was verified offline instead, via `alembic upgrade
+  9b2c4d1e6f30:4f81a6c30d92 --sql`, which confirms the tables, both partial unique indexes, the
+  RLS policy, the grants and the constraint names render as intended. That is a check on the
+  generated SQL, not on applying it, and it says nothing about the downgrade path the
+  `migrations` CI job exercises.
+- The real `dslim/bert-base-NER` weights were not exercised; that test skips when the model is
+  not loadable, and did so here.
+
+### 8.5 Open, and deliberately so
+
+1. **`ExternalKmsKeyProvider` does not exist.** ADR-0024 defines the seam it plugs into and names
+   it as a deployment item. Until it exists, no real tenant's PII should be in the vault, which
+   is what the mint refusal enforces.
+2. **The unavailable-NER decision is still Security/Compliance's**, per ADR-0020. It is no longer
+   a blocker: it is `tenant_settings.ner_unavailable_policy`, defaulting to `regex_only`, with no
+   `raw` value representable.
+3. **Workload authentication is a pre-shared secret.** `libs/shared/internal_auth.py` says at
+   length what that is and is not worth. A leaked credential is a cross-tenant capability on the
+   vault routes; every resolve is audited, which is the compensating control, not a fix. mTLS
+   with SPIFFE/SPIRE is the successor and needs a mesh the single-node substrate does not have.
+4. **`oauth_tokens` is unblocked but not built.** It belongs to `integration-service` and to
+   whichever band builds the integrations; building it from here would be inventing another
+   service's schema from outside it.
