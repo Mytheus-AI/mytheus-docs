@@ -343,7 +343,112 @@ rather than assumed: search results into the reranker, the two independent consu
 
 ---
 
-## 6. Related
+## 7. Follow-up session, 2026-08-29: the team-membership write API, and a cross-tenant write it exposed
+
+`mytheus-backend` `9f51192` and `602bff4`. Closes the product half of gap 20 and the
+`team_members` half of Plan 5-6 section 3.3's cache-invalidation rule. No canon edit was
+needed, and that was checked rather than assumed: canon constrains neither this route's path
+nor the audit action vocabulary, and it defines no topic that would carry a membership change.
+
+### 7.1 What landed
+
+`core-api` gains three routes on the table it already owns:
+
+| Route | Tier | Notes |
+|---|---|---|
+| `GET /api/v1/teams/{team_id}/members` | `member` | The roster. Who is on a team is not privileged inside a tenant. |
+| `PUT /api/v1/teams/{team_id}/members/{user_id}` | `admin` | Upsert. |
+| `DELETE /api/v1/teams/{team_id}/members/{user_id}` | `admin` | `404` when the row is absent, never a silent `204`. |
+
+`PUT` rather than `POST` because `(team_id, user_id)` is the primary key: adding someone
+already on the team is the same end state, and `POST` would force a caller correcting a role
+to `DELETE` first. Both writes call `invalidate_user_context`, which
+`identity-tenant-service` has exported and unwired since Plan 5-6 for want of a write path;
+the import crosses services in the direction the docstring specifies, matching the existing
+`bff` to `get_user_context` precedent, so neither service writes the other's store.
+
+**No event is emitted, deliberately.** `_canon/03-event-taxonomy.md` defines no topic carrying
+team-membership changes, and `tenant-events` is produced by `identity-tenant-service` alone.
+Emitting anything here would either invent a name canon does not define or add a second
+producer to someone else's topic. Recorded in the module so the next reader does not treat it
+as an oversight.
+
+### 7.2 The defect this exposed, and the false claim it corrects
+
+Removing the new `_visible_user_id` check to prove the guard fired did not produce the tidier
+error message its first docstring predicted. It produced **`200` and a persisted row joining
+this tenant's team to another tenant's user.**
+
+The cause generalizes, which is why it is worth recording as a property of the substrate
+rather than a detail of one route: **PostgreSQL performs referential-integrity checks as the
+referenced table's owner with row-level security bypassed.** A foreign key therefore resolves
+a `users` row the transaction cannot `SELECT`, and the table's own `tenant_isolation` `WITH
+CHECK` does not help, because the `org_id` being written is the caller's own. The column that
+crosses the boundary is `user_id`, and no policy constrains it.
+
+Checking whether the same shape existed elsewhere found it in shipped code.
+`services/core_api/routes/meetings.py` carried this comment: "The FK to users plus RLS means a
+participant id belonging to another tenant is simply not insertable ... A cross-tenant
+participant is unrepresentable rather than merely rejected." Verified against the live dev
+database before being claimed: `POST /api/v1/meetings` with another tenant's `user_id` in
+`participant_ids` returned `201` and wrote a `meeting_participants` row whose `org_id` was the
+caller's and whose `user_id` was not.
+
+**This is the third documented control in this program found not to exist**, after
+[ADR-0021](../adr/0021-explicit-grants-no-schema-wide-default-privileges.md)'s arm 2 and
+[ADR-0022](../adr/0022-openapi-emitted-from-code.md)'s defect 3. All three share one shape: a
+comment or a ruleset asserting a guarantee that nobody had made fail on purpose.
+
+**Scope, stated precisely rather than inflated.** It is NOT a cross-tenant read. Every read
+path filters on the denormalized `org_id`, so the victim tenant never sees the row, and
+`get_user_context`'s `recent_meetings` join excludes it; both were checked, not assumed. It IS
+a reference resolving outside the tenant, which is the property the Plan 1-2 D6 foreign-key
+work exists to guarantee and which right-to-be-forgotten depends on to find everything.
+Exploiting it needs a `users.id` from another tenant, which is a UUID and not guessable.
+
+Fixed in `602bff4` with an explicit existence check before the participant insert, returning
+`404` rather than `422` so the route does not become an oracle for user ids in other tenants.
+
+### 7.3 Verification
+
+Every command run and its output observed.
+
+| Command | Result |
+|---|---|
+| `uv run pytest -q` | **325 passed** (was 313; twelve new tests) |
+| Guard-fire: both `invalidate_user_context` calls removed | Exactly the two eviction tests fail, nothing else; green again after repair |
+| Guard-fire: write tier lowered `admin` to `member` | The authz test fails; green after repair |
+| Guard-fire: `404` changed to `403` and the user check dropped | Both isolation tests fail; green after repair |
+| Guard-fire: the participant check removed from `meetings.py` | The new cross-tenant test fails with the row-creating `201`; green after repair |
+| `emit_openapi` then `--check` | Three new paths emitted; `core-api` now 11 paths; check green |
+| `spectral lint --fail-severity=error` | **0 errors**, 74 warnings (71 before; three built-in style warnings, one per new route) |
+| `scripts/check_authz.py` | Passes; every new route declares its tier |
+| `ruff` / `black --check` / `mypy` | Clean; mypy over 93 source files |
+
+Two claims were probed directly rather than reasoned about, and both held: `tenant_session`'s
+"commit together or not at all" (a `ProblemDetail` raised after a write does roll the write
+back), and the assumption that a surviving row proved otherwise. The apparent counter-example
+was a row committed by the earlier RED run, because the shared dev database is never truncated
+between runs. The assertion is now scoped to the run's own `org_id` so a leftover cannot
+reproduce it. **Worth carrying forward: on this suite, a global predicate in an assertion can
+be satisfied by a previous run's data.**
+
+### 7.4 NOT run, and not claimed
+
+- **No rebuild from an empty cluster.** Unchanged from the previous session and for the same
+  reason: the dev stack is shared with the other track. Gap 30 still stands.
+- **Nothing was exercised through `api-gateway`.** The routes were driven directly against the
+  `core-api` router in-process, as every other route test in this repo is. The gateway's
+  `ROUTE_MAP` already covers `/api/v1/teams` by longest-prefix match, so the new paths route by
+  construction, but that was read rather than executed.
+- **No client consumes these routes.** Neither `mytheus-ui` nor `mytheus-mobile` has a team
+  management surface, so the product gap in item 20 is closed at the API layer only.
+- **The `oasdiff` job still has not run in GitHub Actions.** These three routes are additions,
+  which are not breaking, so the next pull request remains its first real execution.
+
+---
+
+## 8. Related
 
 - [00-status-overview.md](00-status-overview.md) for program-wide state.
 - [03-plan-3-4-meeting-and-transcription.md](03-plan-3-4-meeting-and-transcription.md) for the meeting and transcription tier this band builds on, including the `transcript_chunks` partition-grant defect and its fix, directly relevant to gap 15 above.
