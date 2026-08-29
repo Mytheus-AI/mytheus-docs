@@ -254,3 +254,80 @@ Three things that decoupling surfaced, each a real defect rather than a detail:
 
 The residual coupling is now one line and one mount in `atithivishram-infra`, which cannot be
 removed while that Caddy holds 80/443 and `cf-origin-lock` admits Cloudflare only there.
+
+---
+
+## 9. Follow-up session, 2026-08-29: the event backbone is provisioned and gated (B4)
+
+`mytheus-events` `3ab6804` and `mytheus-platform` `24cd382`. No canon edit: the topic list,
+partition counts and retention this touches are already `_canon/03-event-taxonomy.md`'s, and
+nothing here renames or adds one.
+
+### 9.1 The gap, which was wider than "run the script in prod"
+
+`compose.prod.yml` has run Redpanda with the Schema Registry since the deploy path was built,
+and **nothing has ever created the 21 topics or registered the 21 Avro subjects on it.** A
+fresh stack came up with an empty broker. Producers then either auto-created a single-partition
+topic with default retention, silently discarding the canonical partition counts, or failed at
+runtime where auto-creation is off. `deploy.sh` printed "Done." in both cases.
+
+### 9.2 The defect found on the way, which blocked the obvious fix
+
+`mytheus-events/scripts/create_topics.sh` was **not idempotent**, so it could not be wired into
+a deploy path that advertises "Idempotent: safe to re-run". `rpk topic create` exits 1 with
+`TOPIC_ALREADY_EXISTS`, and under `set -euo pipefail` that aborted the run at the FIRST
+existing topic, leaving every later topic uncreated and reporting failure. Confirmed against
+the live dev broker: the old script stopped at `transcript-chunks` and touched none of the
+other 41.
+
+Fixed by treating `TOPIC_ALREADY_EXISTS` as success and counting it separately, while any
+other failure still aborts. `rpk` reports per-topic outcomes in its table rather than only
+through the exit code, so the output is inspected instead of the status alone; collapsing both
+into "non-zero means it exists" would have swallowed a genuinely unreachable broker.
+`REPLICAS` is now overridable rather than hardcoded to 1, and `make provision` runs topics plus
+subject registration together, because the two halves are useless apart.
+
+### 9.3 Why the deploy VERIFIES rather than creates
+
+`deploy/deploy.sh` gained a gate that counts topics and subjects and fails the deploy if the
+backbone is missing, printing the exact idempotent remediation commands.
+
+It does not create them, and that is the load-bearing decision. Creating would put a second
+copy of 42 partition counts and retention settings in `mytheus-platform` while the canonical
+executable form lives in `mytheus-events`. **This repo already demonstrates the hazard:**
+`mytheus-platform/scripts/check_authz.py` and `mytheus-backend/scripts/check_authz.py` are
+both present and have diverged. A second copy of the topic list would drift the same way, and
+the drift would surface as wrong retention on production topics rather than as a failing test.
+
+Verification gets the property that actually matters without the duplication: it does not care
+how the topics were created, only that a deploy cannot report success while the backbone is
+absent. It counts rather than names for the same reason: 21 topics plus 21 paired `.dlq` is 42,
+and one `{topic}-value` subject each is 21.
+
+### 9.4 Verification
+
+| Command | Result |
+|---|---|
+| Old script against a provisioned cluster | Aborts at `transcript-chunks`, 41 topics untouched |
+| New script, run 1 | **41 created, 1 already present** |
+| New script, run 2 | **0 created, 42 already present**, exit 0 |
+| Guard-fire: delete one empty `.dlq` topic (offset 0 = high-watermark 0), re-run | Creates exactly that one, leaves the other 41 alone |
+| Deploy gate against the provisioned broker | `topics: 42/42   subjects: 21/21`, passes |
+| Guard-fire: same gate at 41 topics | Fails the deploy with the remediation block |
+| `ruff check codegen tests`, `codegen/validate.py schemas` | Clean; 21 topics, envelope and dlq parse, frozen header order |
+| `bash -n` on both scripts | Clean |
+
+### 9.5 NOT run, and not claimed
+
+**Nothing was run against production.** Every result above is from the local dev broker
+(`reprise-backend-redpanda-1`). Provisioning the real cluster is an outward-facing action on
+the VPS and is being held for explicit approval, so gap 4's production half is still open; what
+is closed is that the deploy can no longer *silently* succeed without it.
+
+`deploy.sh` itself was not executed end to end, because doing so deploys. The added function
+was exercised as an extracted copy against the dev broker on the same `rpk` and `curl` calls,
+and the file passes `bash -n`.
+
+One local-only artifact worth knowing: the scripts are checked out CRLF on Windows, so running
+one directly inside a Linux container fails with `set: pipefail: invalid option name` until the
+carriage returns are stripped. Linux checkouts are unaffected, and the VPS is Linux.

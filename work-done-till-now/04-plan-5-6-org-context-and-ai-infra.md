@@ -448,7 +448,89 @@ be satisfied by a previous run's data.**
 
 ---
 
-## 8. Related
+## 8. Follow-up session, 2026-08-29: Qdrant's sole-writer rule becomes an infrastructure control (B3)
+
+`mytheus-intelligence`. Closes gap 19. No canon edit: ADR-0006 and
+`_canon/02-data-model.md` define the collection naming and the tenancy model, neither of which
+changes here; this is about who holds which credential.
+
+### 8.1 What the gap actually was
+
+"`embedding-service` is the only writer of Qdrant" was documented in three places
+(`CLAUDE.md`, `system.md` section 10, `libs/shared/qdrant.py`'s module docstring) and enforced
+in none. The dev Qdrant had **no API key at all**, so any process that could reach the port had
+full control of every tenant's vectors, and a second writer would have been caught only at code
+review, if at all.
+
+A wider finding while scoping it: **`mytheus-intelligence` had no compose file.** The Qdrant
+everyone developed against was started by hand, which is why there was nowhere for the key to
+be configured, and why `tests/conftest.py`'s Qdrant fixture skipped silently whenever nobody
+had a container running. The vector-tenancy tests were therefore green-by-absence on any
+machine without one.
+
+### 8.2 The mechanism, verified before being designed around
+
+Qdrant supports two credentials. Probed directly against `qdrant/qdrant:v1.12.4`:
+
+| Credential | list | search | create collection | upsert |
+|---|---|---|---|---|
+| none | 401 | 401 | 401 | 401 |
+| `QDRANT__SERVICE__READ_ONLY_API_KEY` | 200 | 200 | **403** | **403** |
+| `QDRANT__SERVICE__API_KEY` | 200 | 200 | 200 | 200 |
+
+So the write key goes to `embedding-service` alone and every other consumer gets the read-only
+key. A reader that tries to write now fails at the server rather than at review time.
+
+### 8.3 What landed
+
+- `libs/shared/qdrant.py` gains `write_client()` and `read_client()`. Both **fail closed**: a
+  missing key raises `QdrantAuthNotConfigured` rather than falling back to an unauthenticated
+  client, on the same reasoning as `api-gateway`'s `GATEWAY_SIGNING_KEY`. A silent fallback
+  would keep working against a permissive Qdrant and fail first in production.
+- Both factories refuse to build when the two keys are **equal**. That configuration has no
+  control at all and is otherwise invisible: every isolation test still passes, because the
+  "read-only" client is the write client under another name.
+- A `docker-compose.yml` for this repo, running Qdrant with both keys. Postgres, Redis,
+  Redpanda and the Schema Registry are deliberately NOT declared: they are the
+  `mytheus-backend` stack this tier shares, and a second definition would mean two competing
+  descriptions of one dependency and a second set of volumes that looks identical until the
+  data diverges.
+- `services/embedding_service/worker.py` builds through `write_client()`, so the privileged
+  credential has exactly one construction site.
+
+### 8.4 Verification
+
+| Command | Result |
+|---|---|
+| `tests/test_qdrant_api_key_isolation.py` | **8 passed** |
+| `tests/test_qdrant_tenancy.py` (pre-existing, now on the keyed client) | 4 passed, unchanged |
+| `tests/test_embedding_consumer.py` | 3 passed |
+| **Guard-fire: Qdrant restarted with no key configured**, the exact state gap 19 describes | Exactly three fail: the read-only client can upsert, can create a collection, and the unauthenticated client is admitted. Green again on restore |
+| Guard-fire: server keeping only the write key | The read-only client loses access entirely, which the search test catches |
+| `ruff` / `black --check` / `mypy` | Clean; mypy over 54 source files |
+
+The tests assert the **property** (a read-only credential cannot write), not the configuration
+(an environment variable is set). That distinction is taken directly from the partition-grant
+finding in [03](03-plan-3-4-meeting-and-transcription.md) section 5.3, where six standing
+assertions were all scoped to the roles this program creates and none could see the role the
+database image shipped.
+
+### 8.5 NOT run, and not claimed
+
+- **The full `mytheus-intelligence` suite was not run to completion.** It loads real models and
+  exceeded the session's command budget; the three Qdrant-touching files were run in full
+  instead, plus the whole lint and type gate. The untouched remainder does not import
+  `libs/shared/qdrant`.
+- **No production Qdrant exists to configure.** There is no Qdrant in `compose.prod.yml` and
+  none in any deploy path, so this closes the control in dev and in the contract; a deployed
+  instance must set both keys from the secrets manager. That is the residual half of gap 19.
+- `rag-service` and `search-service` do not yet construct a Qdrant client at all, so
+  `read_client()` currently has no production caller. It exists so the first one does not reach
+  for the write key.
+
+---
+
+## 9. Related
 
 - [00-status-overview.md](00-status-overview.md) for program-wide state.
 - [03-plan-3-4-meeting-and-transcription.md](03-plan-3-4-meeting-and-transcription.md) for the meeting and transcription tier this band builds on, including the `transcript_chunks` partition-grant defect and its fix, directly relevant to gap 15 above.
