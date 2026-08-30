@@ -608,3 +608,154 @@ looking like an oversight.
 - [01-plan-0-scaffold-and-contracts.md](01-plan-0-scaffold-and-contracts.md) for what this band inherited.
 - [design/README.md](../design/README.md) for the P1 pack index and its deviations.
 - [threat-model/stride.md](../threat-model/stride.md) section 5, updated in the same pass: all six defects closed, with the residual risk stated.
+
+---
+
+## 18. Follow-up session, 2026-08-30: the dashboard arms are typed (B8 prerequisite N2)
+
+`mytheus-backend`. Closes the prerequisite the B8 scoping pass identified: until this landed,
+generating a TypeScript client from the emitted specs would have made `mytheus-ui` worse than
+the hand-written types the client exists to replace. No canon edit, and that was checked
+rather than assumed: `_canon/` names no wire model and takes no position on the `bff`
+dashboard's response shape, only that `bff` serves `GET/POST /bff/*`. This is the fifth time
+in this program a session has checked whether canon needed an edit and found it did not.
+
+### 18.1 The defect, stated as a client would meet it
+
+`services/bff/dashboard.py` declared one arm model with `items: list[dict[str, Any]]`, so the
+emitted `design/openapi/bff.yaml` carried an unconstrained object map and a generated client
+received `items?: { [key: string]: unknown }[]` beside the `status` union.
+
+Against `mytheus-ui`'s hand-written `Arm<DashboardMeeting>`, that is a strict regression: the
+six fields, their nullability, and the four-value meeting `status` union all disappear.
+**None of the three OpenAPI gates can see this.** `emit_openapi --check` only asks whether the
+spec matches the code, and it did. `spectral lint` has no rule about item types. `oasdiff`
+treats loosening a RESPONSE schema as non-breaking. So the loosening is invisible to the whole
+gate stack and surfaces only as a worse frontend, months later, in a different repo.
+
+### 18.2 What landed
+
+- **`DashboardMeeting`**, the six-column projection the arm actually returns. `status` is
+  IMPORTED from `services/core_api/schemas.py`, which owns `meetings`, rather than restated.
+  A second copy of the four values would be a second place for them to drift, and gap 35 is
+  this program's standing example of two copies of one thing diverging unnoticed. Those values
+  are also exactly the `ck_meetings_status_valid` CHECK constraint, so the `Literal` is
+  faithful to the database rather than a guess.
+- **`_ArmBase[ItemT]`** with concrete named subclasses `MeetingsArm` and `UnbuiltArm`. The base
+  is generic so `items` is typed per panel; the subclasses are concrete so the emitted schema
+  carries readable names instead of the `_ArmBase_DashboardMeeting_` Pydantic derives for a
+  parameterized generic. PEP 695 syntax, which is what `ruff`'s `UP047` requires on this Python
+  floor; there was no existing `TypeVar` in the repo to follow either way.
+- **`items` lost its default and is now `required`.** With `Field(default_factory=list)` the
+  field is optional in the schema and a generated client types it `items?:`, forcing every
+  caller to handle an absence the server never produces. The server always sends it, so the
+  schema now says so.
+- **The loader builds models rather than dicts**, so the columns are checked at the one place
+  that knows what the `SELECT` returned. The two degrade paths pass `items=[]` explicitly.
+- `_arm()` now takes the arm class as a parameter. It computes degrade policy; which model
+  wraps the result is the caller's concern. Two test wrappers were updated for the new arity.
+
+### 18.3 A wire-format divergence found on the way
+
+The old loader hand-built its rows and called `.isoformat()`, emitting a UTC
+`meetings.scheduled_start` as `...+00:00`. `core-api`'s `Meeting` model returns that same
+column through Pydantic, which emits `...Z`. **The same column of the same table serialized two
+different ways depending on which endpoint answered.** Both are valid RFC 3339 and both parse
+in a browser, so nothing was broken, and that is exactly why it survived: a client that
+normalises on one spelling is simply wrong against the other endpoint, and only for UTC values.
+
+Typing the model removed the divergence, since both now go through one serializer.
+`test_the_dashboard_and_core_api_serialize_the_same_column_identically` asserts the two models
+agree field for field rather than asserting a literal spelling, so the pair stays consistent
+even if the serializer changes under both at once.
+
+### 18.4 The three unbuilt arms keep their open item type, deliberately
+
+`action_items`, `worklogs` and `decisions` have no read model until Plan 7-9.
+
+Widening them to `list[Any]`, so a client would read `unknown[]`, was implemented and then
+reverted: `oasdiff breaking` reports `object` to `any` as `response-property-type-changed` on
+all three, and no client can observe the difference because those arrays are always empty.
+Loosening a live response type to make an always-empty array read better is not worth a
+breaking-change entry.
+
+Inventing a record shape for them was rejected for the opposite reason: it would ship a
+fabricated contract to every generated client as though it had been measured. So they keep
+exactly the wire type they have today, and `test_the_unbuilt_arms_do_not_invent_an_item_type`
+asserts that no item type is invented for them.
+
+### 18.5 The `oasdiff` gate does not fail the build, and never has
+
+Found while checking whether this change was breaking, and it is the more serious finding of
+the session. **`oasdiff breaking` prints its findings and exits 0.** The CI step relies
+entirely on a non-zero exit (`... breaking "/base/$name" "/head/$name" || failed=1`), so
+`failed` is never set and the job passes a build it has just finished describing as broken.
+
+Proven in both directions against `tufin/oasdiff:latest`: deleting `GET /bff/dashboard` from a
+copy of the spec reports `api-path-removed-without-deprecation` and exits **0** without the
+flag, and exits **1** with `--fail-on ERR`. The flag is now in `ci.yml` with the reasoning
+recorded at the step.
+
+This is the fourth documented control in this program found not to exist, after
+[ADR-0021](../adr/0021-explicit-grants-no-schema-wide-default-privileges.md) arm 2,
+[ADR-0022](../adr/0022-openapi-emitted-from-code.md) defect 3, and gap 31. It shares their
+shape exactly: a guard nobody had made fail on purpose. It also shares a subject with defect 3,
+which was itself a false claim about what `oasdiff` enforces, so **the same tool has now been
+believed twice about something it does not do.** Why it stayed hidden is already on the record
+and unchanged: the step is `pull_request`-only and has still never executed in GitHub Actions,
+so its exit code had never been observed by anyone.
+
+### 18.6 Verification
+
+Every command run and its output observed, against the shared dev stack.
+
+| Command | Result |
+|---|---|
+| `uv run pytest -q` | **328 passed, 2 failed.** Both failures pre-existing, see 18.7 |
+| `uv run pytest tests/test_openapi_contract.py tests/test_bff_dashboard.py -q` | 21 passed |
+| Guard-fire: revert `items` to `list[dict[str, Any]]` | Exactly 3 of the new tests fail, nothing else; green again on repair |
+| Guard-fire: restore `Field(default_factory=list)` on `items` | Only `test_every_arm_marks_items_required` fails; green again on repair |
+| Guard-fire: give `UnbuiltArm` a fabricated item model | Only `test_the_unbuilt_arms_do_not_invent_an_item_type` fails; green again |
+| Guard-fire: re-add an `.isoformat()` serializer to `DashboardMeeting` | Only the cross-endpoint agreement test fails, on `+00:00` against `Z`; green again |
+| `oasdiff breaking` guard-fire: delete a path, no flag | Reports the removal, **exits 0**. The defect in 18.5 |
+| `oasdiff breaking` guard-fire: same probe, `--fail-on ERR` | Reports the removal, **exits 1** |
+| `oasdiff breaking --fail-on ERR`, this change against `main` | No breaking changes |
+| `emit_openapi --check` | Specs match the code |
+| `spectral lint --fail-severity=error` | **0 errors**, 74 warnings, unchanged from the previous session |
+| `scripts/check_authz.py` | Passes |
+| `ruff` / `black --check` / `mypy` | Clean; mypy over 93 source files |
+| `actionlint` on the edited `ci.yml` | Clean |
+| `openapi-typescript@7` over the emitted `bff.yaml`, before and after | `items?: { [key: string]: unknown }[]` becomes `items: DashboardMeeting[]`, with `status` narrowed to the four-value union and `format: uuid` / `format: date-time` carried through |
+
+The generated-client comparison is the acceptance check that matters here, and it was run
+rather than reasoned about: the whole point of the task is what a client receives, so a client
+was generated from both specs and the two outputs compared line by line.
+
+### 18.7 Two pre-existing failures, and what they are
+
+`test_public_schema_grants_nothing_by_default` and
+`test_no_bypassrls_role_holds_privileges_on_a_public_table` fail on the shared dev database.
+**They are not from this change**, proven by stashing it and running the file against `main`:
+both fail identically. The database is at head (`9b2c4d1e6f30`) and holds accumulated state
+(3,884 `organizations`), so this is not a fresh-volume artifact.
+
+The cause is gap 29's residual: `pg_default_acl` carries 17 entries granted by `supabase_admin`,
+the `supabase/postgres` image's own bootstrap
+`ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES TO anon, authenticated, service_role`, which
+a non-superuser migration runner cannot alter. Gap 29 records both residuals as inert and
+"asserted so they stop being silent"; on this cluster the assertion is currently red rather
+than green, which the 2026-08-29 record's 325-passed run implies it was not. Left untouched and
+reported rather than worked around, because closing it is the substrate decision gap 29 already
+frames (move off the `supabase/postgres` base image), not a change to make in passing.
+
+### 18.8 NOT run, and not claimed
+
+- **Nothing was run against the deployed VPS**, and no client was regenerated into
+  `mytheus-ui`. B8 itself is untouched: this is only its prerequisite. The client compared in
+  18.6 was generated into a scratch directory, never into that repo.
+- **The `oasdiff` fix has still not executed in GitHub Actions.** It was exercised locally
+  through the same `tufin/oasdiff:latest` container the workflow uses, on the same command
+  shape, in both directions. The `pull_request`-only path fires on the next PR, and that will
+  be its first real run, exactly as recorded before this session.
+- **No rebuild from an empty cluster.** Unchanged, and for the unchanged reason: the dev stack
+  is shared with the other track.
