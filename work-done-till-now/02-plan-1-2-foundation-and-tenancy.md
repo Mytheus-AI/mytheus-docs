@@ -759,3 +759,131 @@ frames (move off the `supabase/postgres` base image), not a change to make in pa
   be its first real run, exactly as recorded before this session.
 - **No rebuild from an empty cluster.** Unchanged, and for the unchanged reason: the dev stack
   is shared with the other track.
+
+---
+
+## 19. Follow-up session, 2026-08-30: the generated TypeScript client (B8)
+
+`mytheus-ui` `2e298c5`. Closes section 3.10 step 7, which Plan 1-2 recorded as a deliberate
+deviation ("No generated TS client yet"), and closes live gap 2. No canon edit: `_canon/` names
+no wire model and takes no position on client codegen, checked rather than assumed.
+
+**Scope decision, taken by the maintainer.** The original B8 assumed two client repos. Gap 32
+established that `mytheus-mobile` has no API layer to regenerate into, so the maintainer scoped
+B8 to `mytheus-ui` alone and excluded `mytheus-mobile` from this session outright. Mobile's
+client is therefore folded into gap 32 rather than stretching B8 to cover a repo with nothing
+to replace. `mytheus-mobile` was not opened, read or modified.
+
+**Cross-repo note.** `mytheus-ui` is the other track's repo. The work is additive, no existing
+screen was changed, and every exported type name is unchanged, so nothing in their meeting,
+LiveKit or caption surfaces was touched. It was fetched before and after; `main` was at
+`0f757ca` throughout with no in-flight work.
+
+### 19.1 What the defect actually was
+
+Three hand-written type sets, kept in sync by attention:
+
+| Where | What it described |
+|---|---|
+| `src/lib/api/types.ts` | `Arm<T>`, `DashboardMeeting`, `DashboardResponse`, `ApiMeeting`, `MeetingPage`, `ApiTeam`, `Participant` |
+| `src/lib/api/client.ts` | The `ErrorCode` union and `Problem` |
+| `src/lib/api/transcript.ts` | `TranscriptChunk`, `TranscriptPage`, `MeetingSpeaker`, inline |
+
+Attention had already lapsed, in the direction that matters. The `ErrorCode` union listed 15 of
+the 17 codes the server emits; the two missing were `CONSENT_REQUIRED` and `NOT_A_PARTICIPANT`,
+which are exactly the two outcomes `app/api/livekit-token/route.ts` exists to keep apart. That
+route relays `error.code` rather than naming it, so the shortfall was a type that had quietly
+stopped describing the server rather than a crash: the value arrived at runtime while the type
+said it could not. This also closes the item recorded separately as the `ErrorCode` drift.
+
+It only became safe to generate now. Plan 1-2 refused, correctly, because the specs were
+hand-written and generating from them would have encoded drift rather than prevented it
+([ADR-0022](../adr/0022-openapi-emitted-from-code.md) changed that by emitting each document
+from its FastAPI app), and the emitted `Arm.items` was weaker than the hand-written `Arm<T>`
+until the dashboard arms were typed in section 18.
+
+### 19.2 What landed
+
+- **`scripts/generate-api-types.mjs`** writes `src/lib/api/generated/` from `mytheus-backend`'s
+  `design/openapi/*.yaml`, one module per service document, and carries a `--check` mode that
+  fails when the committed output and the spec disagree. That is the same
+  regenerate-and-compare shape ADR-0022 uses on the specs themselves, applied one layer out.
+- **`types.ts` becomes an assembly layer**: every type is now an alias onto a generated schema.
+  Every exported name is unchanged, which is why no screen needed editing.
+- **`client.ts`'s `ErrorCode` and `Problem`** are taken from the spec. The drift closes by
+  construction rather than by being noticed.
+- **`transcript.ts`'s three inline interfaces** likewise.
+
+**The output is committed, deliberately.** This app has to build with no sibling checkout: CI,
+the Docker build and a fresh clone all compile without `mytheus-backend` on disk. Committing
+buys that; `--check` is what stops the committed copy from quietly becoming a second source of
+truth, which is gap 35's hazard.
+
+**Vendoring the specs into `mytheus-ui` was considered and rejected** for the same reason B4
+refused to vendor the topic list into `mytheus-platform`: a second copy of a canonical artifact
+drifts, and the drift surfaces as a wrong client rather than a failing test.
+
+### 19.3 Two defects found by running the script rather than reading it
+
+Both were mine, introduced in the first cut, and both are the shape this program keeps finding.
+
+1. **An explicitly set but wrong `MYTHEUS_OPENAPI_DIR` silently fell through to a guessed
+   directory.** The override sat in the same candidate list as the fallbacks, so naming a path
+   that did not exist produced a correct-looking client generated from a different server. That
+   is a silent fallback where a loud failure belongs, the same reasoning B3 applied to Qdrant's
+   `write_client()` refusing to build without a key. An override is now used or it fails.
+2. **The generator emits CRLF on Windows and LF on Linux**, so a byte comparison would have been
+   red for a Windows developer and green in CI on identical content. This is precisely what cost
+   `mytheus-realtime` a whole lint gate in Plan 3-4 (gap 14, no `.gitattributes` plus
+   `core.autocrlf` against `prettier --check`). Fixed in the comparison itself through one
+   shared normaliser on both the write and read paths, so the gate cannot be platform-dependent
+   whatever git does, with a `.gitattributes` as well so a checkout cannot undo it. Fixing it in
+   the script rather than only in config is the difference between the property holding and the
+   configuration happening to be right.
+
+### 19.4 Verification
+
+Every command run and its output observed.
+
+| Command | Result |
+|---|---|
+| `npx tsc --noEmit` | Clean, before and after |
+| `npm run lint` | No ESLint warnings or errors |
+| `npm run build` with a Clerk key | **Compiled successfully, 54/54 static pages, exit 0** |
+| Positive control: rename `scheduled_start` in the generated spec output | `present.ts` fails to typecheck. The app is genuinely bound to the spec |
+| Positive control: drop `cancelled` from `Meeting.status` | `present.ts` fails twice, on the switch arm and on the call. Both restore clean |
+| Guard-fire: hand-edit a generated file | `--check` reports `differs from the spec` and **exits 1** |
+| Guard-fire: delete a generated file | `--check` reports `missing from the committed output` |
+| Guard-fire: `MYTHEUS_OPENAPI_DIR=/nonexistent` | **exits 2** with the path it was given, after the fix; exited 0 before it |
+| Guard-fire: rewrite a committed file to CRLF, content identical | `--check` **passes**, which is the point of the normaliser |
+| Same file, one real content change | `--check` fails again. The line-ending tolerance did not blunt it |
+| `npm run generate:api:check` on the committed tree | Matches |
+
+The exit codes were checked without a pipe, deliberately: `$?` after `npm ... | tail` is the
+exit of `tail`. That is not a hypothetical worry, it is the defect found in the `oasdiff` gate
+the same day (gap 39), where a tool printed its findings and exited 0 and the CI step depended
+on the exit code.
+
+**A build failure that is NOT from this change:** `next build` without a Clerk publishable key
+fails at prerender, because `ClerkProvider` wraps the root layout and validates its key at build
+time. That is what this repo's own CI comment already documents and why CI passes build args.
+Proven pre-existing by stashing the change and rebuilding on `main`, which fails identically.
+With a syntactically valid key supplied, the full build passes.
+
+### 19.5 Open, and stated rather than papered over
+
+- **`generate:api:check` is not wired into `mytheus-ui`'s CI.** It cannot be, honestly, without
+  a decision that is not this session's to take: the workflow checks out one repo, and the check
+  needs `mytheus-backend`'s specs. Vendoring them here would create the second copy 19.2
+  rejects, and a step that silently passes when the specs are absent would be worse than no step
+  at all, which is the reasoning that workflow's own author used to leave Vitest out rather than
+  run zero tests green. Closing it needs either a cross-repo checkout in that workflow or the
+  check moving into `mytheus-backend`'s pipeline, and it needs the other track's agreement
+  because it is their pipeline.
+- **Nothing was regenerated into `mytheus-mobile`**, per the maintainer's scoping. Gap 32 owns
+  that repo's client.
+- **No screen consumes a newly available type yet.** This change makes the existing screens
+  honest; it adds no surface. `UserContext`, `OrgChart`, `TenantSettings` and the rest are now
+  available to the org-chart and person-profile UI when that is built, which is where B9 starts.
+- **Nothing was run against a deployed backend.** The types are checked against the specs, and
+  the specs are emitted from the code, but no request was made through a live gateway.
