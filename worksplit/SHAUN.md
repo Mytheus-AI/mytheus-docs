@@ -374,7 +374,12 @@ model. `decisions`, `action_items` and `agent_suggestions` exist in none of the 
       core-api having no router mounted (`main.py:22` TODO). This closes four of the eleven dead
       prefixes from your D3.
 
-Two decisions are needed before the migration, both touching canon-frozen field lists:
+Three decisions are needed before the migration:
+
+0. `decisions.status` has no enumerated domain in canon at all. Proposed:
+   `candidate`, `confirmed`, `dismissed`, `superseded`. Note the Avro `status` enums carry
+   `confirmed` as their only symbol, so an unconfirmed decision is unrepresentable on the bus by
+   construction. The database domain is wider than the wire domain, deliberately.
 
 1. `action_items.status` has two axes, confirmation (candidate to confirmed) and work progress
    (open, in_progress, done), while canon gives one column. The spec recommends the single column,

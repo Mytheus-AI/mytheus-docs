@@ -170,6 +170,7 @@ Everything below blocks real work. Several are pure waiting-time and should star
 |---|---|---|
 | LLM provider and spend | B1, B2 completion | No LLM call exists in any repo. Everything else can be built against a stub completion. |
 | Knowledge graph: take R1? | E2 | Recommendation is yes, now. The migration cost is zero today and rises weekly. |
+| `decisions.status` domain | E1 migration | Canon does not enumerate it at all. Proposed: `candidate`, `confirmed`, `dismissed`, `superseded`. |
 | `action_items.status`: one axis or two | E1 migration | Canon-frozen field list; spec recommends one column. |
 | `supersedes_id`, `blocked_on_decision_id` | E1 migration | Net-new versus canon, and load-bearing for `FOLLOWS_FROM`. |
 | Plan limits: per-seat or per-tenant | C2 quota arithmetic, go-live | Needs Pricing and GTM plus a canon amendment. |
