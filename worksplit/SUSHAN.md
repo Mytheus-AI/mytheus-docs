@@ -1,305 +1,299 @@
-# Sushan — Gateway, Auth, Identity, RBAC
+# Sushan — Auth & Identity, plus all of mytheus-mobile
 
-**8 tasks.** Two of them block the entire team. Read the ordering note before you start.
+**12 non-mobile tasks + 25 mobile tasks.** Two of the non-mobile ones block the entire team.
 
-Audit report: https://claude.ai/code/artifact/da281c5f-d990-40b4-9487-d9f857833b08
-
----
-
-## 🚨 DO S1 AND S2 FIRST — THE WHOLE TEAM IS BLOCKED ON THEM
-
-Nobody else can verify their work until these two are merged and deployed.
-
-- Samar can start M4/M5/M6 without you; everything else on their list waits.
-- Shaun can write all their code but cannot test any of it — every request 403s until S2.
-
-**Announce in the channel the moment S1 and S2 are live.** Do not start S3–S8 before then.
+Audit: https://claude.ai/code/artifact/da281c5f-d990-40b4-9487-d9f857833b08
+Evidence: [`audit/`](audit/) · [`verify/verify-mobile.md`](verify/verify-mobile.md)
 
 ---
 
-## S1 — Fix the gateway signing key (P0, blocks everyone)
+## 🚨 S1 AND S2 BLOCK EVERYONE — DO THEM FIRST
 
-**Repo:** `mytheus-backend` + `mytheus-platform`
+Samar can proceed on P4–P8 without you; Shaun can write D1/D2 but verify nothing. Announce the
+moment S1 and S2 are deployed.
 
-### The defect
+## ⚖️ Your load is ~2.5× the others
 
-`_signing_key()` at `services/api_gateway/edge.py:58-66` raises `ProblemDetail(503)` when
-`GATEWAY_SIGNING_KEY` is unset. That is correct and deliberate — the comment explains it well:
-*"A default key is worse than no signing at all, because it looks like a control while being
-public knowledge."* Keep that behaviour.
-
-Two things are wrong around it:
-
-1. **The variable is set nowhere.** Grep across all 8 repos returns hits only in
-   `tests/test_gateway_edge.py:78` and `:236`. It is in no `.env.example`, no compose file, no
-   runbook.
-2. **The raise escapes as a 500.** In `edge_auth`, the `try / except ProblemDetail` block ends
-   after `resolve_org_id`. The call to `_attach_internal_headers(...)` — which reaches
-   `sign_context` → `_signing_key` — sits one line *below* the `except`, outside the guard. The
-   function's own docstring says why this matters: *"middleware sits outside the exception
-   handlers the app factory installs, so a raise here would escape as an unhandled 500."*
-
-**Net effect: every authenticated request through the gateway returns 500.**
-
-### Why nobody caught it
-
-`/healthz` is on the gateway's public path list, so it never enters `edge_auth`. The container
-healthcheck passes, both CI post-deploy curls return 200, and the deploy reports fully green.
-The health signal is structurally incapable of detecting this outage.
-
-### Do
-
-- [ ] Move `_attach_internal_headers(...)` inside the `try / except ProblemDetail` block so a
-      missing key surfaces as the intended 503, not a 500.
-- [ ] Add `GATEWAY_SIGNING_KEY` to `mytheus-backend/.env.example`, `mytheus-platform/env/`, and
-      `deploy/compose.prod.yml` for the `api-gateway` service.
-- [ ] Document generation + rotation in the platform runbook (it is an HMAC key — `openssl rand
-      -hex 32` is fine).
-- [ ] Add a test asserting the missing-key path returns 503, not 500.
-
-### Done when
-
-A request with a valid bearer token returns real data through the gateway on a fresh environment,
-and unsetting the key gives a clean 503.
+Mobile is 25 tasks on top of 12. If you want it evened, hand off **S7, S9, S11, S12** — all
+self-contained, none dependent on your auth work. See the README.
 
 ---
 
-## S2 — Write RBAC grants so real users can do anything (P0, blocks everyone)
+# PART 1 — AUTH & IDENTITY
 
-**Repo:** `mytheus-backend`
+## S1 — Gateway signing key (P0)
 
-### The defect
+`services/api_gateway/edge.py:58-66` — `_signing_key()` raises `ProblemDetail(503)` when
+`GATEWAY_SIGNING_KEY` is unset. That is correct; keep it. Two things are wrong around it:
 
-This is the single highest-leverage fix in the audit.
+1. The variable is set **nowhere** outside `tests/test_gateway_edge.py:78,236` — no `.env.example`,
+   no compose file, no runbook.
+2. The raise escapes as a **500**, not the intended 503: in `edge_auth`, the
+   `try / except ProblemDetail` ends after `resolve_org_id`, and `_attach_internal_headers(...)` —
+   which reaches `sign_context` → `_signing_key` — sits one line **below** it. The function's own
+   docstring explains exactly this: middleware sits outside the app's exception handlers.
+
+Nobody noticed because `/healthz` is on the public path list, so it never enters `edge_auth`.
+Container healthcheck passes, both CI post-deploy curls return 200, deploy reports green.
+
+- [ ] Move `_attach_internal_headers(...)` inside the `try/except`
+- [ ] Add `GATEWAY_SIGNING_KEY` to the backend `.env.example`, `mytheus-platform/env/`, and the
+      `api-gateway` service in `compose.prod.yml`
+- [ ] Document generation and rotation (`openssl rand -hex 32`)
+- [ ] Test asserting the missing-key path returns 503, not 500
+- [ ] **Check the live VPS** — prod may be 503ing (or 500ing) every authenticated request right now
+
+**Done when:** a valid bearer token returns real data on a fresh environment, and unsetting the key
+gives a clean 503.
+
+---
+
+## S2 — RBAC grant writer (P0)
+
+The highest-leverage fix in the audit.
 
 - `libs/shared/authz.py:45` — `TIER_RANK = {"member": 1, "admin": 2, "owner": 3}`
-- `libs/shared/authz.py:63` — `satisfies()` is `TIER_RANK.get(self.rbac_tier, 0) >= TIER_RANK[minimum]`
-- The `RequestContext` field comment says it plainly: `rbac_tier: str  # "" when the user holds no
-  grant, which satisfies no tier`
-- The **only** `INSERT INTO rbac_grants` in the entire backend is
-  `services/identity_tenant_service/seed/seed.py:196`
-- The Clerk `user.created` webhook at `services/identity_tenant_service/routes/auth.py:168-190`
-  inserts a `users` row and nothing else
+- `:63` — `satisfies()` is `TIER_RANK.get(self.rbac_tier, 0) >= TIER_RANK[minimum]`
+- The field comment says it: `rbac_tier: str  # "" when the user holds no grant, which satisfies no tier`
+- The **only** `INSERT INTO rbac_grants` in the backend is `seed/seed.py:196`
+- The Clerk `user.created` handler (`routes/auth.py:168-190`) writes a `users` row and nothing else
 
-So: a real person signs up → webhook mirrors them into `users` → they hold no grant → `rbac_tier`
-is `""` → `0 >= 1` is false → **every `require_tier` route 403s**. The system works only for users
-created by the seed script.
+Real signup → `users` row → no grant → `0 >= 1` false → **403 on every route**. The system works
+only for seeded users.
 
-Everything else in this codebase that was built correctly sits behind a door that cannot be opened
-for a real signup.
+- [ ] Grant `owner` to the first user on org provisioning (`provisioning.py`)
+- [ ] Grant `member` on Clerk `user.created`, **in the same transaction** as the `users` upsert,
+      with `ON CONFLICT ON CONSTRAINT uq_rbac_grants_org_id_user_id DO NOTHING` (mirror `seed.py:196`)
+- [ ] Decide and document the default tier for a user joining an existing org (overlaps S3)
+- [ ] Integration test against real Postgres as the `mytheus_app` role — create a user via the
+      webhook path, assert a `require_tier("member")` route returns 200. Follow `tests/conftest.py`.
 
-### Do
-
-- [ ] On org provisioning (`services/identity_tenant_service/provisioning.py`), grant the first
-      user `owner`.
-- [ ] On Clerk `user.created`, insert a `member` grant **in the same transaction** as the `users`
-      upsert. Match the existing idempotency discipline — `ON CONFLICT ON CONSTRAINT
-      uq_rbac_grants_org_id_user_id DO NOTHING`, as `seed.py:196` already does.
-- [ ] Decide and document the default tier for a user who joins an existing org via Clerk
-      organization membership (this overlaps S3 — do them together if easier).
-- [ ] Write an integration test against real Postgres as the `mytheus_app` role: create a user via
-      the webhook path, then assert a `require_tier("member")` route returns 200. The existing
-      `tests/conftest.py` already runs as the unprivileged role — follow that pattern.
-
-### Done when
-
-A brand-new Clerk signup can load `/dashboard` and get real data. Right now they cannot.
+**Done when:** a brand-new Clerk signup can load `/dashboard` and get real data.
 
 ---
 
-## S3 — Missing Clerk organization webhook handlers
+## S3 — Clerk organization webhook handlers
 
-**Repo:** `mytheus-backend`
+`routes/auth.py` handles `user.created/updated/deleted` only. The six `organization.*` and
+`organizationMembership.*` events are unhandled, so orgs and memberships only exist if something
+else creates them.
 
-`routes/auth.py` handles `user.created`, `user.updated`, `user.deleted`. It does not handle
-`organization.created`, `organization.updated`, `organization.deleted`,
-`organizationMembership.created`, `organizationMembership.updated`, or
-`organizationMembership.deleted`.
-
-Consequence: orgs and memberships only exist if something else creates them. Combined with S2,
-this is the whole tenant-lifecycle surface.
-
-### Do
-
-- [ ] Add handlers for the six `organization.*` / `organizationMembership.*` events.
-- [ ] Membership creation should write the matching `rbac_grants` row (ties into S2).
-- [ ] Membership deletion should revoke it.
-- [ ] Reuse the existing Svix verification, Redis dedupe and durable-inbox path — it is already
-      correct, do not rebuild it.
+- [ ] Handlers for all six events
+- [ ] Membership create → write the `rbac_grants` row (ties to S2); membership delete → revoke
+- [ ] Reuse the existing Svix verification, Redis dedupe and durable-inbox path — it is correct
 
 ---
 
 ## S4 — `user.deleted` is silently dead
 
-**Repo:** `mytheus-backend`
+`_clerk_org_of` (`routes/auth.py:68-78`) resolves the org **only** from `organization_memberships`
+in the payload. Clerk's `user.deleted` payload has none, so the handler returns `"ignored"` at
+`:106-109`. The covering test (`tests/test_clerk_webhook.py:222`) **fabricates memberships**, so it
+passes while proving nothing.
 
-`_clerk_org_of` at `routes/auth.py:68-78` resolves the org **only** from
-`organization_memberships` in the webhook payload. Clerk's `user.deleted` payload does not carry
-memberships, so the function returns nothing and the handler returns `"ignored"` at `:106-109`.
-
-The test that covers this (`tests/test_clerk_webhook.py:222`) **fabricates a payload with
-memberships**, so it passes while proving nothing. A real deletion from Clerk is dropped on the
-floor.
-
-### Do
-
-- [ ] Fix org resolution for the delete path — look the user up by `clerk_user_id` when the
-      payload has no memberships.
-- [ ] Fix the test to use a realistic `user.deleted` payload shape (no memberships).
-- [ ] Check whether any other handler depends on `_clerk_org_of` and has the same blind spot.
+- [ ] Resolve the org by `clerk_user_id` when the payload carries no memberships
+- [ ] Fix the test to use a realistic `user.deleted` shape
+- [ ] Check whether any other handler shares the blind spot
 
 ---
 
 ## S5 — `POST /orgs` and `/rbac` do not exist
 
-**Repo:** `mytheus-backend`
+The gateway routes both to identity-tenant-service, which implements neither. Without `/rbac` there
+is no way for a tenant admin to grant or revoke a tier through the product — S2 fixes bootstrap,
+this fixes ongoing administration.
 
-`services/api_gateway/edge.py` routes both prefixes to `identity-tenant-service`, which implements
-neither. Both 404 today. Without `/rbac`, there is no way for a tenant admin to grant or revoke a
-tier through the product at all — S2 fixes the bootstrap, this fixes ongoing administration.
-
-### Do
-
-- [ ] `POST /orgs` — org creation surface.
-- [ ] `/rbac` — grant, revoke and list tiers for a tenant. Enforce `require_tier("admin")` on
-      mutations.
-- [ ] Audit-log every grant change (coordinate with Shaun's H3, which builds the audit writer — if
-      H3 is not merged yet, leave a clearly-marked TODO rather than a second implementation).
-- [ ] Regenerate the OpenAPI spec (`scripts/emit_openapi.py`) so Shaun's H8 picks up the new types.
+- [ ] `POST /orgs`
+- [ ] `/rbac` — grant / revoke / list, `require_tier("admin")` on mutations
+- [ ] Audit every grant change via `libs/shared/audit.py` (it has 8 live call sites already —
+      follow the existing pattern)
+- [ ] Regenerate the OpenAPI spec so the generated clients pick up the new types
 
 ---
 
-## S6 — Admin console has no role check
+## S6 — `GET /users/me` does not exist
 
-**Repo:** `mytheus-ui` ⚠️ *sensitive repo — `git fetch` first, and check the active rebuild branch*
+**Cross-cutting; both clients need it.** No endpoint anywhere returns the caller's own internal
+`user_id`. The mobile client cannot learn its own identity, which blocks self-profile and any
+"assigned to me" view. The web UI has the same gap — `org-context.ts:46` hardcodes `role: "member"`
+because there is nothing to ask.
 
-`src/app/(admin)/layout.tsx:15-18` carries a `TODO(auth)` and a `mockOrgContext`. The stale comment
-claims "anyone can reach /admin" — that part is no longer true, `src/middleware.ts` does require a
-session. But there is still **no tier check**, so any signed-in member of any tenant reaches the
-admin console.
-
-### Do
-
-- [ ] Gate the `(admin)` layout on `rbac_tier >= admin`. This depends on S2 existing, which is why
-      it is yours.
-- [ ] Remove `mockOrgContext` and the stale TODO comment.
-- [ ] Same gate on `(admin)/ops` — note `ops/page.tsx` has `const OPS_CONSOLE_ENABLED = true`
-      hardcoded; decide whether that stays and make it deliberate either way.
+- [ ] `GET /users/me` returning internal `user_id`, email, role, and `rbac_tier`
+- [ ] Unblocks your own S10, and mobile C-tasks
 
 ---
 
 ## S7 — gRPC identity server is unauthenticated and plaintext
 
-**Repo:** `mytheus-backend`
+`grpc_server.py:152` listens on `:50051` with no credentials; `org-id` arrives in **unsigned
+metadata** (`:55-64`) and is fed straight to `set_rls`, reading any tenant's users and
+`rbac_grants`. The REST edge HMAC-signs the equivalent. Latent today — not in prod compose.
 
-`services/identity_tenant_service/grpc_server.py:152` — the server listens on `:50051` with no
-credentials. `org-id` arrives in **unsigned metadata** (`:55-64`). Any process that can reach the
-port can read any tenant's user context.
-
-The REST edge HMAC-signs the equivalent header. gRPC has no counterpart. Today the exposure is
-limited to the docker network, but it is the weakest link in an otherwise strong auth story.
-
-### Do
-
-- [ ] Add authentication — verify the caller's JWT in the interceptor, matching what
-      `libs/shared/auth.py` already does for REST, rather than trusting metadata.
-- [ ] TLS or, at minimum, document explicitly why plaintext-on-docker-network is accepted and bind
-      to the internal interface only.
-- [ ] Confirm the port is not published to the host in `compose.prod.yml`.
+- [ ] Verify the caller's JWT in an interceptor, as `libs/shared/auth.py` does for REST
+- [ ] TLS, or document why plaintext-on-docker-network is accepted and bind internal-only
+- [ ] Confirm the port is not published to the host
 
 ---
 
-## S8 — The service-to-service signature is never verified
+## S8 — The internal signature is never verified
 
-**Repo:** `mytheus-backend` + `mytheus-docs`
+The gateway HMAC-signs `x-mytheus-org` / `x-mytheus-user` together (correctly — the mix-and-match
+reasoning is sound). But `verify_context` (`edge.py:79`) is called **only from tests**.
 
-The gateway HMAC-signs `x-mytheus-org` / `x-mytheus-user` together (correctly — the comment about
-mix-and-match attacks is right). But `verify_context` at `edge.py:79` is called **only from
-`tests/test_gateway_edge.py`**. Nothing in production verifies the signature.
+Not an active vulnerability: every REST service independently re-verifies the caller's JWT
+(`libs/shared/authz.py:94-122`), which is a good design. But `mytheus-docs/threat-model/stride.md:25`
+claims the receiving service verifies the signature, and that is false.
 
-Tenancy currently survives this because every REST service independently re-verifies the caller's
-JWT (`libs/shared/authz.py:94-122`) rather than trusting the gateway — which is a genuinely good
-design. So this is not an active vulnerability.
-
-It is, however, a **false claim in the threat model**: `mytheus-docs/threat-model/stride.md:25`
-states "The receiving service verifies the signature before trusting it." That is not true.
-
-### Do — pick one and be decisive
-
-- **Option A:** enforce it. Add signature verification to the shared service dependency, so the
-  defence-in-depth layer actually exists.
-- **Option B:** remove it. Delete `sign_context`/`verify_context` and the header attachment,
-  document that JWT re-verification is the sole mechanism.
-
-Either way:
-
-- [ ] Correct `stride.md:25` to describe what the code actually does.
-- [ ] Note that Option B also removes the S1 failure mode entirely — worth weighing.
+- [ ] **Decide:** enforce it (real defence in depth) or remove it (also removes S1's failure mode)
+- [ ] Either way, correct `stride.md:25` to describe the code
 
 ---
 
-## S9 — `PUBLIC_CONTAINS` uses substring matching, weakening the CI authz gate
+## S9 — `PUBLIC_CONTAINS` uses substring matching
 
-**Repo:** `mytheus-backend`
+`libs/shared/public_routes.py:31,37` — `any(c in path for c in PUBLIC_CONTAINS)`. Any path merely
+*containing* `/oauth` or `/callback` counts as public.
 
-`libs/shared/public_routes.py:31,37`:
+**Scope it correctly:** this is **not** a runtime bypass. The module feeds only `check_authz.py`
+and the OpenAPI emitter; the runtime gateway uses its own stricter exact+prefix list
+(`edge.py:40-54,85`). The risk is a **false negative in the CI gate** that exists to catch missing
+auth — which matters more given Samar's P12 found `make test` runs that gate with `|| true`.
 
-```python
-PUBLIC_CONTAINS = ("/webhook", "/oauth", "/clerk/", "/stripe/", "/livekit/", "/callback")
-return prefixed or any(c in path for c in PUBLIC_CONTAINS)
-```
-
-That is a **substring** test, not a prefix test. Any route whose path merely *contains* `/oauth`
-or `/callback` anywhere — `/api/v1/meetings/{id}/oauth-notes`, say — is treated as public.
-
-### Scope it correctly before fixing
-
-This is **not** a runtime auth bypass. This module is consumed by only two things:
-
-- `scripts/check_authz.py`, the CI gate that fails any route declaring no auth dependency
-- `libs/shared/openapi.py`, which marks operations as requiring the bearer scheme
-
-The runtime gateway uses its own stricter list (`edge.py:40-54,85` — exact match plus
-`startswith`), so a mis-matched route is still protected in production.
-
-The real risk is a **false negative in the safety net**: a future route with an unlucky path
-silently passes the gate that exists to catch missing auth, and is advertised as public in the
-emitted OpenAPI spec. Given this gate is the main systemic defence in the authz-review process,
-that is worth closing.
-
-### Do
-
-- [ ] Anchor the match — prefix or path-segment matching rather than `in`.
-- [ ] Add a test with a deliberately adversarial path (`/api/v1/x/oauth-notes`) asserting it is
-      **not** public.
-- [ ] Confirm no existing route was silently exempted: run `check_authz.py` before and after and
-      diff the route set it considers public.
+- [ ] Anchor the match (prefix or path-segment, not `in`)
+- [ ] Adversarial test: `/api/v1/x/oauth-notes` must not be public
+- [ ] Diff `check_authz.py`'s public route set before and after
 
 ---
 
-## Do NOT build these (deliberately deferred)
+## S10 — Admin console has no gate
 
-Per the roadmap phase boundary at W36. Their absence is the plan being followed:
+`(admin)/layout.tsx:12-18` has **no session check and no role check** — only middleware protects
+it. Worse, `org-context.ts:46` hardcodes `role: "member"`, so a role gate is **unwritable today**
+without a backend source of truth.
 
-- **SSO / SAML / SCIM** — deferred at the tenant-claim decision, even though ADR-0010 and
-  `19-api-architecture.md` §5.1 still specify the surface.
-- **The 428 consent check in meeting-service** — ADR-0018 puts the migration and application code
-  explicitly out of scope; the flag defaults to `false`.
-- **Agent-to-agent authorization (ADR-0013)** beyond what S8 decides.
-- **`pii_tokens` migration** — ADR-0020 is accepted for the data model but *blocked for
-  implementation* on key custody.
+**Depends on S6.** ⚠️ *`mytheus-ui` is sensitive and its scope is unsettled — see the README. This
+task is safe under either outcome because it is a security gate, not feature wiring.*
+
+- [ ] Land S6 first, then read the real tier from it
+- [ ] Gate `(admin)` and `(admin)/ops` on `rbac_tier >= admin`
+- [ ] Remove `mockOrgContext` and the stale TODO
+- [ ] `ops/page.tsx` hardcodes `OPS_CONSOLE_ENABLED = true` — make it deliberate either way
+
+---
+
+## S11 — `consent_required` is a trap with no key
+
+ADR-0018's consent gate is **enforced** (`meeting_service/routes.py:186`) but has **no write path
+anywhere**. `meeting_participants.consented_at` is written only by a test
+(`tests/test_meeting_token_route.py:355`). If any tenant sets `tenant_settings.consent_required =
+true`, **every meeting in that tenant becomes permanently unjoinable** — 428 forever, no API to
+clear it. Inert only because the flag defaults false.
+
+Note ADR-0018 puts the *migration and application code* out of scope. The gate shipping without a
+write path is the part that is not deliberate.
+
+- [ ] Either add a consent-write endpoint, or make `consent_required` unsettable until one exists
+- [ ] Whichever you choose, record it — a flag that bricks a tenant needs the decision written down
+
+---
+
+## S12 — `tenant_settings` is barely written
+
+- Provisioning creates **no** `tenant_settings` row at all (self-documented at
+  `routes/tenant_settings.py:29-33`)
+- Of 8 columns, only `pii_redaction_enabled` is ever written. `sso_config`,
+  `retention_days_transcripts`, `retention_days_worklogs`, `default_locale` and
+  `agent_confidence_overrides` have no writer
+- `GET /tenant-settings` returns only `pii_redaction_enabled` (`:72`)
+
+- [ ] Create the row on provisioning
+- [ ] Expose and write the columns that have a consumer; drop or document the ones that do not
+      (`sso_config` is deferred with SSO — leave it, note why)
+
+---
+
+# PART 2 — MYTHEUS-MOBILE (all 25 tasks)
+
+Baseline is green today: `tsc` exit 0, jest 14/14. **Contract drift with the backend is zero** —
+all four called endpoints verified field-by-field, including query params, limits and role tiers.
+
+## ⚠️ Corrections to what the first audit reported
+
+- The 84 MB APK is **untracked** (`?? mytheus-0.1.0.apk`), not committed
+- `debug.keystore` is **untracked** too — `.gitignore:20` ignores `/android` wholesale, which kills
+  the `!debug.keystore` negation
+- **The real defect is worse:** `android/app/build.gradle:112-115` — the **release** build signs
+  with `signingConfigs.debug` (`storePassword 'android'`). The shipped APK is debug-signed.
+
+## C — Safe now (13)
+
+- [ ] **C1** Remove `RECORD_AUDIO` + `NSMicrophoneUsageDescription`. No audio dependency exists;
+      `app.json:15` and `start-session.tsx:104` both state a privacy claim no code produces.
+      Implementing capture is blocked anyway — `transcription-service`'s `/internal/audio`
+      accepts then immediately closes (`main.py:119-124`). Factual risk: policy exposure under
+      Apple 5.1.1 and Play permissions policy. No iOS build has ever existed. **Zero functional loss.**
+- [ ] **C2** `eas.json` + EAS credentials so the release build stops signing with the debug key
+- [ ] **C3** Fix cold-start auth flash — `(tabs)/_layout.tsx:8-9` bounces signed-in users to
+      sign-in; `useSessionLoaded` exists at `session.ts:34` and is imported by nothing
+- [ ] **C4** `profile.tsx:74-88` shows a **fabricated name and email** to a genuinely signed-in
+      user while Clerk's `useUser()` is already in the app. Use the real identity.
+- [ ] **C5** Wire the People screen to `GET /bff/org/chart` (`bff/org_chart.py:169`) — it returns a
+      real member roster (`user_id`, `email`, `role`, `role_in_team`) under member tier.
+      **Note:** `useTeams()`/`useDepartments()` are the *wrong* hooks for this; the comment at
+      `hooks/index.ts:36-39` saying no roster exists is stale. Teams/departments are the grouping
+      affordance only.
+- [ ] **C6** Wire the library/meetings screen to `GET /api/v1/meetings`
+- [ ] **C7** Fix `recap.tsx` — it takes no meeting id and both callers drop it. Must land before
+      recap can be wired to anything.
+- [ ] **C8** Remove the untracked APK from the working tree; add it to `.gitignore` properly
+- [ ] **C9** Fix `.gitignore:20` so the `/android` wholesale ignore stops masking real files
+- [ ] **C10** Mobile CI — there is none. Add `tsc` + jest on PR.
+- [ ] **C11** Screen and hook tests — `__tests__/api-client.test.ts` is genuinely good (14 real
+      behavioural tests) but covers only `src/api/client.ts`
+- [ ] **C12** Fix mobile `CLAUDE.md` — names 5 surfaces that do not exist and the wrong token-mint
+      path (shipped is `/api/meetings/:id/token`)
+- [ ] **C13** Delete or wire the dead `useTeams`/`useDepartments` hooks once C5 settles their role
+
+## B — Blocked on the gap-21 scoping decision (8)
+
+`mytheus-mobile` realign is deferred in Plans 0 and 1-2, and **Plan 5-6 §7 was never assigned a
+task** — status gap 21 calls for an explicit scoping decision before anyone picks this up.
+
+**Get that decision before starting B1–B8.** They are the screen-by-screen mock removal: actions,
+ask, insights, live-session, start-session, person detail, home's mock `weeklyStats` banner, and
+the full mock module retirement.
+
+## X — Blocked on absent backend (4)
+
+Nothing to wire these to. Do not start.
+
+- Ask / agent surface — no `rag-service`
+- Actions / tasks — no `action_items` table anywhere
+- Insights — no backend
+- Push notifications — `notification-service` has zero routes, and the Expo token contract is net-new
 
 ---
 
 ## Your checklist
 
-- [ ] **S1** — Gateway signing key ⚠️ *blocks everyone*
-- [ ] **S2** — RBAC grant writer ⚠️ *blocks everyone*
-- [ ] 📣 **Tell the team S1 + S2 are deployed**
-- [ ] **S3** — Clerk organization webhook handlers
-- [ ] **S4** — `user.deleted` org resolution
-- [ ] **S5** — `POST /orgs` and `/rbac`
-- [ ] **S6** — Admin console role check
-- [ ] **S7** — gRPC authentication
-- [ ] **S8** — Decide and settle the internal signature
-- [ ] **S9** — Anchor `PUBLIC_CONTAINS` matching
+**P0 — blocks everyone**
+- [ ] **S1** Gateway signing key
+- [ ] **S2** RBAC grant writer
+- [ ] 📣 Announce S1 + S2 deployed
+
+**Auth & identity**
+- [ ] **S3** Clerk org webhook handlers
+- [ ] **S4** `user.deleted` org resolution
+- [ ] **S5** `POST /orgs` + `/rbac`
+- [ ] **S6** `GET /users/me` *(unblocks S10 and mobile)*
+- [ ] **S7** gRPC authentication *(hand-off candidate)*
+- [ ] **S8** Settle the internal signature + fix `stride.md:25`
+- [ ] **S9** Anchor `PUBLIC_CONTAINS` *(hand-off candidate)*
+- [ ] **S10** Admin gate *(needs S6)*
+- [ ] **S11** Consent write path *(hand-off candidate)*
+- [ ] **S12** `tenant_settings` provisioning + columns *(hand-off candidate)*
+
+**Mobile**
+- [ ] **C1–C13** safe now — start with C1, C2, C4
+- [ ] **B1–B8** hold for the gap-21 scoping decision
+- [ ] **X** four items blocked on backend — do not start

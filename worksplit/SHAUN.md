@@ -1,331 +1,339 @@
-# Shaun — API Correctness, Audit Trail, UI Wiring
+# Shaun — API Surface, Event Backbone, Safe UI Fixes
 
-**10 tasks.** You can write all of them immediately. You cannot verify any of them until Sushan
-lands S1 + S2 — every request will 403 until then.
+**18 tasks.** Start with D1 — it is a live cross-tenant hole and it is small.
 
-Audit report: https://claude.ai/code/artifact/da281c5f-d990-40b4-9487-d9f857833b08
+Audit: https://claude.ai/code/artifact/da281c5f-d990-40b4-9487-d9f857833b08
+Evidence: [`audit/`](audit/) · [`verify/verify-backend.md`](verify/verify-backend.md) · [`verify/verify-ui.md`](verify/verify-ui.md)
 
 ---
 
 ## ⏱️ Ordering
 
-**Write now, verify later.** Nothing on your list is blocked from being *written*. But every one of
-your tasks involves making an authenticated request, and today those return 500 (Sushan's S1) and
-then 403 (Sushan's S2). Write test-first, verify the moment he announces.
+**Write now, verify after Sushan's S1 + S2.** Every request 500s then 403s until those land. D1 and
+D2 are pure backend with tests — start there.
 
-**Soft dependency on Samar's M4/M5** for H10 — the Avro clients matter most once the intelligence
-consumers actually run somewhere.
-
-**Start with H1.** It is a live cross-tenant hole and it is small.
+**Most UI work is frozen.** The scope of `mytheus-ui` is unresolved (see README). Only D16 and D17
+are assigned, because they are correct under either outcome. Do not wire `/meetings`, `/org`, the
+dashboard arms or the generated types until Sushan decides.
 
 ---
 
-## H1 — Cross-tenant speaker assignment (HIGH severity, start here)
+## D1 — Cross-tenant speaker assignment (HIGH, start here)
 
-**Repo:** `mytheus-backend`
+`core_api/routes/speakers.py:97-133` accepts a caller-supplied `user_id` and relies solely on a
+foreign key for tenancy. Its comment claims the FK blocks another tenant's `user_id`.
 
-`services/core_api/routes/speakers.py:97-133` accepts a caller-supplied `user_id` and relies solely
-on a foreign key to enforce tenancy. Its comment claims the FK blocks another tenant's `user_id`.
+**Two sibling routes document that as false and each run an explicit probe:**
+`routes/meetings.py:186-192` and `routes/org_hierarchy.py:172` both run
+`SELECT 1 FROM users` precisely because the FK does not enforce tenancy.
 
-**That claim is false, and two sibling routes already document it as false:**
+`create_meeting` got the fix. `assign_speaker` never did. No test covers it. Flagged independently
+by two auditors.
 
-- `routes/meetings.py:186-192` — runs an explicit `SELECT 1 FROM users` RLS visibility probe
-  *precisely because* the FK does not enforce tenancy
-- `routes/org_hierarchy.py:172` — same probe, same documented reasoning
-
-`create_meeting` got the fix. `assign_speaker` never did. No test covers it.
-
-Two independent auditors flagged this — it is the most credible security finding in the audit.
-
-### Do
-
-- [ ] Add the same `SELECT 1 FROM users` RLS-scoped probe before the assignment write.
-- [ ] Correct the misleading comment so it does not re-mislead the next reader.
-- [ ] Add a test: tenant A attempts to assign a speaker to a tenant B `user_id`, expect a clean
-      404 (match the 404-before-403 ordering the rest of the codebase uses — see
-      `routes/users.py:80-91`).
-- [ ] Grep for any other route trusting an FK for tenancy. There may be a fourth.
+- [ ] Add the RLS-scoped `SELECT 1 FROM users` probe before the write
+- [ ] Correct the misleading comment
+- [ ] Test: tenant A assigning a tenant B `user_id` returns a clean 404 — match the 404-before-403
+      ordering used at `routes/users.py:80-91`
+- [ ] Grep for a fourth route trusting an FK for tenancy
 
 ---
 
-## H2 — Soft-deleted transcript chunks are served
+## D2 — Transcript read path
 
-**Repo:** `mytheus-backend`
+`core_api/routes/transcript.py`:
 
-`services/core_api/routes/transcript.py:123` is missing a `deleted_at IS NULL` filter, so
-soft-deleted chunks are returned to clients.
+- `:123` missing `deleted_at IS NULL` — serves soft-deleted chunks
+- `:134` no `created_at` bound, so monthly partition pruning is forfeited and every query scans all
+  partitions
+- **Zero tests**, despite being the one endpoint the live UI depends on
 
-While you are in this file, two more things the audit found:
-
-- `transcript.py:134` has no `created_at` bound, so the monthly range partitioning on
-  `transcript_chunks` is forfeited entirely — every query scans all partitions.
-- `routes/transcript.py` has **zero tests**, despite being the one endpoint the live UI actually
-  depends on.
-
-### Do
-
-- [ ] Add the `deleted_at IS NULL` filter.
-- [ ] Add a `created_at` bound so partition pruning works.
-- [ ] Write tests for the transcript endpoint — pagination, the `from_ms` seek, tenant scoping,
-      soft-delete exclusion.
+- [ ] Add the filter and the bound
+- [ ] Tests: pagination, `from_ms` seek, tenant scoping, soft-delete exclusion
 
 ---
 
-## H3 — Nothing writes the audit log
+## D3 — Eleven gateway prefixes route to nothing
 
-**Repo:** `mytheus-backend`
+Bigger than first reported. `edge.py:146-180` routes all of these to services that 404:
+`/decisions`, `/actions`, `/worklogs`, `/suggestions`, `/billing`, `/usage`, `/plans`,
+`/notifications`, `/admin/tenant`, `/admin/ops`, `/oauth`, `/webhooks`, plus `/orgs` and `/rbac`.
 
-`audit_logs` is genuinely well built: partitioned monthly through 2027-06 plus a DEFAULT,
-`FORCE ROW LEVEL SECURITY`, `UPDATE`/`DELETE` revoked per partition, an `AuditLog` model at
-`services/admin_ops_service/models.py:25-57`. The append-only guarantee the security architecture
-depends on is real at the database level.
+Worse: **the tests assert this routing as correct** (`test_gateway_edge.py:270`,
+`test_gateway_proxy.py:175-176`), so the suite is green on a route map to nowhere. And nothing
+checks that a ROUTE_MAP prefix has a route behind it.
 
-`libs/shared/audit.py` exists as the writer helper. But the table has **no reader and no export
-route**, and `admin_ops_service` has **zero routes** — so the audit trail is write-only, and much
-of what should be audited never calls the helper.
-
-Per the roadmap this is in MVP scope from P2, not P13.
-
-### Do
-
-- [ ] Audit the audit: grep which mutating operations call `libs/shared/audit.py` and which do not.
-      Several routes already do it correctly (`routes/users.py:109`, tenant-settings, meeting
-      create) — find the gaps.
-- [ ] Add audit writes to the mutations that lack them.
-- [ ] Add a read/export route so the trail is usable. Gate it on `require_tier("admin")`.
-- [ ] Coordinate with Sushan — his S5 (`/rbac`) needs to audit grant changes and will call your
-      helper.
+- [ ] Decide per prefix: remove until real, or implement. Removal is the honest default.
+- [ ] **CI check that every ROUTE_MAP prefix resolves to a mounted route.** This is the durable fix.
+- [ ] Update the tests so they stop asserting dead routing
+- [ ] Coordinate with Samar's P17 (`/stripe/webhook`) and Sushan's S5 (`/orgs`, `/rbac` become real)
 
 ---
 
-## H4 — The one working page 404s on real data
+## D4 — `integration-service`: unblock a finished consumer
 
-**Repo:** `mytheus-ui` ⚠️ *sensitive repo — `git fetch` first, check the active rebuild branch*
+The most valuable of the five scaffolds. `mytheus-intelligence/services/ingestion_service/consumer.py:75`
+is a **complete, tested** consumer of `integration-events` — S3 fetch, RLS-scoped pipeline, inbox
+dedupe, DLQ, a 260-line test suite — and `integration-service` is its **sole designated producer**
+with zero producer code. Calendar-attachment ingestion is dead in production and CI cannot see it,
+because the tests inject synthetic messages.
 
-`src/app/(app)/meetings/[meetingId]/transcript/page.tsx:56` does:
+Scope this as **minimum viable**: enough to make the built consumer fire. Not the full OAuth
+connector band.
 
-```ts
-const meeting = mockMeetings.find(...)   // :56
-if (!meeting) notFound()
-// ...
-const data = await getTranscript(...)     // :59  ← the real fetch, never reached
-```
-
-This is the **only** app page with a genuine backend read, and it gates its own existence on a mock
-array. A real backend meeting ID 404s before the live fetch at `:59` ever runs. The real path is
-unreachable for real data.
-
-### Do
-
-- [ ] Remove the mock existence gate; let the real fetch determine 404 (`lib/api/transcript.ts`
-      already throws `ApiError` and the page already maps 404 → `notFound()`).
-- [ ] Add a loading state — the page currently has none.
-- [ ] Verify against a real meeting ID once Sushan unblocks and Samar's transcription service runs.
+- [ ] Minimum producer emitting `integration-events` with `(google_calendar, attachment_to_ingest)`
+- [ ] Match the Avro contract exactly — `{provider, event_type, external_id, payload_json}`
+- [ ] Decide with Sushan whether the OAuth half is in scope now or stays a scope conversation
 
 ---
 
-## H5 — `/meetings` renders a mock array over a working endpoint
+## D5 — Audit log has no read side
 
-**Repo:** `mytheus-ui` ⚠️ *sensitive*
+⚠️ **Correction to the first-pass claim.** `libs/shared/audit.py` **does** have 8 live writers —
+`authz.py:176`, core_api meetings and org_hierarchy, and four in identity. The trail is being
+written.
 
-`src/app/(app)/meetings/page.tsx:6,69-75` renders `mockMeetings`, while `GET /api/v1/meetings`
-exists, is deployed, is keyset-paginated, and is already called successfully by the mobile app.
+What is missing is the **read/export side**: `admin_ops_service` has zero routes, so nothing can
+retrieve audit rows. The table itself is well built — partitioned through 2027-06 plus a DEFAULT,
+FORCE RLS, UPDATE/DELETE revoked per partition.
 
-This is the cheapest visible progress available in the whole plan.
-
-### Do
-
-- [ ] Wire the page to `GET /api/v1/meetings` through the existing `src/lib/api/client.ts`.
-- [ ] Use the generated `CoreApi` types — do not hand-write the response shape.
-- [ ] Add loading, error and empty states (the page has none of the three).
-- [ ] Keep the mock import removal clean; `src/lib/mock/data.ts` is imported by 14 files, so do not
-      delete the module yet.
+- [ ] Read/export route, `require_tier("admin")`
+- [ ] Audit which mutations still lack a write call and add them
+- [ ] Sushan's S5 will call your helper for grant changes — coordinate
 
 ---
 
-## H6 — `/org` renders a mock array over a working endpoint
+## D6 — Nothing writes `assignment='suggested'`
 
-**Repo:** `mytheus-ui` ⚠️ *sensitive*
+⚠️ **Correction:** the speakers list is **not** always empty — a manual PATCH upserts rows
+(`speakers.py:102`). The missing half is specifically **`suggested` + `confidence`**.
 
-`src/app/(app)/org/page.tsx:5,13,30` renders `mockDepartments`. `GET /bff/org/chart` exists and is
-deployed — and has **zero callers anywhere**, in either client.
+`speakers.py` is the only writer of `meeting_speakers` and always writes `'manual'`.
+`transcription-service` explicitly never writes it (`speakers.py:5-6`). So the diarized advisory
+list that `SpeakerMapping.tsx` is built to render — greyed, with confidence, manual wins — never
+appears.
 
-`GET /bff/people/{user_id}` is in the same position. Teams and departments CRUD exist in
-`core_api/routes/org_hierarchy.py` and are equally unused.
-
-Note for context: mobile has `useTeams()` / `useDepartments()` hooks already wired to these working
-routes, and no screen imports them. The plumbing keeps getting built and not connected.
-
-### Do
-
-- [ ] Wire `/org` to `GET /bff/org/chart`.
-- [ ] Add loading, error and empty states.
-- [ ] Decide whether `/bff/people/{user_id}` gets a caller now or is removed — roughly 55% of the
-      BFF's lines are currently dead surface.
+- [ ] Write `suggested` rows from the diarized labels the transcription path already produces
+- [ ] Preserve the `meeting_speakers_manual_is_authoritative` trigger semantics (`25e7cede5672:56`)
 
 ---
 
-## H7 — Fill the dashboard's three empty arms
+## D7 — `meetings.status` never reconciles with `meeting_rooms.status`
 
-**Repo:** `mytheus-ui` + `mytheus-backend`
+⚠️ **Correction:** `'live'` **can** be set via PATCH (`meetings.py:386`, covered by
+`tests/test_meetings_api.py:374`). What is missing is **automatic** reconciliation.
 
-`/bff/dashboard` is the UI's main live call, but `services/bff/dashboard.py:194-201` returns
-hardcoded `[]` for three of its four arms. Only the meetings arm is real. On the UI side,
-`dashboard/page.tsx:10,51,78,81,92,93` fills the gaps with mock values including a mock
-`openCount`.
+`participant_joined` sets `meeting_rooms.status='active'` (`webhook.py:230-235`) and never touches
+`meetings.status`. So a meeting with people in the room still reads `'scheduled'`.
 
-The `ArmStatus` degradation model is well designed — it distinguishes `empty` from `degraded` — so
-the shape is right, the data is missing.
-
-### Do
-
-- [ ] Implement the three `[]` arms in the BFF against real queries.
-- [ ] Remove the corresponding UI mock fallbacks.
-- [ ] Where an arm has no backing data model at all (actions/decisions — see the note at the
-      bottom), return `empty` honestly rather than inventing a number. A truthful empty state beats
-      a fake count.
+- [ ] Reconcile from the webhook path
+- [ ] Decide which of the two state machines is authoritative and write it down — they are separate
+      by construction (`866f7eedb0e7:65` vs `b7d9f3a55c21:204`)
 
 ---
 
-## H8 — Two generated type modules have zero importers
+## D8 — Chat history is unrecoverable
 
-**Repo:** `mytheus-ui` ⚠️ *sensitive*
+`POST /chat` is the only `chat_messages` route. There is **no `GET /chat`** anywhere — not in
+core_api, not in bff. A client that misses the socket relay cannot recover history, unlike
+transcript, which has a re-hydrate endpoint for exactly this reason (`transcript.py:6-10`).
 
-The recent OpenAPI work generated four client modules. Two are used, two are dead:
+⚠️ Depends on Samar's P2 — chat inserts currently fail outright.
 
-| Module | LOC | Import sites |
-|---|---|---|
-| `generated/core-api.ts` | 1552 | 3 ✅ |
-| `generated/bff.ts` | 527 | 1 ✅ |
-| `generated/identity-tenant-service.ts` | 924 | **0** ❌ |
-| `generated/meeting-service.ts` | — | **0** ❌ |
-
-Worse, `src/app/api/livekit-token/route.ts:31-35` hand-writes a `TokenResponse` that **already
-contradicts** `generated/meeting-service.ts:100-107` on `livekit_url` nullability. The generated
-types exist specifically to prevent that.
-
-### Do
-
-- [ ] Replace the hand-written `TokenResponse` with the generated type and resolve the nullability
-      disagreement.
-- [ ] Type the speakers envelope in `lib/api/transcript.ts` (items are typed, the `{items: …}`
-      wrapper is hand-written).
-- [ ] Type the speaker PATCH in
-      `app/(app)/meetings/[meetingId]/transcript/actions.ts:33-36` — currently untyped with a
-      hand-shaped body.
-- [ ] `identity-tenant-service.ts` will get its first caller from Sushan's S5 — coordinate.
-- [ ] Check `scripts/generate-api-types.mjs`: if it reads specs from a sibling-repo filesystem
-      path, that is a fragile cross-repo coupling worth flagging to Samar for CI.
+- [ ] `GET /chat` with cursor pagination, mirroring the transcript read path
 
 ---
 
-## H9 — Realtime auth breaks on reconnect
+## D9 — Soft delete is unreachable
 
-**Repo:** `mytheus-ui` ⚠️ *sensitive*
+`deleted_at` is read in every existence check (`routes.py:113`, `meetings.py:132`, `speakers.py:39`,
+`transcript.py:87`) and **written nowhere**. There is no `DELETE /meetings/{id}` and no cancel
+route, so a meeting can never be removed through the API.
 
-`src/components/meeting/MeetingRoom.tsx:45-53` fetches the Clerk token **once on mount** and never
-refreshes it. Socket.io and LiveKit both reconnect automatically — and re-handshake with a stale
-JWT, which will fail once the token expires.
-
-Mobile already solved this correctly: `src/api/provider.tsx` pulls a fresh token per request via
-`useAuth().getToken()`. Follow that pattern.
-
-### Do
-
-- [ ] Refresh the token on reconnect rather than caching the mount-time value.
-- [ ] Confirm with Samar that M10 landed — `NEXT_PUBLIC_REALTIME_WS_URL` and
-      `NEXT_PUBLIC_LIVEKIT_URL` are not Docker build args today, so they bake as `undefined` and
-      this cannot be tested in a container until that is fixed.
-- [ ] The client-side realtime contract is fully documented in the audit's UI-integration report if
-      you need the exact message shapes — the good news is the UI and gateway contracts **match
-      field for field**, so no protocol work is needed here.
+- [ ] `DELETE` / cancel route writing `deleted_at`, with the audit write and the outbox event
+- [ ] Confirm no read path forgets the filter (D2 fixes one)
 
 ---
 
-## H10 — Import the generated Avro clients
+## D10 — The attendee list is immutable after creation
 
-**Repos:** `mytheus-events` consumers across `mytheus-backend`, `mytheus-intelligence`,
-`mytheus-realtime`
+No participant add/remove route exists. Participants can only be set at meeting creation.
 
-`mytheus-events` generates Python and TypeScript clients from the 21 Avro schemas. **Shared-schema
-adoption is zero** — the only reference anywhere is a test asserting the package is *absent*.
-
-Producers currently hand-roll dicts. The audit found no payload-level drift today (both Python
-tiers encode through the live Schema Registry, which catches drift at encode time — a genuinely
-good safeguard), but hand-rolled payloads are the standing risk that safeguard is compensating for.
-
-The packaging blocker cited in the code as the reason for non-adoption **was already fixed** in
-`pyproject.toml`. There is no remaining obstacle.
-
-### Do
-
-- [ ] Import the generated Python client in the backend and intelligence producers/consumers.
-- [ ] Import the generated TS client in `realtime-gateway`'s `presenceEventsProducer.ts`.
-- [ ] Delete the stale "package is absent" test.
-- [ ] Two structural drifts worth fixing while you are here: intelligence writes
-      `{topic}.{group}.dlq` but `create_topics.sh` only creates `{topic}.dlq`; and DLQ payloads are
-      JSON while `contracts/DlqEnvelope.avsc` specifies Avro. Coordinate the topic-name half with
-      Samar's M2/M8.
+- [ ] Add / remove participant routes
+- [ ] Reuse the `SELECT 1 FROM users` RLS probe from `meetings.py:193-201` — same tenancy trap as D1
 
 ---
 
-## H11 — LiveKit room names carry no org segment
+## D11 — LiveKit room naming and the fake-sync trap
 
-**Repo:** `mytheus-backend`
+`meeting_service/rooms.py:51-96` names rooms `meeting-{meeting_id}` with no tenant segment.
 
-`services/meeting_service/rooms.py:51-96` names rooms `meeting-{meeting_id}`. There is no tenant
-segment in the name.
+**Low severity by itself** — webhook tenant resolution reads org from room *metadata* and fails
+closed six ways, and meeting IDs are UUIDs. The reason to fix it is that it is the one identifier in
+the meeting path that is not tenant-qualified.
 
-### Severity: low — defence in depth, not an open hole
+**The latent trap matters more:** rooms "synced" via `FakeTransport` are marked
+`livekit_metadata_synced_at` **permanently**, so at real-LiveKit cutover they never re-sync and
+webhook tenant resolution breaks for every pre-existing room.
 
-Tenant resolution for LiveKit webhooks reads the org from **room metadata**, not the room name, and
-that path fails closed six ways (`webhook.py:107-137`). Meeting IDs are UUIDs, so accidental
-collision is not a realistic concern either. The room-name convention is simply carrying less
-information than it could.
-
-The reason to fix it is that it is the one identifier in the meeting path that is not
-tenant-qualified, so any future code that reasonably parses a room name — a debugging tool, a
-dashboard, an egress filename, a third-party integration — inherits an ambiguity it has no way to
-detect.
-
-### Do
-
-- [ ] Add an org segment: `{org_id}-meeting-{meeting_id}` or similar.
-- [ ] Coordinate with the metadata-sync path — the audit flagged that rooms "synced" via
-      `FakeTransport` are marked `livekit_metadata_synced_at` **permanently**, so at real-LiveKit
-      cutover they never re-sync and webhook tenant resolution breaks for every pre-existing room.
-      A room-naming change and that cutover defect want handling together, in one migration of
-      existing rows.
-- [ ] Keep the `ON CONFLICT (org_id, meeting_id)` upsert semantics intact.
+- [ ] Add an org segment to the room name
+- [ ] Fix the fake-sync marking and migrate existing rows — one migration, both changes
+- [ ] Keep `ON CONFLICT (org_id, meeting_id)` semantics
 
 ---
 
-## Do NOT build these (deliberately deferred, or no data model exists)
+## D12 — Nothing reads any DLQ, and the DLQ contract is inconsistent
 
-- **`/decisions`, `/tasks`, `/search`, `/billing`, `/settings/integrations`** — do not wire these.
-  **No backend exists for any of them.** There is no `decisions` or `action_items` table in any
-  migration; `/search` has no BFF or gateway route; billing and integrations are 11-line scaffolds.
-  Wiring a page to nothing is worse than an honest mock. Flag them for the scope conversation
-  instead.
-- **10 of 11 marketing feature pages** promise features with no backend (only transcription has
-  one). That is a product/marketing decision, not a task here.
-- **`/students/verify:48-51`** tells users "we sent a verification link" while making no network
-  call at all. Worth raising — it is a truthfulness issue, not a wiring one.
-- **`pii_tokens` / PII vault work** — ADR-0020 is blocked for implementation on key custody.
-- **Knowledge graph UI** — no AGE, no graph store, no backend of any kind exists.
+- **No DLQ reader exists anywhere.** Failed messages accumulate unseen.
+- `mytheus-intelligence` writes `{topic}.{group}.dlq`; `create_topics.sh` only creates `{topic}.dlq`
+- DLQ payloads are **JSON** while `contracts/DlqEnvelope.avsc` specifies **Avro**
+
+- [ ] Reconcile the topic naming — coordinate with Samar's P3
+- [ ] Reconcile the encoding: either honour the Avro contract or change the contract
+- [ ] A minimal DLQ inspection path, even a script
+
+---
+
+## D13 — Import the generated Avro clients
+
+`mytheus-events` generates Python and TypeScript clients from the 21 schemas. **Adoption is zero** —
+the only reference anywhere is a test asserting the package is *absent*. Producers hand-roll dicts.
+
+No payload drift exists today because both Python tiers encode through the live Schema Registry
+with `auto.register.schemas: false`, which fails at encode time. That safeguard is compensating for
+the hand-rolling.
+
+**The packaging blocker cited in code as the reason was already fixed** in `pyproject.toml`. No
+obstacle remains.
+
+- [ ] Import the Python client in backend and intelligence producers/consumers
+- [ ] Import the TS client in `realtime-gateway/src/presenceEventsProducer.ts`
+- [ ] Delete the stale "package is absent" test
+
+---
+
+## D14 — Delete the `user-sync-events` topic
+
+ADR-0010 D4 decided there is **no per-user propagation topic**, and `routes/auth.py:19-21` says so
+explicitly — the `TOPIC` constant is used only as a Postgres/Redis dedupe namespace. But the topic,
+its subject and its `.dlq` are still created and will always be empty.
+
+- [ ] Remove from `codegen/_schemas.py` `TOPICS`, `subjects/`, and `create_topics.sh`
+- [ ] Rename the constant so it stops reading as a topic name
+- [ ] Update the expected count in `create_topics.sh` and Samar's P3 gate
+
+---
+
+## D15 — BFF imports another service in-process
+
+`bff/people.py:43` imports identity-tenant-service **in-process, across a container boundary**. Its
+justification ("one deployable") has expired — compose runs them separately, so **two processes now
+write the same Redis key**.
+
+- [ ] Replace with a real call through the proper boundary, or move the logic
+- [ ] Check for other in-process cross-service imports
+
+---
+
+## D16 — The mock `notFound()` bug — in three routes, not one ⚠️ *safe under either UI outcome*
+
+`mockMeetings.find(...)` → `notFound()` runs **before** the real fetch in all three:
+`transcript/page.tsx:56`, `room/page.tsx:22`, `[meetingId]/page.tsx:40`.
+
+**Every real backend UUID 404s.** The one page with a genuine backend read gates its own existence
+on a mock array.
+
+Also here — **the dashboard renders two clocks**: `dashboard/page.tsx:47` uses the real date while
+`StatGrid`/`TodaysMeetings` use `MOCK_NOW = 2026-07-01` (`format.ts:9`). Today it reads
+"September 7 · 0 meetings today" above a July stat grid. Visible to anyone who opens the app now.
+
+⚠️ *`mytheus-ui` is sensitive — `git fetch` first, no build, minimal diff.*
+
+- [ ] Remove the mock existence gate in all three routes; let the real fetch determine 404
+- [ ] Fix `MOCK_NOW` so the dashboard shows one consistent date
+- [ ] Add a loading state to the transcript page — it has none
+
+---
+
+## D17 — Realtime auth and connection gates ⚠️ *safe under either UI outcome*
+
+- `MeetingRoom.tsx:45-53` fetches the Clerk token **once on mount** and never refreshes. Socket.io
+  and LiveKit both auto-reconnect and re-handshake with a stale JWT.
+- `useLiveKitRoom.ts` **never re-mints on reconnect** despite its own docstring at `:6-11` promising
+  it.
+- `useLiveKitRoom.ts:85` gates connection on `NEXT_PUBLIC_LIVEKIT_URL` — a value the **server always
+  supplies** in the token response, so the gate blocks on config that is not needed.
+- `useLiveKitRoom.ts:46-50` hand-writes a **second** `TokenResponse` duplicate.
+
+Mobile already solves the token problem correctly — `src/api/provider.tsx` pulls a fresh token per
+request. Follow that pattern.
+
+⚠️ Cannot be verified until Samar's P11 makes the env vars work in a container.
+
+- [ ] Refresh the token on reconnect; re-mint on LiveKit reconnect
+- [ ] Drop the `NEXT_PUBLIC_LIVEKIT_URL` connection gate; prefer the server-supplied value
+- [ ] Collapse both hand-written `TokenResponse` duplicates onto the generated type
+
+---
+
+## D18 — Reconcile the rebuild branch
+
+`origin/local-mytheus-rebuild` is **6 ahead / 11 behind** main, last touched 2026-08-13, and
+overlaps `mock/data.ts`, `MeetingRoom.tsx`, `.env.example` and 8 marketing files.
+
+**Its merge would clobber `.env.example`** — that file did not exist at the merge-base, and main
+added the whole Clerk + gateway contract to it.
+
+The branch also carries the `mytheus-web` scope claim (commit `0455cc8`) that is currently
+unresolved — see the README. **Reconcile the branch mechanically; do not resolve the scope question
+yourself.**
+
+- [ ] Rebase onto main, resolving the `.env.example` conflict in main's favour
+- [ ] Inventory exactly what the 6 commits change so Sushan can decide the scope question with facts
+- [ ] Do not merge until the scope question is settled
+
+---
+
+## ⛔ Frozen pending Sushan's scope decision — do not start
+
+Wiring `/meetings` → `GET /api/v1/meetings` · `/org` → `GET /bff/org/chart` · the three hardcoded
+`[]` dashboard arms · importing `generated/identity-tenant-service.ts` and
+`generated/meeting-service.ts` (zero importers today) · UI test infrastructure (there is **none** —
+no `error.tsx` anywhere, only `(app)/loading.tsx` and root `not-found.tsx` exist repo-wide, while
+`transcript.ts:81-85` deliberately rethrows `ApiError` with nothing to catch it).
+
+All of this may belong in `mytheus-web`, which has never been audited.
+
+## Do NOT build (no backend exists, or deferred)
+
+`/tasks`, `/decisions`, `/search`, `/billing`, `/settings/integrations` — no backend for any; no
+`decisions` or `action_items` table in any migration. 10 of 11 marketing feature pages promise
+features with nothing behind them. `/students/verify:48-51` claims a verification link was sent
+while making **no network call** — raise it, it is a truthfulness issue, not wiring. Temporal
+workflows including `RTBFWorkflow` are comment-only stubs registered as real workflows — note it,
+do not build it.
+
+Also note: `_arm`'s broad `except Exception` in the BFF masks authz errors as "degraded". Worth
+tightening before the empty arms get real loaders — which is frozen work, so just record it.
 
 ---
 
 ## Your checklist
 
-- [ ] **H1** — Cross-tenant speaker assignment ⚠️ *security, do first*
-- [ ] **H2** — Transcript `deleted_at` + partition bound + tests
-- [ ] **H3** — Audit log writer and reader
-- [ ] **H4** — Unbreak the transcript page's mock 404 gate
-- [ ] **H5** — Wire `/meetings` to the real endpoint
-- [ ] **H6** — Wire `/org` to the real endpoint
-- [ ] **H7** — Fill the three empty dashboard arms
-- [ ] **H8** — Use the two unused generated type modules
-- [ ] **H9** — Refresh the realtime token on reconnect
-- [ ] **H10** — Import the generated Avro clients
-- [ ] **H11** — Org segment in LiveKit room names + the fake-sync cutover fix
+- [ ] **D1** Cross-tenant speaker assignment ⚠️ *security, first*
+- [ ] **D2** Transcript filter, partition bound, tests
+- [ ] **D3** Eleven dead gateway prefixes + a CI check
+- [ ] **D4** `integration-service` minimum producer
+- [ ] **D5** Audit log read/export side
+- [ ] **D6** `suggested` speaker writer
+- [ ] **D7** Meeting status reconciliation
+- [ ] **D8** `GET /chat` history *(needs Samar P2)*
+- [ ] **D9** Delete / cancel meeting
+- [ ] **D10** Participant add / remove
+- [ ] **D11** Room org segment + fake-sync cutover
+- [ ] **D12** DLQ naming, encoding, and a reader
+- [ ] **D13** Import the generated Avro clients
+- [ ] **D14** Delete `user-sync-events`
+- [ ] **D15** BFF in-process import
+- [ ] **D16** Mock 404 in three routes + dashboard clocks
+- [ ] **D17** Realtime token refresh + connection gates *(needs Samar P11)*
+- [ ] **D18** Reconcile the rebuild branch

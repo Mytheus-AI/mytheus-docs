@@ -1,114 +1,169 @@
 # Mytheus — Remediation Work Split
 
-Derived from the cross-repository integration audit of 6 September 2026 (16 parallel read-only
-auditors, all findings cited to source, status docs deliberately ignored).
+Built from a two-pass audit of all eight repos: 16 auditors read the source, then 7 verifiers
+re-checked every finding against current code and hunted for what the first pass missed. Status
+docs were excluded as a source of truth throughout.
 
-**Full audit report:** https://claude.ai/code/artifact/da281c5f-d990-40b4-9487-d9f857833b08
-
-**Raw evidence:** [`audit/`](audit/) — all 16 auditor reports, 7,085 lines, every claim cited to
-`file:line`. Read the relevant one before starting a task; the work files below are summaries of
-these.
+**Audit report:** https://claude.ai/code/artifact/da281c5f-d990-40b4-9487-d9f857833b08
+**Raw evidence:** [`audit/`](audit/) — 16 first-pass reports · [`verify/`](verify/) — 7 verification reports
 
 ---
 
-## The one-paragraph summary
+## The finding
 
 The vertical slices are strong. The seams between them were never closed. Almost every component
-in this system is built to a high standard and wired to a counterpart that does not exist — an
-append-only audit table with no writer, a finished Kafka consumer whose producer is an 11-line
-stub, a real cross-encoder model that nothing calls, a 924-line generated API client with zero
-import sites. On top of that, four small defects currently prevent the deployed system from
-serving a single authenticated request, while reporting itself green.
+is built to a high standard and wired to a counterpart that does not exist.
+
+**Five defects stop the system before any of that matters**, and one of them destroys data rather
+than causing an outage.
 
 ---
 
 ## Work files
 
-| Owner | File | Tasks | Theme (not a role — just a coherent slice) |
+| Owner | File | Non-mobile tasks | Plus |
 |---|---|---|---|
-| Sushan | [SUSHAN.md](SUSHAN.md) | 9 | Gateway, auth, identity, RBAC |
-| Samar | [SAMAR.md](SAMAR.md) | 11 | Platform, deploy, data, event backbone |
-| Shaun | [SHAUN.md](SHAUN.md) | 11 | API correctness, audit trail, UI wiring |
+| Sushan | [SUSHAN.md](SUSHAN.md) | 12 | **all 25 mobile tasks** |
+| Samar | [SAMAR.md](SAMAR.md) | 17 | — |
+| Shaun | [SHAUN.md](SHAUN.md) | 18 | — |
 
-Everyone owns backend and frontend work. Nobody is "the infra person" or "the frontend person".
+Everyone owns backend, platform and frontend work. Nobody is "the infra person".
+
+### ⚖️ On balance — read this, Sushan
+
+Mobile was assigned to you in full as requested. That is **25 additional tasks** (13 actionable
+now, 8 blocked on a scoping decision, 4 blocked on absent backend), so your real load is roughly
+**2.5× the others**, even though the non-mobile split is even at 12/17/18.
+
+If you want that evened out, these four are the cleanest to hand off — they are self-contained and
+have no dependency on your auth work:
+
+- **S7** gRPC authentication → Samar (sits next to his deploy/network work)
+- **S9** `PUBLIC_CONTAINS` anchoring → Shaun (pairs with his D3 route-map cleanup)
+- **S11** consent write endpoint → Shaun (pairs with his D6/D7 meeting-lifecycle work)
+- **S12** `tenant_settings` provisioning row → Shaun
+
+Your call. The files assume you keep them.
 
 ---
 
-## ⚠️ ORDERING — read this before starting
-
-There is exactly one hard dependency in this plan, and it belongs to Sushan.
+## 🚨 ORDERING
 
 ```
-        ┌─────────────────────────────────────────────┐
-DAY 1   │  SUSHAN — S1 (gateway key) + S2 (RBAC)      │   ← BLOCKS EVERYONE
-        │  Must land and be deployed before any       │
-        │  other task can be verified end to end.     │
-        └─────────────────────────────────────────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        ▼                   ▼                   ▼
-   SUSHAN S3–S8       SAMAR M1–M10        SHAUN H1–H10
-   (parallel)         (parallel)          (parallel)
+   ┌──────────────────────────────────────────────────────────────┐
+   │  P0 — BEFORE ANYTHING ELSE                                   │
+   │                                                              │
+   │  SAMAR  P1  make migrate footgun    ← DATA LOSS, do first    │
+   │  SUSHAN S1  gateway signing key     ← every request 500s     │
+   │  SUSHAN S2  RBAC grant writer       ← every user 403s        │
+   │  SAMAR  P2  chat_messages partition ← live outage, 6 days    │
+   │  SAMAR  P3  deploy creates topics   ← fresh deploy fails     │
+   └──────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+   SUSHAN S3–S12         SAMAR P4–P17         SHAUN D1–D18
+   + all mobile
 ```
 
-### Why S1 and S2 block everything
+### Why these five come first
 
-- **S1** — `GATEWAY_SIGNING_KEY` is unset everywhere, and the code path that needs it sits outside
-  its own exception guard. **Every authenticated request through the gateway returns 500.**
-  Nobody can test any API change until this is fixed.
-- **S2** — no code anywhere writes `rbac_grants`. A real user created through Clerk holds tier
-  `""`, which satisfies no tier check. **Every route 403s for every real user.** Even after S1,
-  nothing is reachable until this lands.
+| # | Owner | Effect if not fixed first |
+|---|---|---|
+| **P1** | Samar | `make migrate` autogenerates **and applies** with no `include_object` filter. The next person adding a column drops `meeting_rooms`, `meeting_speakers`, `chat_messages`, every partition, and `mytheus-realtime`'s `transcript_chunks` — in one command, no review. **Silent data loss from the documented workflow.** Everything else here is recoverable; this is not. |
+| **S1** | Sushan | Every authenticated request through the gateway returns 500. Nobody can verify any API change. |
+| **S2** | Sushan | Every real Clerk signup holds tier `""` and is 403'd everywhere. Even with S1 fixed, nothing is reachable. |
+| **P2** | Samar | `POST /chat` has raised "no partition of relation found" since 2026-09-01. |
+| **P3** | Samar | `deploy.sh` verifies 42 topics nothing creates. A clean deploy fails by construction. |
 
-### What this means in practice
+### What can start immediately, before P0 clears
 
-- **Sushan:** do S1 and S2 first, before anything else on your list. Do not start S3–S8 until both
-  are merged and deployed. Post in the channel the moment they are live.
-- **Samar:** you can start **M4, M5, M6** (Dockerfiles, compose, resource limits) immediately —
-  they do not touch the request path. Everything else waits for Sushan's green light.
-- **Shaun:** you can **write** all of H1–H10 immediately, but you cannot **verify** any of it
-  until Sushan is done, because every request you make will 403. Write with tests first, verify
-  after the unblock.
+- **Samar:** P4, P5, P6, P7, P8 (Dockerfiles, CI, compose, ingress, limits) — off the request path.
+- **Shaun:** D1 (the cross-tenant hole) and D2, both pure backend with tests.
+- **Sushan:** the mobile tasks marked *safe now* — mobile has its own baseline and is green today
+  (`tsc` exit 0, jest 14/14).
 
-### One soft dependency
+### Two "must ship together" pairs
 
-Samar's **M4/M5** (Dockerfiles + compose entries for `mytheus-intelligence` and
-`mytheus-realtime`) should land before anyone tries to test transcript, embedding or search
-behaviour end to end — neither of those repos currently has a Dockerfile or a compose entry, so
-none of that code runs anywhere today. Not a blocker for writing code; a blocker for believing it
-works.
+Samar's P4/P5 deploy services that currently contain armed defects. These are not follow-ups:
+
+- **P13** (transcription-service least-privilege DB role) ships **with** P4/P5 — otherwise a
+  superuser connection to the shared production Postgres goes live.
+- **P14** (`FakeProvider` provenance stamp) ships **with** P4/P5 — otherwise fabricated transcript
+  rows start entering real tables and the real topic.
+- **P16** (notification consumer offset defuse) ships **before** any compose entry for it —
+  otherwise it commits offsets on messages it discards and destroys the backlog.
+
+---
+
+## ⛔ Blocked on a decision from Sushan — do not assign, do not start
+
+**Where does the authenticated product live?**
+
+`mytheus-ui`'s branch `origin/local-mytheus-rebuild` (commit `0455cc8`, 2026-08-13) states the
+authenticated product moved to **`mytheus-web`**, a separate Next.js app, and points every CTA at
+`https://app.mytheus.cloud`. It rewrites sign-in/sign-up to hand off because that app *"owns the
+real auth flow"*.
+
+Canon says the opposite: `mytheus-web` is a reference-only draft — not a build target, not
+deployed, not in CI, not in canon.
+
+**Until this is settled**, only UI work that is safe under either outcome is assigned (Shaun's D16,
+D17). Everything else — wiring `/meetings`, `/org`, the dashboard arms, the generated types — is
+held. `mytheus-web` has never been audited; if it wins, it needs its own audit before anything is
+assigned there.
+
+Shaun's **D18** covers reconciling the branch itself (6 ahead / 11 behind; its merge would clobber
+`.env.example`, which main added after the merge-base).
+
+---
+
+## ⏸️ Deliberately out of scope — not gaps, do not build
+
+Per the roadmap's W36 phase boundary. Their absence is the plan being followed:
+
+- Kubernetes, Terraform, Helm — Plan 0 says the MVP ships a single-node VPS target only
+- Wave 1–4 service extraction; the monolith is meant to still be a monolith at W36
+- Multi-region, cell isolation, Citus, BYOC Redpanda, int8 Qdrant, GPU autoscaling
+- SSO / SAML / SCIM — deferred at the tenant-claim decision
+- `pii_tokens` migration — ADR-0020 accepted for the model, *blocked for implementation* on key custody
+- `ner-service` — named in canon, assigned to no band
+- A second issue tracker — the R8 guardrail working as intended
+
+**Blocked on external dependencies, not engineering:**
+
+- **Deepgram ASR** — `COMPLIANCE_GATE_GREEN = False` is a source constant gating on a signed DPA.
+  A legal artifact; no PR can make it true.
+- **LiveKit** — *procurement*, not legal. Distinct from the above. Browser mic capture (audio hop 1)
+  needs no account and is actionable whenever it is scheduled.
+
+---
+
+## 🗣️ Needs a scope conversation, not a ticket
+
+These are real and unassigned on purpose. They are product decisions.
+
+| Item | Reality | Honest cost |
+|---|---|---|
+| **`rag-service`** — the keystone joining search + reranker + an LLM | 13-line stub; `proto/rag.proto` is a placeholder | **16–22 engineer-days** for a 2-arm MVP (vector + FTS, non-streaming, no budget enforcement, no gRPC) |
+| **Any LLM at all** | **Zero LLM calls in all 8 repos.** `litellm` and `langgraph` installed, never imported. The only inference is two local BGE *retrieval* encoders | Needs a provider + spend decision before code |
+| **Knowledge graph** | Apache AGE exists nowhere — two docstring lines only. The graph arm of hybrid retrieval is **impossible as scoped** | Re-scope or drop |
+| **Billing / metering** | Zero implementation anywhere. Only error enums, path allowlists, Avro contracts, UI mock data | Full band of work |
+| **Integrations (OAuth)** | Same — zero connector code in any repo | Full band, though see Shaun's D4 |
+| **Notification delivery** | Same — no email, push or in-app delivery exists | Full band |
+| **`decisions` / `action_items`** | No table in any migration. Two headline features have no data model | Data model first |
+| **Audio capture** | Hops 1–4 absent end to end | Blocked on LiveKit procurement |
 
 ---
 
 ## Ground rules
 
-1. **Verify before claiming done.** This whole audit exists because the status docs said things
-   were finished that were not. A task is done when you have run the thing and seen it work — not
-   when the code is written and the tests are green.
-2. **Do not trust the existing status docs.** `work-done-till-now/`, `PROGRESS.md` and
-   `docs/PAGES.md` all contain claims the audit disproved. Fix them as you go if you touch the
-   relevant area.
-3. **`mytheus-ui` is sensitive.** There is an active rebuild on `origin/local-mytheus-rebuild`.
-   `git fetch` and check with Sushan before any structural change there. The UI tasks in this plan
-   are deliberately small and surgical.
-4. **Do not build anything in the deferred list** (bottom of each file). Those absences are the
-   roadmap being followed, not gaps.
-5. **Cite file:line in PRs**, the way the audit does. It made this whole exercise checkable.
-
----
-
-## What is explicitly NOT in this plan
-
-The plan stops at "the platform works". It does not close the product gap, because that is a scope
-decision rather than a bug list:
-
-- **There is no LLM call anywhere in any of the 8 repos.** The only inference is two local BGE
-  retrieval encoders, neither of which is generative. `litellm` and `langgraph` are installed and
-  never imported.
-- `rag-service`, `agent-runtime-service` and `knowledge-graph-service` are 13-line stubs.
-- No `decisions` or `action_items` table exists in any migration, so two headline features have no
-  data model.
-- Audio capture is absent end to end; the Deepgram path is correctly blocked on a signed DPA,
-  which is a legal dependency, not an engineering one.
-
-Have that conversation separately, once the platform underneath it runs.
+1. **Verify before claiming done.** Run it and see it work. This audit exists because status docs
+   claimed completion that source disproved.
+2. **Cite `file:line` in PRs.** It is what made this exercise checkable.
+3. **Do not trust `work-done-till-now/`, `PROGRESS.md`, or `docs/PAGES.md`** — all three contain
+   claims the audit disproved. `mytheus-ui/docs/PAGES.md:52` marks `/billing` "done" against a
+   service with zero routes. Fix them as you go.
+4. **`mytheus-ui` is sensitive** — active rebuild branch, unsettled scope. `git fetch` first.
+5. **If a task turns out to be already done, say so and close it.** Two first-pass findings did not
+   survive verification; that is a good outcome, not a failure.

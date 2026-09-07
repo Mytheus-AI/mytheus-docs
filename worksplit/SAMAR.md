@@ -1,333 +1,336 @@
-# Samar — Platform, Deploy, Data, Event Backbone
+# Samar — Platform, Deploy, Data Safety, Runtime
 
-**10 tasks.** Three of them you can start immediately; the rest wait on Sushan.
+**17 tasks.** P1 is the most dangerous defect in the audit and comes before everything, including
+the outages.
 
-Audit report: https://claude.ai/code/artifact/da281c5f-d990-40b4-9487-d9f857833b08
+Audit: https://claude.ai/code/artifact/da281c5f-d990-40b4-9487-d9f857833b08
+Evidence: [`audit/`](audit/) · [`verify/verify-data-platform.md`](verify/verify-data-platform.md)
 
 ---
 
 ## ⏱️ Ordering
 
-**Start now, no dependency:** M4, M5, M6 (Dockerfiles, compose entries, resource limits). These do
-not touch the request path, so Sushan's blockers do not affect them — and M4/M5 are the largest
-single piece of work in the whole plan, so starting early is the right call.
+**P1 first — it destroys data.** Then P2 and P3 (live outages). P4–P8 can run in parallel with
+Sushan's blockers since they are off the request path.
 
-**Wait for Sushan's S1 + S2** before verifying anything that involves making an authenticated
-request. He will announce when they are deployed.
+**You block others on P4 + P5.** Nothing in `mytheus-intelligence` or `mytheus-realtime` runs
+anywhere today, so nobody can verify transcript, embedding or search behaviour until those land.
 
-**You block others on:** M4 + M5. Nothing in `mytheus-intelligence` or `mytheus-realtime` runs
-anywhere today — no Dockerfile, no compose entry. Until those land, nobody can test transcript,
-embedding or search behaviour end to end, no matter how correct the code is.
+**Three defects must ship *with* the deploy tasks, not after** — P13, P14 and P16. Your deploy work
+is what arms them.
 
 ---
 
-## M1 — `chat_messages` inserts have been failing since 1 September
+## P1 — `make migrate` will drop tables (P0, DATA LOSS)
 
-**Repo:** `mytheus-backend` — **live production defect, 6 days old**
-
-`migrations/versions/5ed978467cad:53-55` hardcodes:
-
-```python
-_PARTITION_YEAR = 2026
-_PARTITION_MONTH = 8
+```make
+migrate:
+	$(ALEMBIC) revision --autogenerate -m "$(msg)"
+	$(ALEMBIC) upgrade head
 ```
 
-`:87-90` creates exactly one partition, `chat_messages_2026_08`, covering `2026-08-01` →
-`2026-09-01`. There is **no `DEFAULT` catch-all partition**. Today is past that range, so every
-insert raises *"no partition of relation found"*.
+Autogenerate **and immediately apply**, no review step. `migrations/env.py:27` sets
+`target_metadata = Base.metadata` and defines **no `include_object` filter**.
 
-The sibling `audit_logs` migration (`c3e8b1d47f92`) took both the wider buffer (partitions through
-2027-06) *and* a DEFAULT. The comment at `5ed978467cad:18` acknowledges the difference. Chat got
-neither.
+There is no ORM model for `meeting_rooms`, `meeting_speakers` or `chat_messages` (confirmed at
+`866f7eedb0e7:31`). And `transcript_chunks` lives in the same physical database but is owned by
+`mytheus-realtime`, so it is not in this repo's metadata either.
 
-The hardcoding itself is deliberate and correct — the comment says *"The partition set must not
-depend on when the migration happens to run."* Keep that principle; the problem is that nothing
-creates later partitions.
+**The next person who runs `make migrate` to add a column generates a revision that drops three
+tables, every partition, and another repo's table — and applies it in the same command.**
 
-### Do
+Everything else in this plan is an outage. This is silent data loss triggered by the documented
+workflow.
 
-- [ ] New migration: add a `DEFAULT` partition to `chat_messages` so writes stop failing
-      immediately.
-- [ ] Add partitions covering a sensible forward window, matching how `audit_logs` did it.
-- [ ] Add a rolling-partition job so this cannot recur. Either `pg_partman` or a scheduled task —
-      note the audit found **no `pg_partman`** anywhere, so `audit_logs` will hit the same wall in
-      June 2027. Solve both tables with one mechanism.
-- [ ] Check whether any rows were lost rather than rejected (rejected is more likely — the insert
-      raises rather than silently dropping).
+- [ ] Split `migrate` into `revision` and `upgrade`. Never autogenerate-and-apply.
+- [ ] Add an `include_object` filter in `env.py` excluding tables with no model, all partitions, and
+      anything owned by another repo
+- [ ] Add ORM models for `meeting_rooms`, `meeting_speakers`, `chat_messages`, or exclude them
+      explicitly — pick one and be consistent
+- [ ] A test asserting autogenerate produces **no** DROP against a migrated database
+- [ ] Check whether this has already fired anywhere
 
 ---
 
-## M2 — A fresh deploy fails by construction
+## P2 — `chat_messages` inserts fail (P0, live since 1 Sep)
 
-**Repo:** `mytheus-platform`
+`5ed978467cad:54-55` hardcodes `_PARTITION_YEAR = 2026, _PARTITION_MONTH = 8`; `:88-92` creates one
+partition covering `[2026-08-01, 2026-09-01)` with **no DEFAULT**. `POST /chat` has raised since
+2026-09-01.
 
-`deploy/deploy.sh:87` **verifies** that 42 topics and 21 subjects exist. Nothing on the deploy path
-**creates** them, and `mytheus-events` is not cloned on the VPS.
+The hardcoding is deliberate and correct — *"The partition set must not depend on when the
+migration happens to run."* Keep that. The gap is that nothing creates later partitions.
 
-`mytheus-events/scripts/create_topics.sh` is good — idempotent, matches the declared contract list
-exactly (21 topics + 21 `.dlq`), was recently made idempotent with a provision entry point. It is
-simply never invoked by the deploy.
+**Correction to an earlier claim:** `audit_logs` **does** have a DEFAULT partition
+(`c3e8b1d47f92:92`), so it degrades silently rather than hitting this wall. Still worth solving
+both with one mechanism.
 
-### Do
-
-- [ ] Make topic + subject provisioning part of the deploy path, before the verify gate.
-- [ ] Decide how `mytheus-events` reaches the VPS: vendor the script, ship it in the backend image,
-      or clone the repo. Pick one and document it.
-- [ ] Keep the verify gate — it is the right check, it just needs something to verify.
-
----
-
-## M3 — Make a green deploy mean something
-
-**Repo:** `mytheus-platform`
-
-Only **7 of 16** long-running services in `compose.prod.yml` have a healthcheck. The other 9 are
-invisible to both `deploy.sh`'s gate and compose's `depends_on: service_healthy`. `api-gateway` and
-`ui` do have healthchecks but are not gated by `deploy.sh`.
-
-Worse: `/healthz` is on the gateway's **public** path list, so it bypasses auth entirely. That is
-exactly why Sushan's S1 outage reports green — the health signal cannot detect it.
-
-### Do
-
-- [ ] Add healthchecks to the 9 services without one.
-- [ ] Gate `deploy.sh` on `api-gateway` and `ui` health too.
-- [ ] **Add one authenticated smoke request to the post-deploy gate.** A public `/healthz` 200 is
-      not evidence the system works — this audit exists partly because it looked like it was.
-- [ ] Note `transcription-service`'s `/healthz` stays green even if its consumer dies (disclosed at
-      `main.py:15-19`) — make the healthcheck reflect consumer liveness.
-- [ ] `temporal` has no healthcheck and `workflow` gates on `service_started` only.
+- [ ] Migration adding a DEFAULT partition to `chat_messages`
+- [ ] Forward window of monthly partitions
+- [ ] A rolling-partition mechanism (`pg_partman` or a scheduled task) — there is none anywhere
+- [ ] Confirm rows were rejected, not silently dropped (rejection is expected)
 
 ---
 
-## M4 — Two entire repos have no way to run ▶ START NOW
+## P3 — Deploy verifies topics nothing creates (P0)
 
-**Repos:** `mytheus-intelligence`, `mytheus-realtime`
+`deploy/deploy.sh:87` gates on 42 topics and 21 subjects existing. Nothing on the deploy path
+creates them and `mytheus-events` is not cloned on the VPS.
 
-This is the biggest structural gap in the audit, confirmed independently by three auditors.
+`mytheus-events/scripts/create_topics.sh` is good — idempotent, matches the contract list exactly.
+It is simply never invoked.
 
-**Neither repo contains a Dockerfile. Neither appears in `compose.prod.yml`.** That is 9 of the 21
-services, including everything genuinely well-built in the AI tier:
-
-- `mytheus-intelligence` — embedding, ingestion, search, reranker (+ 3 stubs). Real BGE models,
-  real unstructured.io parsing, uuid5-idempotent Qdrant writes, transactional outbox, per-tenant
-  vector isolation. None of it runs.
-- `mytheus-realtime` — transcription-service (Python) and realtime-gateway (TypeScript, 639-line
-  `server.ts`, the most complete single component the audit found). Neither runs.
-
-Meanwhile `meeting-service` ships to production emitting `meeting-room-events` into Redpanda with
-no consumer running. Prod is a relay producing into a broker nothing reads.
-
-### Do
-
-- [ ] Dockerfile for `mytheus-intelligence` (multi-service — one image with per-service entrypoints
-      matches how `mytheus-backend` already does it).
-- [ ] Dockerfile for `mytheus-realtime` — note two runtimes, Python and Node.
-- [ ] CI image build + push for both, mirroring the three repos that already have real CD.
-- [ ] Mind the model weights: BGE-small and bge-reranker-base need to be baked in or cached, not
-      downloaded on every cold start.
+- [ ] Provision topics + subjects on the deploy path, before the verify gate
+- [ ] Decide how `mytheus-events` reaches the VPS (vendor the script, ship it in the image, or
+      clone) and document it
+- [ ] Keep the verify gate
 
 ---
 
-## M5 — Compose entries for everything that should be running ▶ START NOW
+## P4 — Two repos have no build path at all ▶ start now
 
-**Repo:** `mytheus-platform`
+**Correction to my earlier framing: this is bigger than Dockerfiles.** Neither
+`mytheus-intelligence` nor `mytheus-realtime` has **any `.github/workflows`** — no CI, no image
+build. There is literally nothing to deploy.
 
-### Do
+That is 9 of 21 services, including everything genuinely well-built in the AI tier and
+`realtime-gateway` (a complete 639-line TypeScript service).
 
-- [ ] **Consumer workers** — each is a standalone process today and none are in compose:
-      `embedding_service/worker.py`, `search_service/worker.py`, `ingestion_service/worker.py`,
-      the intelligence outbox relay (`relay_main.py`), transcription-service, realtime-gateway.
-- [ ] **Qdrant** — required by the embedding path, absent from compose.
-- [ ] **LiveKit** — absent; `NEXT_PUBLIC_LIVEKIT_URL` unset is why the UI degrades to
-      `status: "unconfigured"`.
-- [ ] **MinIO or R2 credentials** — ingestion does a real object-store put; R2 (ADR-0023) is
-      currently ADR text plus an unimported dependency.
-- [ ] Wire `depends_on` correctly against the healthchecks from M3.
-
-### Watch out
-
-`.env.example` in `mytheus-intelligence` says Redis port **6379**; every code default is **6380**.
-Fix the mismatch rather than papering over it. Also `CLERK_JWT_INTERNAL_ORG_CLAIM` is unprovisioned
-— every intelligence REST route is un-callable without it.
+- [ ] Dockerfile for `mytheus-intelligence` — one image, per-service entrypoints, mirroring how
+      `mytheus-backend` already does it
+- [ ] Dockerfile for `mytheus-realtime` — two runtimes, Python and Node
+- [ ] CI for both: lint, test, image build + push
+- [ ] Bake or cache the model weights (BGE-small, bge-reranker-base) — do not download on cold start
 
 ---
 
-## M6 — Resource limits and observability ▶ START NOW
+## P5 — Compose entries for everything that should run ▶ start now
 
-**Repo:** `mytheus-platform`
-
-Grep found **no `deploy:`, `resources:`, `mem_limit`, `cpus` or `logging:` anywhere** in
-`compose.prod.yml`. 17 containers share one VPS — with a second production product on the same box
-— and M4/M5 are about to add nine more, including two that load ML models into memory.
-
-Also absent: **backups of any volume**, and any observability beyond `docker logs`. The
-`observability/` directory the README documents does not exist.
-
-### Do
-
-- [ ] Memory and CPU limits on every container. Do this **before** M5 lands, not after.
-- [ ] Log rotation — an unbounded json-file driver on 26 containers will fill the disk.
-- [ ] Backups for `pgdata`, `redisdata`, `redpandadata` and (once M5 lands) Qdrant storage.
-- [ ] Minimum viable observability. Metrics and Sentry are declared dependencies that are never
-      imported — either wire them or remove them from `pyproject.toml` so the dependency list stops
-      implying coverage that does not exist.
-- [ ] Sanity-check the capacity story: Postgres + Redis + Redpanda + Temporal + Qdrant + two model
-      servers on one node, alongside another product.
+- [ ] **Intelligence workers:** `embedding_service/worker.py`, `search_service/worker.py`,
+      `ingestion_service/worker.py`, the intelligence outbox relay (`relay_main.py`)
+- [ ] **Realtime:** transcription-service, realtime-gateway
+- [ ] **Backend consumers that are already in the deployed image and still not running:**
+      `core_api.consumer` and `meeting_service.consumer`. Both built, neither has a process.
+- [ ] **Qdrant** — required by the embedding path, absent
+- [ ] **LiveKit** — absent; unset `NEXT_PUBLIC_LIVEKIT_URL` is why the UI degrades to
+      `status: "unconfigured"`
+- [ ] **Object storage** — ingestion does a real put; R2 (ADR-0023) is ADR text plus an unimported
+      dependency
+- [ ] Wire `depends_on` against the healthchecks from P9
 
 ---
 
-## M7 — Org suspension silently does nothing
+## P6 — Nothing can route to the new services
 
-**Repo:** `mytheus-backend`
+Even after P4 and P5, there is **no ingress**. `edge.py:146-180` ROUTE_MAP has no entry for any
+intelligence path, and `mytheus.caddy` has no WebSocket route for `realtime-gateway`.
 
-`libs/shared/org_resolver.py:32-34` states that a suspension only takes effect once a
-`tenant-events` consumer invalidates the cache. **That consumer does not exist.**
-
-`identity_tenant_service/provisioning.py:139` produces `tenant-events` correctly. The declared
-consumers — billing-metering, admin-ops, workflow — are all empty scaffolds. So the topic is a dead
-letter, and suspending a tenant leaves them fully operational.
-
-This is a functional security-adjacent bug, not a missing feature.
-
-### Do
-
-- [ ] Write a `tenant-events` consumer that invalidates the org-resolver cache on suspension and
-      deletion.
-- [ ] Follow the existing consumer discipline: `libs/shared/consumer.py` already gives you Redis
-      dedupe, durable inbox, DLQ and single-transaction apply. Do not hand-roll.
-- [ ] Add it to compose (ties into M5).
-- [ ] Test that a suspended org is actually denied after the cache TTL and after invalidation.
+- [ ] ROUTE_MAP entries for the intelligence services that should be publicly reachable
+- [ ] Caddy WS route for `realtime-gateway`
+- [ ] Confirm the ingress docs match the Caddy config — the audit found them contradicting in three
+      places, and no script in `mytheus-platform` deploys that Caddy file
 
 ---
 
-## M8 — Delete the `user-sync-events` topic
+## P7 — Resource limits, backups, log rotation ▶ start now, before P5 lands
 
-**Repo:** `mytheus-events`
+Grep found **no `deploy:`, `resources:`, `mem_limit`, `cpus` or `logging:`** anywhere in
+`compose.prod.yml`. 17 containers on one VPS, alongside a second production product — and P5 adds
+nine more, two of which load ML models into memory.
 
-ADR-0010 D4 decided there is **no per-user propagation topic**. The code agrees —
-`identity_tenant_service/routes/auth.py:19-21` says so explicitly, and the `TOPIC` constant there
-is used only as a Postgres/Redis dedupe namespace, never as a Kafka topic.
+Also absent: **backups of any volume**, and the `observability/` directory the README documents.
 
-But the topic, its `-value` subject and its `.dlq` are all still created by `create_topics.sh` and
-will always be empty.
+- [ ] Memory and CPU limits on every container — **before** P5
+- [ ] Log rotation; an unbounded json-file driver across 26 containers will fill the disk
+- [ ] Backups for `pgdata`, `redisdata`, `redpandadata`, and Qdrant once P5 lands
+- [ ] Sanity-check capacity: Postgres + Redis + Redpanda + Temporal + Qdrant + two model servers on
+      one node
 
-### Do
-
-- [ ] Remove `user-sync-events` from `codegen/_schemas.py` `TOPICS`, from `subjects/`, and from
-      `create_topics.sh`.
-- [ ] Rename the constant in `routes/auth.py` so it no longer looks like a topic name (it is a
-      dedupe namespace — call it that).
-- [ ] Update the expected count in `create_topics.sh` (currently prints "42 expected") and the
-      `deploy.sh:87` gate from M2 to match.
+**Correction:** OTel *tracing* is genuinely wired (`libs/shared/telemetry.py`, called from
+`app_factory.py:26`). Only **metrics** are zero — no Prometheus, no Grafana, no service exposes
+metrics, so the lag and DLQ panels Plan 5-6 names have no datasource.
 
 ---
 
-## M9 — Adopt the explicit-grants mechanism before it is needed
+## P8 — Make a green deploy mean something
 
-**Repo:** `mytheus-backend`
+Only **7 of 16** long-running services have a healthcheck; the other 9 are invisible to both
+`deploy.sh`'s gate and `depends_on: service_healthy`. `api-gateway` and `ui` have one but are
+ungated by `deploy.sh`. `temporal` has none and `workflow` gates on `service_started` only.
 
-`migrations/_grants.py` was written and merged as part of the ADR-0021 explicit-grants work. Its
-`grant_tenant_table` helper is imported by **zero migrations**.
-
-Consequence: the next table-creating migration from any repo ships with an empty ACL — exactly the
-failure the ADR was written to prevent. The mechanism exists and was never adopted.
-
-### Do
-
-- [ ] Use `grant_tenant_table` in the migration template / contributor docs.
-- [ ] Backfill it into the existing migrations where it applies, or add a test asserting every
-      tenant table has the expected grants.
-- [ ] Add a CI check: a new table without grants should fail the build.
-- [ ] Related open item — `9b2c4d1e6f30:73-95` documents a cross-repo GRANT gap that is still
-      unapplied in `mytheus-realtime`. It breaks the transcript endpoint on any clean-cluster
-      rebuild. Close it while you are here.
+- [ ] Healthchecks for the 9 without one
+- [ ] Gate `deploy.sh` on `api-gateway` and `ui`
+- [ ] **Add an authenticated smoke request to the post-deploy gate.** A public `/healthz` 200 is
+      why Sushan's S1 outage reports green.
 
 ---
 
-## M10 — Environment and CI hygiene
+## P9 — No startup env validation anywhere
 
-**Repos:** `mytheus-platform`, `mytheus-ui`, all
+The generating mechanism behind S1, `prod.ui.env` and the Clerk gap: **nothing validates required
+config at startup**, and all ten compose `env_file` entries are `required: false`, so a missing
+file is silent.
 
-### Do
-
-- [ ] `prod.ui.env` is read at `compose.prod.yml:381` and **no example file exists anywhere**.
-      Create one.
-- [ ] `NEXT_PUBLIC_REALTIME_WS_URL` and `NEXT_PUBLIC_LIVEKIT_URL` are **not Docker build args**
-      (`mytheus-ui/Dockerfile:29-35`), so containers bake them as `undefined` and no amount of
-      runtime env fixes it. Next.js inlines `NEXT_PUBLIC_*` at build time. Coordinate with Shaun —
-      his H9 depends on this working.
-- [ ] CD concurrency is per-repo, so the three repos with real CD can race each other on a deploy.
-      Add cross-repo serialisation or a deploy lock.
-- [ ] The oasdiff OpenAPI breaking-change gate was fixed in-file but **has still never actually
-      executed in Actions**. Confirm it runs and can fail a build.
-- [ ] `deploy.sh` exists **only on the VPS** — production deploy behaviour is unverified from the
-      repo. Get it into version control.
+- [ ] Fail-fast validation of required env at service startup
+- [ ] Set `required: true` on `env_file` entries
+- [ ] `prod.ui.env.example` — read at `compose.prod.yml:381`, no example exists anywhere
+- [ ] `mytheus-intelligence/.env.example` has **no `CLERK_*` variable at all**, and `auth.py:80/84`
+      uses bare `os.environ[]` — every route there **500s rather than 401s**
+- [ ] Full list of code-required-but-undocumented vars is in `verify/verify-data-platform.md` §4.4
 
 ---
 
-## M11 — transcription-service must not reach production as `postgres` ⚠️ *gates M4/M5*
+## P10 — Redis port drift, in both directions
 
-**Repo:** `mytheus-realtime` + `mytheus-backend`
+⚠️ **Correction — the drift is inverted between repos. Fixing only example files leaves two of four
+wrong.**
 
-**Do this as part of M4/M5, not after.** It is a deployment precondition, not a follow-up.
+- `mytheus-intelligence`: `.env.example` says **6379**, code defaults to **6380** → fix the example
+- `mytheus-realtime`: `.env.example` says **6380** (correct), the **code** defaults to **6379**
+  (`transcription config.py:35`, `gateway server.ts:593`) → fix the code
 
-`services/transcription-service/src/transcription_service/db.py:13-22` connects as the `postgres`
-superuser. The service's RLS code is **correct** — it always issues `SET LOCAL app.current_org` —
-but a superuser connection bypasses row-level security entirely, so those calls protect nothing.
-
-### This is a documented deferral, not a hidden bug
-
-The docstring is explicit and the reasoning is sound: `mytheus-backend`'s roles (`mytheus_app`,
-`mytheus_relay`, `mytheus_admin`) are created with **no password** by design (`a1c4e7f20b18` —
-*"cannot authenticate until an operator sets it"*), and granting a new cross-repo role SELECT on
-tables this service does not own is an ops/bootstrap concern rather than something a migration in
-this repo should arrogate to itself.
-
-It is harmless today only because **the service is not deployed anywhere**. The moment M4/M5 give
-it a compose entry, a superuser connection to the shared production Postgres becomes a live
-cross-tenant hole in a service that writes `transcript_chunks` and the shared `outbox`.
-
-### Do
-
-- [ ] Create a least-privilege role for transcription-service mirroring `mytheus_app` /
-      `mytheus_relay` — `NOSUPERUSER NOBYPASSRLS`, explicit grants only.
-- [ ] Grant it exactly what it needs: write on `transcript_chunks` and `outbox`, read on
-      `tenant_settings` and `data_residency`. Use `grant_tenant_table` from M9 — this is precisely
-      the case that mechanism was built for.
-- [ ] Point the production `DATABASE_URL` at that role; leave the local dev default alone.
-- [ ] Add a startup assertion that the connected role does **not** have `rolbypassrls`. The audit
-      noted `libs/shared/db.py:49` has no such runtime check either — worth adding in both places.
-- [ ] Close the related cross-repo GRANT gap from M9 at the same time; they are the same
-      conversation.
+- [ ] Fix each repo in the correct direction; do not batch-edit
 
 ---
 
-## Do NOT build these (deliberately deferred)
+## P11 — UI env vars can never work in a container
 
-Per the roadmap phase boundary at W36. Their absence is the plan being followed — do not "fix"
-them:
+`mytheus-ui/Dockerfile:29-35` — `NEXT_PUBLIC_REALTIME_WS_URL` and `NEXT_PUBLIC_LIVEKIT_URL` are not
+Docker build args. Next.js inlines `NEXT_PUBLIC_*` at build time, so containers bake them as
+`undefined` and no runtime env fixes it.
 
-- **Kubernetes, Terraform, Helm.** Plan 0 states it explicitly: the MVP band ships a single-node
-  VPS target only. The lack of `.tf` files is correct.
-- **Wave 1–4 service extraction** — the monolith is supposed to still be a monolith at W36.
-- **Multi-region, cell-based isolation, Citus sharding.**
-- **BYOC / dedicated multi-AZ Redpanda, int8 Qdrant quantization, GPU autoscaling.**
-- **The `nexus-deploy` GitOps repo.**
+- [ ] Pass them as build args
+- [ ] Coordinate with Shaun — his D17 cannot be verified until this works
+
+---
+
+## P12 — Gates that cannot fail
+
+- `mytheus-platform` `make test` runs `check_authz.py || true` — **the authz gate can never fail**
+- `emit_openapi --check` exits 0 on the wrong interpreter
+- The oasdiff breaking-change gate was fixed in-file but **has still never executed in Actions**
+- `mytheus-ui` CI does not run `generate:api:check`, so the generated-types guarantee does not hold
+- CD concurrency is per-repo, so the three repos with CD can race on a deploy
+
+- [ ] Remove the `|| true`
+- [ ] Fix the interpreter
+- [ ] Confirm oasdiff runs and can fail a build
+- [ ] Add `generate:api:check` to UI CI
+- [ ] Cross-repo deploy serialisation or a lock
+
+---
+
+## P13 — transcription-service DB role ⚠️ ships with P4/P5
+
+`transcription-service/db.py:13-22` connects as the `postgres` superuser. Its RLS code is
+**correct** — it always issues `SET LOCAL app.current_org` — but a superuser bypasses RLS entirely,
+so those calls protect nothing.
+
+The deferral is documented and the reasoning is sound: the backend's roles are created with **no
+password** by design (`a1c4e7f20b18` — *"cannot authenticate until an operator sets it"*), and a
+cross-repo grant is an ops concern. It is harmless **only because the service is not deployed**.
+P4/P5 change that.
+
+- [ ] Least-privilege role mirroring `mytheus_app` — `NOSUPERUSER NOBYPASSRLS`
+- [ ] Grant exactly: write on `transcript_chunks` and `outbox`; read on `tenant_settings` and
+      `data_residency`. Use `grant_tenant_table` — this is the case it was built for.
+- [ ] Point production `DATABASE_URL` at it; leave the local dev default alone
+- [ ] Startup assertion that the connected role lacks `rolbypassrls` — `libs/shared/db.py:49` has no
+      such check either
+- [ ] Close the cross-repo GRANT gap documented at `9b2c4d1e6f30:73-95`, still unapplied in
+      `mytheus-realtime` — it breaks the transcript endpoint on any clean-cluster rebuild
+
+---
+
+## P14 — `FakeProvider` writes fabricated transcripts ⚠️ ships with P4/P5
+
+`providers/factory.py:20-23` returns `FakeProvider` whenever `DEEPGRAM_API_KEY` is unset — every
+environment. A `meeting-room-events` `joined` opens that stream, and `_pump` drains its canned
+script through the **same** `persistence.process_utterance` a real provider uses, writing a
+`transcript_chunks` row reading *"hello there, how are you"* with `confidence=0.97`, and publishing
+it to the real `transcript-chunks` topic. Nothing marks it synthetic.
+
+`devseed.py` guards the hand-run seeder behind `TRANSCRIPTION_DEV_SEED=1` for exactly this reason.
+The fake provider has no guard.
+
+**The provider *selection* is deliberate and correct** — the factory docstring argues persuasively
+that defaulting to fake fails toward "obviously not talking to Deepgram". The gap is provenance
+only. **P5 is the task that arms this.**
+
+- [ ] Add a provenance marker — a `source` column, or a reserved confidence sentinel — so synthetic
+      finals are distinguishable downstream
+- [ ] Refuse to run `FakeProvider` in a production environment, or make it loudly obvious
+
+---
+
+## P15 — Liveness lies
+
+`transcription-service`'s `/healthz` stays green if its consumer dies — disclosed honestly at
+`main.py:15-19`; `_log_consumer_exit` logs loudly but `/healthz` still returns ok, so a liveness
+probe would not restart the pod.
+
+- [ ] Make the healthcheck reflect consumer liveness
+- [ ] Check the same pattern in the other consumer services as P5 lands them
+
+---
+
+## P16 — Defuse the notification consumer ⚠️ before it gets a compose entry
+
+`notification_service/consumer.py:30-32,37-41` subscribes, runs an **empty `_handle`**, and
+**commits the offset anyway** — destroying the backlog rather than leaving it.
+
+Inert today only because it has no runner and no producer. **P5 is the task that would add one.**
+One line to defuse.
+
+- [ ] Stop committing offsets for messages the handler discards — or do not deploy the consumer
+      until it has a real handler
+- [ ] Prefer the latter: do not add a compose entry for it in P5
+
+---
+
+## P17 — `/stripe/webhook` is a public 404 Stripe will retry
+
+`edge.py:52` and `libs/shared/public_routes.py:31` put `/stripe/webhook` on the unauthenticated
+allowlist, and `ROUTE_MAP` routes it to `billing-metering-service`, which has **zero routes**.
+
+Stripe retries a failing webhook and then **auto-disables the endpoint**. This is a live external
+integration failure sitting in the route map.
+
+- [ ] Remove `/stripe/webhook` from `ROUTE_MAP` and `PUBLIC_PREFIXES` until billing is real
+- [ ] Same judgment for the other dead public prefixes — coordinate with Shaun's D3
+
+---
+
+## Do NOT build (deferred)
+
+Kubernetes, Terraform, Helm · Wave 1–4 extraction · multi-region · cell isolation · Citus · BYOC
+Redpanda · int8 Qdrant · GPU autoscaling · the `nexus-deploy` GitOps repo.
+
+**Corrections — two first-pass claims did not survive verification:**
+- `migrations/_grants.py` is **not** dead code. Migration 0005 runs last in the chain, so every
+  existing table already inherited its grant. It is a helper for the *next* migration — so the only
+  work is a CI check that new tables use it, folded into P12.
+- **`deploy.sh` is in version control** — 110 lines with real git history. The "exists only on the
+  VPS" claim was wrong.
 
 ---
 
 ## Your checklist
 
-- [ ] **M4** — Dockerfiles for intelligence + realtime ▶ *start now, blocks others*
-- [ ] **M5** — Compose entries, Qdrant, LiveKit ▶ *start now, blocks others*
-- [ ] **M11** — Least-privilege DB role for transcription-service ⚠️ *must ship with M4/M5*
-- [ ] **M6** — Resource limits, backups, log rotation ▶ *start now, before M5 lands*
-- [ ] *— wait for Sushan's S1 + S2 —*
-- [ ] **M1** — `chat_messages` partition (live defect)
-- [ ] **M2** — Deploy creates topics
-- [ ] **M3** — Real healthchecks + authenticated smoke test
-- [ ] **M7** — `tenant-events` consumer (org suspension)
-- [ ] **M8** — Delete `user-sync-events`
-- [ ] **M9** — Adopt `_grants.py`
-- [ ] **M10** — Env and CI hygiene
+- [ ] **P1** `make migrate` footgun ⚠️ *data loss — first*
+- [ ] **P2** `chat_messages` partition *(live outage)*
+- [ ] **P3** Deploy creates topics
+- [ ] **P4** Dockerfiles **+ CI** for intelligence & realtime ▶ *start now, blocks others*
+- [ ] **P5** Compose: all workers, Qdrant, LiveKit ▶ *blocks others*
+- [ ] **P6** Ingress — ROUTE_MAP + Caddy WS route
+- [ ] **P7** Resource limits, backups, log rotation ▶ *before P5*
+- [ ] **P8** Healthchecks + authenticated smoke test
+- [ ] **P9** Startup env validation + missing env files
+- [ ] **P10** Redis port drift *(opposite direction per repo)*
+- [ ] **P11** UI env vars as build args
+- [ ] **P12** Gates that cannot fail
+- [ ] **P13** transcription DB role ⚠️ *with P4/P5*
+- [ ] **P14** `FakeProvider` provenance ⚠️ *with P4/P5*
+- [ ] **P15** Consumer liveness in `/healthz`
+- [ ] **P16** Defuse notification consumer ⚠️ *before P5*
+- [ ] **P17** Remove `/stripe/webhook` from the public route map
