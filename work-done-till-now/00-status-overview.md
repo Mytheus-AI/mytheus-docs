@@ -183,3 +183,43 @@ Scope: a static read of the code repos against this folder's claims. **Nothing w
 | Plan 5-6 | `search-service` landed; membership cache eviction closed (`9f51192`); Qdrant key isolation closed (`f87ec4b`); `Topic` seeding, GPU, SLO, Grafana unbuilt; ui org page and `people/[id]` missing; mobile profile on mock; PII default mismatch | 48, 49, 50, 51 |
 
 Band files 01 to 04 carry a matching dated section and in-place supersede notes. Earlier text is kept, not deleted.
+
+## Completion round 2026-11-06 (Plans 0 to 6)
+
+Branch `feat/phase-0-6-completion` in `mytheus-backend`, `mytheus-events`, `mytheus-intelligence`, `mytheus-realtime`, `mytheus-platform` and `mytheus-docs`. Nothing is pushed. Everything below was observed by running the commands named, against a local stack (Postgres 5443, Redis 6390, Redpanda 9092, Schema Registry 8085, Temporal 7233, Qdrant 6333, MinIO 9002, AGE 5434) unless marked otherwise. CPU only: no GPU was available, so every GPU SLO is still unmeasured.
+
+### Built
+
+- Audio path (`mytheus-backend` `services/meeting_service`, `mytheus-realtime` `transcription-service`): the LiveKit audio tap and the `/internal/audio` receiver exist, one WebSocket per participant track, one provider stream per connection, speaker attribution by `participant_identity`. Recording egress and the bucket lifecycle CLI exist. Tested with fakes; never run against real LiveKit, Deepgram or S3. The compliance gate stays closed.
+- Tenancy: `POST /orgs` creates a tenant (ADR-0025, column-level INSERT on `organizations`); `/rbac` grants are deny-by-default; the PII vault routes are mounted.
+- Key custody: file-based KEK on the VPS (ADR-0026), `oauth_tokens` and `pii_tokens` tables (migrations `24e134664d84`, `a2afd3bef634`).
+- Hardening: idempotency fingerprint includes the body and in-flight duplicates return 409; three cross-tenant foreign-key leaks closed; meeting `created` events for invisible meetings go to the DLQ.
+- Intelligence: `knowledge-graph-service` is the sole writer of `Topic` nodes (AGE live test passes), `ner-service` serves `POST /ner`, gRPC full-text search arm, PII redaction defaults on, reranker warm floor, GPU packaging written but not built.
+- Observability: `mytheus_` Prometheus metrics on every service, Prometheus, Grafana dashboards, alert rules and Alertmanager in `mytheus-platform` (no receiver credentials).
+- Events: `make check-registered` drift check against the live registry passes for all 21 subjects.
+- Decision records: ADR-0024 to ADR-0027 (key custody, request-path provisioning, VPS file KEK, Anthropic-only LLM provider).
+
+### Verified
+
+- `mytheus-backend`: 564 passed, 0 failed, 0 skipped; `ruff`, `black`, `mypy --strict`, `emit_openapi --check`, `check_authz.py` clean.
+- `mytheus-intelligence`: 235 passed, 0 skipped, with `MYTHEUS_REQUIRE_AGE=1`.
+- `transcription-service`: 110 passed. `realtime-gateway`: 47 passed. `mytheus-events`: `make ci`, `ci-compat` and `check-registered` pass.
+- `mytheus-platform`: compose renders, `promtool`, `amtool`, `caddy validate` pass. No image was started.
+
+### Found and fixed this round
+
+- `chat_messages` had partitions only through 2026-08, so every chat insert since September failed. Migration `9817d41e0603` adds a DEFAULT partition and months through 2027-12 for `chat_messages` and `audit_logs`; `scripts/ensure_partitions.py` extends them. `transcript_chunks` (owned by `mytheus-realtime`) still needs a monthly job.
+- The intelligence alembic version table lived in `public`, owned by `supabase_admin`, which made that role's default ACL live and failed two backend grant assertions. It now lives in schema `intelligence`.
+- A test called the real Clerk API using a developer `.env` key. Tests now strip Clerk, upstream and audio-token variables.
+- The registry drift check compared dotted names against canonicalised ones and failed on every subject; it now compares canonical forms.
+
+### Open
+
+- The Clerk session token needs the claims `org_id` and `internal_org_id` (from `org.public_metadata.internal_org_id`). Organizations is enabled on the Development instance; saving the claims in the dashboard did not persist, so the AI tier cannot verify tokens until that is set.
+- `CLERK_WEBHOOK_SECRET` is unset (no public URL for a webhook endpoint). LiveKit, Deepgram and S3 or R2 credentials are unset; the Deepgram DPA is unsigned.
+- GPU SLOs, the reranker and embedding batch targets, and Grafana panels against a live load are unmeasured.
+- No alert receiver; `api-gateway` `/metrics` needs a bearer token so it is not scraped; the `core_api` and `meeting_service` consumers have no compose service.
+- Cost model in `_canon/05-capacity-math.md` still prices the earlier Haiku, Sonnet and Opus; it needs re-costing for Haiku 5.5 and the transcription change to one vendor stream per participant track.
+- The audio tap runs in the API process (single replica only); more replicas need a dedicated worker.
+- The `mytheus-intelligence` compose uses `network_mode: bridge` (Docker address pools were exhausted on the host) and `minio/minio:latest`; both should be revisited.
+- Out of scope this round: `mytheus-mobile`, CI workflows, `mytheus-ui` and `non/mytheus-web`.
