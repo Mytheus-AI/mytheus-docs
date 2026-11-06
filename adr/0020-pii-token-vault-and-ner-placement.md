@@ -37,6 +37,14 @@ deliberately assigns to compliance rather than answering (§ The unavailable-NER
 **Accepted for the data model and the call graph. Blocked for implementation** on the key-custody
 precondition below. As with ADR-0018, ratifying this does not authorize writing the migration.
 
+**Amended 2026-11-06.** The key-custody substrate now exists as a library and a seam
+([ADR-0024](0024-key-custody-and-envelope-encryption.md)), and `pii_tokens` is migrated
+(`mytheus-backend` `a2afd3bef634`) with the vault module and its `/pii-tokens/*` routes built
+but not mounted. The precondition is met: the production custodian is a local KEK file on the VPS
+([ADR-0026](0026-vps-file-kek-custody.md)), with the residual risk and required mitigations
+recorded there. The
+unavailable-NER question below now carries a proposed default, still awaiting a decision.
+
 ---
 
 ## Context
@@ -182,3 +190,15 @@ whether losing a meeting's record is preferable to storing names and organizatio
 regex layer never covered anyway, and it may differ per tenant. This ADR does not decide it, in
 the same way [ADR-0018](0018-consent-entity-behind-flag.md) leaves the consent-enforcement call
 to legal. **Assigned to: Security/Compliance, before implementation.**
+
+### Proposed default (2026-11-06), pending the user's decision
+
+**Option 1, fail closed: hold the final, do not persist it regex-only.** A held final can be
+retried when `ner-service` returns, or re-transcribed from the recording. A persisted
+regex-only row with unredacted names and organizations is a disclosure that cannot be taken
+back once it has been embedded and fanned out to the AI tier. Option 2 is still available as
+a per-tenant override if compliance decides some tenants would rather keep a partially
+redacted record than risk losing one. The default is encoded once, in
+`mytheus-backend` `services/identity_tenant_service/pii_vault/policy.py`
+(`final_disposition`), so all three boundaries import one answer. It is not yet wired into
+`transcription-service`. **Status: PROPOSED, flagged for the user.**
