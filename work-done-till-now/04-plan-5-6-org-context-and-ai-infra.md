@@ -57,9 +57,13 @@ Neither `DECISION-REQUIRED` callout needed a canon change (see above), so this b
 
 ### 1.5 `mytheus-ui`: untouched, by decision
 
+> **Audit 2026-11-06 (static, not executed):** still true that the `mytheus-ui` org page does not call `bff/org/chart` and there is no `people/[id]` page. See section 11 and 00 gap 48.
+
 Section 3.5's org-chart and person-profile UI (`app/(dashboard)/org/page.tsx`, `app/(dashboard)/people/[id]/page.tsx`) were deliberately not built, per the same kind of out-of-scope decision Plan 3-4 recorded for the meeting-room and captions UI. The `bff` endpoints those screens need (`GET /bff/org/chart`, `GET /bff/people/{user_id}`) were built in full, and their exact JSON shapes, status codes, and degrade semantics are documented in task 5's report for whoever builds the UI next.
 
 ### 1.6 `mytheus-mobile`: untouched, not a scoped decision
+
+> **Audit 2026-11-06 (static, not executed):** the person profile is still on mock data, though mobile's API layer and Clerk landed elsewhere (`77290c3`). See section 11.
 
 Section 7 (removing the mock for people data, adding Clerk Expo auth, and the person-profile screen reading `get_user_context`-backed data from `bff`) was not built. Unlike `mytheus-ui`, this is not a recorded product-owner exclusion for this band: the resolved-decisions note at the top of the controller's ledger names `mytheus-ui` as out of scope and says nothing about `mytheus-mobile`, and none of the band's ten dispatched tasks covered it. Recorded as an open gap, not a decision.
 
@@ -194,6 +198,8 @@ Every command below was run and its output observed during this band, in each re
 ---
 
 ## Task 10: search-service
+
+> **Audit 2026-11-06 (static, not executed):** the Status line at the top of this file says task 10 was still running; it landed (commit `0d0a42f`, Clerk JWT in `9ea2f9b`) and that line is stale. See section 11.
 
 Landed as commit `0d0a42f` in `mytheus-intelligence`. 134 tests pass (112 before this task, 22 new),
 all against real Postgres, Redis, Redpanda and Schema Registry. `ruff`, `black` and `mypy` clean.
@@ -652,3 +658,13 @@ emitting and byte-comparing, and it is unsolved for Avro. Recorded as gap 38.
 - [03-plan-3-4-meeting-and-transcription.md](03-plan-3-4-meeting-and-transcription.md) for the meeting and transcription tier this band builds on, including the `transcript_chunks` partition-grant defect and its fix, directly relevant to gap 15 above.
 - [adr/0006-vector-store-tenancy.md](../adr/0006-vector-store-tenancy.md) and [adr/0017-transcript-chunks-composite-partition-key.md](../adr/0017-transcript-chunks-composite-partition-key.md) for the two decisions this band's `DECISION-REQUIRED` callouts resolved against.
 - [plan/plan-5-6-org-context-and-ai-infra.md](../plan/plan-5-6-org-context-and-ai-infra.md) for the plan this record audits.
+
+## 11. Audit 2026-11-06
+
+Static code audit, **not executed**. Other agents' changes were in flight; the lead will fold in final results.
+
+- **Task 10 `search-service`:** landed, `mytheus-intelligence` `0d0a42f`; Clerk JWT in `9ea2f9b`. The header "nine of ten" is stale.
+- **Closed, confirmed in source:** team-membership cache eviction (`mytheus-backend` `9f51192`); Qdrant read/write key isolation (`mytheus-intelligence` `f87ec4b`).
+- **Still open, confirmed:** `Topic` node seeding (00 gap 16), GPU packaging, SLO measurement and Grafana (00 gaps 18, 37).
+- **`mytheus-ui`:** org page does not call `bff/org/chart`; no `people/[id]` page. **`mytheus-mobile`:** person profile still on mock data.
+- **New finding:** the `pii_redaction_enabled` default is `false` in code and `true` in the database. Recorded only; which is intended is a decision for canon or an ADR (00 gap 51).

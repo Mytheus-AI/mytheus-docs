@@ -431,6 +431,8 @@ Gap 2 is superseded by section 14: the mobile realign landed.
 
 ### 14.1 What landed
 
+> **Audit 2026-11-06 (static, not executed):** the 00 gap 32 correction of this section is itself partly wrong. The API layer, sign-in, secure-store and an api-client test did land, in `mytheus-mobile` commit `77290c3`; mobile is still not mock-free. See section 20.
+
 | Artifact | What it does |
 |---|---|
 | `src/api/client.ts` | The single base fetch wrapper. Knows one address and one credential, injects the Clerk bearer, attaches `Idempotency-Key` to every mutation, and parses RFC 7807 into a typed `ApiError` carrying the stable `code`. |
@@ -887,3 +889,11 @@ With a syntactically valid key supplied, the full build passes.
   available to the org-chart and person-profile UI when that is built, which is where B9 starts.
 - **Nothing was run against a deployed backend.** The types are checked against the specs, and
   the specs are emitted from the code, but no request was made through a live gateway.
+
+## 20. Audit 2026-11-06
+
+Static code audit, **not executed**. Other agents' code changes were in flight; the lead will fold in final results. Earlier sections are kept as history.
+
+- **Idempotency `409` (observed in source).** `libs/shared/idempotency.py` returns `409` on key reuse with a different body, using a request fingerprint. The "`IDEMPOTENCY_KEY_REUSED` remains unmet" claim in 00 gap 3 is stale for the behavior; no `409` test existed at audit time. See 00 gap 43.
+- **`mytheus-mobile` API layer.** Landed in commit `77290c3` (`src/api`, sign-in, secure-store, api-client test). 00 gap 32's "never landed" is wrong for those artifacts. Not mock-free: `library`, `people`, `actions`, `profile`, `recap`, `insights` and `live-session` import `@/data/mock`. The band-status line "clients not started" at the top of this file is also stale. See 00 gap 44.
+- **`POST /api/v1/orgs`** returns `501`. See 00 gap 45.
