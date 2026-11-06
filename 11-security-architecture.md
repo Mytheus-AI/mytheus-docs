@@ -276,7 +276,7 @@ oauth_tokens (RLS by org_id):
 | **In transit — internal** | mTLS between services (service mesh on EKS/GKE); TLS to Redpanda, Postgres, Qdrant, Redis | Internal hops are not implicitly trusted ([Multi-Tenancy §4](06-multi-tenancy.md): signed internal `org_id` header re-verified). |
 | **At rest — Postgres** | Provider-managed volume encryption (Supabase/managed Postgres) | Covers `transcript_chunks`, `decisions`, `worklogs`, etc. RLS, not encryption, is the tenant boundary. |
 | **At rest — application-layer** | Envelope encryption with **per-tenant KMS data key** for `oauth_tokens` and `tenant_settings.sso_config` | The fields too sensitive for volume encryption alone ([Data Model §2.2](_canon/02-data-model.md)). |
-| **At rest — Qdrant / object storage / Redpanda** | Provider-managed encryption; object buckets (`nexus-recordings`, `nexus-invoices`, `nexus-audit-archive`) encrypted, invoices/audit under object lock | [Data Model §6](_canon/02-data-model.md). |
+| **At rest — Qdrant / object storage / Redpanda** | Provider-managed encryption; object buckets (`mytheus-recordings`, `mytheus-invoices`, `mytheus-audit-archive`) encrypted, invoices/audit under object lock | [Data Model §6](_canon/02-data-model.md). |
 
 > [SaaS-scale adjustment] The PDF named no encryption posture. The **per-tenant KMS data key** ([Data Model §2.2](_canon/02-data-model.md)) is the load-bearing addition: it makes **crypto-shredding** the RTBF fast path — destroying a tenant's data key renders its `oauth_tokens` and `sso_config` ciphertext permanently unreadable in one operation, complementing the row/partition/collection deletes in the Temporal RTBF workflow ([Data Architecture](05-data-architecture.md), [Data Model §7](_canon/02-data-model.md)). Data residency ([Data Model `data_residency`](_canon/02-data-model.md)) pins each tenant's KMS key, DB cell, Qdrant region, and object bucket to its `region` for GDPR.
 
@@ -361,7 +361,7 @@ Non-repudiation rests on `audit_logs` ([Data Model §2.2](_canon/02-data-model.m
 audit_logs (RLS by org_id; APPEND-ONLY — no UPDATE, no DELETE):
   actor_id, actor_type ('user'|'agent'|'system'),
   action, target_type, target_id, metadata jsonb, ip, occurred_at
-  -- monthly range partitions; 1y hot, archived to nexus-audit-archive (object lock) for SOC2
+  -- monthly range partitions; 1y hot, archived to mytheus-audit-archive (object lock) for SOC2
 ```
 
 Tamper-evidence comes from the table being **append-only** (no `UPDATE`/`DELETE` grant to any request-path role) and cold partitions archived under **object lock** ([Data Model §6](_canon/02-data-model.md)). Auth denials, RBAC grant changes, SCIM/webhook applies, integration install/revoke, agent collaborations, and RTBF completions are all audited — the trail an attacker cannot quietly rewrite.

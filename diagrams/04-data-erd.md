@@ -508,6 +508,6 @@ Three tables in the ERD are flows, not stocks, and dominate write volume. They b
 | `transcript_chunks` | **1,728,000,000 / mo** (21.0B/yr) | T3 / T4 | monthly range on `created_at`; hot 90d → cold object tier |
 | `chat_messages` | (rides meeting volume, R4 = 4.8M meetings/mo) | R4 | monthly range on `created_at` |
 | `usage_events` | metering ingest (append-only) | — | daily range on `occurred_at`; raw 90d → summarized |
-| `audit_logs` | append-only, tamper-evident | — | monthly range on `occurred_at`; 1yr hot → `nexus-audit-archive` |
+| `audit_logs` | append-only, tamper-evident | — | monthly range on `occurred_at`; 1yr hot → `mytheus-audit-archive` |
 
-> [SaaS-scale adjustment] The PDF carried no partitioning — it treated `transcript_chunks` as one indexed table, correct for the `2 orgs × 10 users × 5 meetings` seeder but not for 21B rows/year. Range partitioning, the 90-day hot window, cold-tiering to `nexus-recordings`/cold object storage, and partition-drop RTBF are all SaaS-scale additions. See [Data Architecture §8](../05-data-architecture.md) and [Capacity Math §4](../_canon/05-capacity-math.md).
+> [SaaS-scale adjustment] The PDF carried no partitioning — it treated `transcript_chunks` as one indexed table, correct for the `2 orgs × 10 users × 5 meetings` seeder but not for 21B rows/year. Range partitioning, the 90-day hot window, cold-tiering to `mytheus-recordings`/cold object storage, and partition-drop RTBF are all SaaS-scale additions. See [Data Architecture §8](../05-data-architecture.md) and [Capacity Math §4](../_canon/05-capacity-math.md).

@@ -87,7 +87,7 @@ flowchart TB
     PG[("PostgreSQL (Supabase)<br/>+ Apache AGE nexus_knowledge<br/>RLS by org_id")]
     QD[("Qdrant Cloud<br/>per-tenant collections")]
     RD[("Redis (Upstash)<br/>namespaced nexus:org_id:*")]
-    OBJ[("Object storage (S3)<br/>nexus-recordings / -documents / -invoices")]
+    OBJ[("Object storage (S3)<br/>mytheus-recordings / -documents / -invoices")]
   end
 
   subgraph Managed["External managed planes"]

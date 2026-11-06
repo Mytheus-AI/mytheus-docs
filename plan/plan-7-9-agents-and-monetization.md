@@ -122,7 +122,7 @@ Ordering is a precondition chain. **Within P7: billing before runtime before the
      status            text        NOT NULL,                  -- open|paid|void
      amount_due_cents  integer     NOT NULL,
      tax_cents         integer     NOT NULL DEFAULT 0,
-     pdf_url           text,                                  -- → nexus-invoices bucket
+     pdf_url           text,                                  -- → mytheus-invoices bucket
      created_at        timestamptz NOT NULL DEFAULT now(),
      PRIMARY KEY (id)
    );  -- IMMUTABLE once finalized; 7-yr retention; excluded from RTBF purge.

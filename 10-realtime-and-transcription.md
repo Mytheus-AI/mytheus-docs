@@ -5,7 +5,7 @@ The frozen, production-grade specification of the NEXUS real-time tier — LiveK
 ## Related documents
 
 - [Container Architecture](03-container-architecture.md) — the C4 L2 view; `realtime-gateway`, `transcription-service`, and `meeting-service` containers and their edges.
-- [Data Architecture](05-data-architecture.md) — `transcript_chunks` partitioning/retention, `nexus-recordings` bucket, Redis namespaces.
+- [Data Architecture](05-data-architecture.md) — `transcript_chunks` partitioning/retention, `mytheus-recordings` bucket, Redis namespaces.
 - [Multi-Tenancy & Tenant Isolation](06-multi-tenancy.md) — `org_id` injection, namespaced Redis, tenant-keyed partitions.
 - [Event-Driven Architecture](07-event-architecture.md) — authority for `transcript-chunks`, `agent-stream`, `meeting-room-events`, `presence-events` schemas, partition keys, and retention.
 - [Service Catalog](_canon/01-service-catalog.md) — canonical service names, ownership, and sync-API boundaries.
@@ -133,7 +133,7 @@ LiveKit drives meeting lifecycle state via signed webhooks, received only by `me
 |---|---|---|
 | `room.created` | Mark `meetings.status = active`; ensure the `meeting_rooms` (LiveKit room ↔ meeting) map row exists. | `meeting-room-events` |
 | `participant.joined` | Confirm presence; signal the audio hook to start the Deepgram stream if this is the first participant. | `meeting-room-events` |
-| `recording.ready` (egress) | Persist the recording/egress reference into `meeting_rooms`; the object lands in `nexus-recordings` at `{org_id}/{meeting_id}/`. | `meeting-room-events` |
+| `recording.ready` (egress) | Persist the recording/egress reference into `meeting_rooms`; the object lands in `mytheus-recordings` at `{org_id}/{meeting_id}/`. | `meeting-room-events` |
 
 `meeting-room-events` is owned and partitioned by [Event-Driven Architecture §4](07-event-architecture.md) (`MeetingRoomEvent`, 24 partitions, 3-day retention, key `org_id`) — consumed by `transcription-service` (to open/close streams) and `core-api`. This document does not redefine that schema.
 
@@ -391,7 +391,7 @@ sequenceDiagram
     RT-->>U: live captions + streamed agent sidebar output
     Note over U,RT: interactive p50 < 2s / p95 < 4s; batched extraction on ≤30s cadence
     LK->>MEET: webhook recording.ready
-    MEET->>MEET: persist egress ref → meeting_rooms; object → nexus-recordings/{org_id}/{meeting_id}/
+    MEET->>MEET: persist egress ref → meeting_rooms; object → mytheus-recordings/{org_id}/{meeting_id}/
 ```
 
 Lifecycle invariants:

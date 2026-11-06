@@ -5,7 +5,7 @@ The frozen, production-grade specification of the NEXUS `integration-service` �
 ## Related documents
 
 - [Service Catalog](04-service-catalog.md) — `integration-service`, `workflow-service`, `notification-service`, `ingestion-service` ownership, events, and failure modes (§3.7, §3.10, §3.13).
-- [Data Architecture](05-data-architecture.md) — `integration_connections`, `oauth_tokens`, envelope encryption, `nexus-attachments` bucket, retention.
+- [Data Architecture](05-data-architecture.md) — `integration_connections`, `oauth_tokens`, envelope encryption, `mytheus-attachments` bucket, retention.
 - [Event-Driven Architecture](07-event-architecture.md) — authority for `integration-events`, `actions`, `notifications`, `meeting-events` schemas, the shared `EventEnvelopeHeader`, partition keys, retention, outbox/inbox, DLQ.
 - [Multi-Tenancy & Tenant Isolation](06-multi-tenancy.md) — `org_id` injection, namespaced Redis, tenant-keyed partitions.
 - [Security Architecture](11-security-architecture.md) — KMS envelope encryption, deny-by-default authz, secret handling.
@@ -14,7 +14,7 @@ The frozen, production-grade specification of the NEXUS `integration-service` �
 - [RAG & Inference Serving](09-rag-and-inference-serving.md) — the RAG pipeline reused to assemble personalized prep briefs and summaries.
 - [Real-time & Transcription](10-realtime-and-transcription.md) — `meeting-events`, `meetings.livekit_room`, the meeting lifecycle integrations hook into.
 - [Service Catalog (canon)](_canon/01-service-catalog.md) — canonical service names and sync-API ownership.
-- [Canonical Data Model](_canon/02-data-model.md) — `integration_connections`, `oauth_tokens`, `action_items`, `meetings`, `users`, `nexus-attachments`.
+- [Canonical Data Model](_canon/02-data-model.md) — `integration_connections`, `oauth_tokens`, `action_items`, `meetings`, `users`, `mytheus-attachments`.
 - [Capacity & Scaling Math](_canon/05-capacity-math.md) — frozen anchors (R4, A15) and SLO targets.
 - [Locked Tech & Architecture Decisions](_canon/06-tech-decisions.md) — §2.13 (integrations), §2.12 (SaaS business), §2.11 (security).
 
@@ -205,7 +205,7 @@ The mapping rules:
 | `start.dateTime` / `end.dateTime` | `meetings.scheduled_start` / `scheduled_end` | Stored UTC (`timestamptz`). |
 | `attendees[].email` | `meeting_participants.user_id` | Email-to-user matching (§3.3). Unmatched attendees recorded as external, not participants. |
 | `conferenceData` / location | `meetings.livekit_room` | NEXUS mints its own LiveKit room ([Real-time & Transcription §2 — LiveKit transport; token minting §2.3](10-realtime-and-transcription.md)); the calendar link is replaced/augmented with the NEXUS join URL when the org opts in. |
-| `attachments[]` | `nexus-attachments` bucket + `document_chunks` | Routed to ingestion (§3.4). |
+| `attachments[]` | `mytheus-attachments` bucket + `document_chunks` | Routed to ingestion (§3.4). |
 | `iCalUID` / `event_id` | external↔NEXUS id map | Idempotency anchor; one `meetings` row per calendar event per tenant. |
 
 Idempotency: the upsert is keyed on `(org_id, calendar event_id)`, so redelivered pushes and full re-syncs never create duplicate meetings — they patch the existing row. This is the calendar arm of the at-least-once + idempotency contract in [Event Architecture §6](07-event-architecture.md).
@@ -228,14 +228,14 @@ Event attachments are **not** ingested by a bespoke path — they reuse the exac
 ```mermaid
 flowchart LR
   ATT["Calendar attachment<br/>(Drive file / file ref)"] --> INTEG["integration-service<br/>fetch bytes via Drive scope"]
-  INTEG -->|store| BKT["nexus-attachments<br/>{org_id}/{meeting_id}/"]
+  INTEG -->|store| BKT["mytheus-attachments<br/>{org_id}/{meeting_id}/"]
   INTEG -->|integration-events:<br/>attachment_to_ingest| RP[["Redpanda"]]
   RP --> ING["ingestion-service<br/>unstructured.io → typed elements<br/>RecursiveCharacterTextSplitter 600/60"]
   ING -->|document-chunks| EMB["embedding-service<br/>BGE-small 384-dim"]
   EMB --> QD[("Qdrant<br/>document_chunks__{org_id}")]
 ```
 
-- `integration-service` downloads the attachment bytes (Drive read scope), writes the original to the `nexus-attachments` bucket under the per-tenant `{org_id}/{meeting_id}/` prefix ([Data Model §6](_canon/02-data-model.md)), and emits `integration-events {kind = attachment_to_ingest}`.
+- `integration-service` downloads the attachment bytes (Drive read scope), writes the original to the `mytheus-attachments` bucket under the per-tenant `{org_id}/{meeting_id}/` prefix ([Data Model §6](_canon/02-data-model.md)), and emits `integration-events {kind = attachment_to_ingest}`.
 - `ingestion-service` consumes it and runs the **same** unstructured.io → typed-element (`Title`/`NarrativeText`/`Table`/`ListItem`) → LangChain `RecursiveCharacterTextSplitter` (600/60, `SemanticChunker` for narrative docs) pipeline, producing `document_chunks` rows and `document-chunks` events that `embedding-service` embeds into `document_chunks__{org_id}`.
 - Capacity: per [Capacity Math §5](_canon/05-capacity-math.md), attachments are sized at A15 = 30% of meetings, ~15,000 chars each → ~27.8 document vectors per attached doc; the calendar path contributes to V4 (document vectors/meeting), not a separate budget.
 

@@ -154,7 +154,7 @@ The six agents act here: **PersonalListenerAgent** writes per-user `worklogs`; *
 
 ### 3.4 P4 — End & summarize
 
-When the last participant leaves, LiveKit fires `recording.ready` (egress); `meeting-service` records the egress reference into `meeting_rooms` (recording object lands in `nexus-recordings` at `{org_id}/{meeting_id}/`) and `core-api` sets `meetings.status = ended`, emitting `meeting-events (ended)`. The `MeetingLifecycleWorkflow` advances to its summarize step: `rag-service` assembles a **per-participant** summary from confirmed `decisions`/`action_items` and the user's `worklogs`, with citations; `notification-service` delivers it to channel/DM.
+When the last participant leaves, LiveKit fires `recording.ready` (egress); `meeting-service` records the egress reference into `meeting_rooms` (recording object lands in `mytheus-recordings` at `{org_id}/{meeting_id}/`) and `core-api` sets `meetings.status = ended`, emitting `meeting-events (ended)`. The `MeetingLifecycleWorkflow` advances to its summarize step: `rag-service` assembles a **per-participant** summary from confirmed `decisions`/`action_items` and the user's `worklogs`, with citations; `notification-service` delivers it to channel/DM.
 
 ### 3.5 P5 — Follow-up: ActionFollowUpWorkflow and ticket sync
 

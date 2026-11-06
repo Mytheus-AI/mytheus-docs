@@ -27,7 +27,7 @@
   - **End of P10:** in a live meeting, participant A's `ContextGapAgent` detects a gap ("the Q3 pricing decision"), asks participant B's agent over `agent-requests`; B's agent answers over `agent-responses` inside the deadline; A sees a "Context added from B's agent" card; a cross-tenant probe is DLQ'd and audited; the `MeetingLifecycleWorkflow` runs real activities (open → transcribe-watch → post-process → close) end-to-end; the `agent_collaborations` log UI shows every round-trip with success/latency.
   - **End of P11:** the same meeting surfaces a **red conflict banner** ("this decision contradicts the W29 architecture decision") computed over the AGE `FOLLOWS_FROM` lineage + `decisions__{org_id}` Qdrant complement; a workload alert ("Priya already owns 6 open actions"); streamed `agent-stream` token deltas render progressively in the sidebar via the Redis pub/sub backbone, with urgent alerts pre-empting notes in `nexus:{org_id}:queue:agent:{user_id}`.
   - **End of P12 (the headline):** an admin connects **Jira** via OAuth on the integration settings page; a confirmed NEXUS `action_items` row creates a **real Jira issue**; moving that issue to "Done" in Jira flips `action_items.status` to `done` (loop-suppressed); the `ActionFollowUpWorkflow` fires a day-1 reminder Slack DM through `notification-service`; a Google Calendar event auto-creates a `meetings` row and ingests its attachment; both `admin-ops-service` consoles operate (members/plan/integrations; cost/lag dashboards, tenant suspend, audit-log access, feature flags).
-  - **End of P13 (GA):** Playwright E2E (web + mobile) and k6/Locust load suites are green against the §5 SLOs; the security attestation is signed; LLM cost is measured ~30% down (C4 ≈ $6.99/MAU); Stripe subscriptions/invoices/dunning/tax are live; Postgres has PITR + a read replica; `audit_logs` partitions archive to `nexus-audit-archive`; the app is live behind Cloudflare on the custom domain, deployed on Railway/Render. **First paying tenant onboarded.**
+  - **End of P13 (GA):** Playwright E2E (web + mobile) and k6/Locust load suites are green against the §5 SLOs; the security attestation is signed; LLM cost is measured ~30% down (C4 ≈ $6.99/MAU); Stripe subscriptions/invoices/dunning/tax are live; Postgres has PITR + a read replica; `audit_logs` partitions archive to `mytheus-audit-archive`; the app is live behind Cloudflare on the custom domain, deployed on Railway/Render. **First paying tenant onboarded.**
 
 ---
 
@@ -62,7 +62,7 @@ This band introduces **no new** service, table, topic, agent, collection, Redis-
 - **AGE graph `nexus_knowledge`:** nodes `Person`/`Meeting`/`Decision`/`Action`/`Topic`; edges `ATTENDED`/`PRODUCED`/`ASSIGNED_TO`/`RELATES_TO`/`FOLLOWS_FROM` (edges on confirmation only). `ProactiveAgent` reads `FOLLOWS_FROM` lineage; no new edge label is introduced.
 - **Qdrant collections:** `transcript_chunks__{org_id}`, `document_chunks__{org_id}`, `decisions__{org_id}` (the conflict-detection complement). BGE-small-en 384-dim cosine int8.
 - **Redis keys (all `nexus:{org_id}:…`):** `nexus:{org_id}:pubsub:meeting:{meeting_id}` (Socket.io fan-out), `nexus:{org_id}:queue:agent:{user_id}` (per-user priority queue), `nexus:{org_id}:a2a:grant:{grantee_role}:{query_class}:{target_scope}` (A2A decision cache, 60s TTL), `nexus:{org_id}:oauth:{state}` (PKCE verifier, 10-min TTL), `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (inbox, 24h), `nexus:{org_id}:budget:{period}` (budget hot mirror), `nexus:{org_id}:ratelimit:{user_id}` (per-user LLM limit), `nexus:{org_id}:dedupe:stripe:{event_id}` (Stripe webhook dedupe).
-- **Object buckets:** `nexus-attachments` (calendar attachments, `{org_id}/{meeting_id}/`), `nexus-invoices` (immutable, 7-yr, object lock), `nexus-audit-archive` (object lock), `nexus-exports` (auto-expiring GDPR exports).
+- **Object buckets:** `mytheus-attachments` (calendar attachments, `{org_id}/{meeting_id}/`), `mytheus-invoices` (immutable, 7-yr, object lock), `mytheus-audit-archive` (object lock), `mytheus-exports` (auto-expiring GDPR exports).
 - **Sync surfaces (canon §6):** `/oauth/{provider}`, `/webhooks/{provider}` (integration-service); `/billing/*`, `/stripe/webhook`, `/usage` (billing-metering-service); `/admin/tenant/*`, `/admin/ops/*` (admin-ops-service); `/agents/*`, `/workflows/*` (internal only).
 - **Providers (closed enum):** `google_calendar | slack | jira | linear` — R8 hard cap.
 - **Capacity symbols (imported, never re-derived):** `A4`, `A5`, `A6`, `E7`, `L4`, `R4`, `C2`, `C3`, `C4`, `L7`, `L10`, `V7`.
@@ -478,7 +478,7 @@ Ordering is a precondition chain. **P10 before P11** because `ProactiveAgent` re
 1. **Google Calendar connector** ([21 §3](../21-integration-architecture.md)):
    - Register a push channel (`events.watch`) per connected calendar; store channel id + `resourceId` + `syncToken` in the cursor map; renew before ~7-day expiry via a `MeetingLifecycleWorkflow` child timer.
    - On push: `events.list(syncToken)` → delta; resolve attendee emails → `user_id` via `identity-tenant-service` (tenant-scoped on `users.email`); emit `integration-events {kind=calendar_event_upserted}` for `core-api` to upsert `meetings` + `meeting_participants` (idempotent on `(org_id, calendar event_id)`). `integration-service` does NOT write `meetings`.
-   - Attachments: download bytes (Drive scope), write to `nexus-attachments/{org_id}/{meeting_id}/`, emit `integration-events {kind=attachment_to_ingest}` for `ingestion-service` (reuses the unstructured.io → `document_chunks` → `document_chunks__{org_id}` path).
+   - Attachments: download bytes (Drive scope), write to `mytheus-attachments/{org_id}/{meeting_id}/`, emit `integration-events {kind=attachment_to_ingest}` for `ingestion-service` (reuses the unstructured.io → `document_chunks` → `document_chunks__{org_id}` path).
 2. **Slack connector** ([21 §4](../21-integration-architecture.md)): bot OAuth + workspace/channel/user id maps. `integration-service` **builds** Block Kit (prep briefs, post-meeting summaries) but **delivery goes through `notification-service`** via the `notifications` topic (the sole external fan-out). Prep brief: a `MeetingLifecycleWorkflow` child timer fires at T-15m per matched participant; builds a personalized brief from `get_user_context` + a `rag-service` query; one `notifications {channel=slack_dm}` per user. Post-meeting summary on `meeting-events {ended}`: confirmed decisions/actions only.
 3. **Jira connector (the end goal) — bidirectional `action_items` sync** ([21 §5](../21-integration-architecture.md)):
    - **Outbound:** consume `actions` (confirmed, from `core-api` outbox); create a Jira issue `POST /rest/api/3/issue` with field mapping (`content`→`summary`, long-form+back-link→`description` ADF, `assignee_id`→accountId, `due_date`→`duedate`, status per §5.3 map, `id`→label `nexus:{id}` + remote link). Carry `actions.header.idempotency_key`; first look up the id map, fall back to a provider-side idempotent search on the `nexus:{id}` label. Write the external key/URL to the id map.
@@ -486,10 +486,10 @@ Ordering is a precondition chain. **P10 before P11** because `ProactiveAgent` re
    - **Status map** (integration-service-defined): NEXUS `open`/`in_progress`/`done`/`cancelled` ↔ Jira To Do/In Progress/Done/Won't-Do; unmapped external states fall to `open` + a low-priority "review status mapping" `notifications`.
    - Assignee resolution: `users.id` → Jira accountId via the install-time account map + email match; if none, create unassigned + a re-map `notifications`.
 
-**Canonical names:** `integration-events`, `IntegrationEvent`, `actions`, `Action`, `meetings`, `meeting_participants`, `nexus-attachments`, `document_chunks__{org_id}`, `notifications`, `get_user_context`, `rag-service`, `ingestion-service`.
+**Canonical names:** `integration-events`, `IntegrationEvent`, `actions`, `Action`, `meetings`, `meeting_participants`, `mytheus-attachments`, `document_chunks__{org_id}`, `notifications`, `get_user_context`, `rag-service`, `ingestion-service`.
 
 **Acceptance checks:**
-- **Calendar:** a created/updated event auto-creates/patches a `meetings` row (one per calendar event, idempotent); attendees email-match to `meeting_participants`; an attachment lands in `nexus-attachments` and becomes searchable in `document_chunks__{org_id}` before the meeting.
+- **Calendar:** a created/updated event auto-creates/patches a `meetings` row (one per calendar event, idempotent); attendees email-match to `meeting_participants`; an attachment lands in `mytheus-attachments` and becomes searchable in `document_chunks__{org_id}` before the meeting.
 - **Slack:** a per-participant Block Kit prep brief delivers at T-15m via `notification-service`; the post-meeting summary contains only confirmed decisions/actions.
 - **Jira (headline):** confirming a NEXUS action creates a real Jira issue with the correct fields and the `nexus:{id}` label; a redelivered `actions` event does NOT create a duplicate ticket; moving the issue to Done in Jira flips `action_items.status` to `done`; a status change that originated in NEXUS is loop-suppressed (no echo).
 
@@ -544,14 +544,14 @@ Ordering is a precondition chain. **P10 before P11** because `ProactiveAgent` re
    ```bash
    uv run alembic revision -m "feat(admin-ops): add feature_flags, ops_audit_log, support_grants"
    ```
-2. **Tenant-admin console** `/admin/tenant/*` (RBAC-gated, every write to `audit_logs`): Members (invite/remove, RBAC tier change, ownership transfer); Billing (plan change, seats, invoice download, Stripe Customer Portal link — `owner`); Usage (consumption vs quota from `/usage`); Integrations (install/revoke Calendar/Slack/Jira-Linear, R8); SSO & SCIM (Enterprise); Settings (`tenant_settings` retention, PII redaction, agent confidence overrides); Data export & erasure (→ `nexus-exports` / RTBF). Also exposes the **A2A grant template** management (§3.2).
+2. **Tenant-admin console** `/admin/tenant/*` (RBAC-gated, every write to `audit_logs`): Members (invite/remove, RBAC tier change, ownership transfer); Billing (plan change, seats, invoice download, Stripe Customer Portal link — `owner`); Usage (consumption vs quota from `/usage`); Integrations (install/revoke Calendar/Slack/Jira-Linear, R8); SSO & SCIM (Enterprise); Settings (`tenant_settings` retention, PII redaction, agent confidence overrides); Data export & erasure (→ `mytheus-exports` / RTBF). Also exposes the **A2A grant template** management (§3.2).
 3. **Internal-ops console** `/admin/ops/*` (NEXUS staff only, deny-by-default, full audit, **no standing cross-tenant data access**): tenant directory; suspend/reinstate (emits `admin-events {tenant suspended}` → `workflow-service`); tenant migrate (residency workflow — Plan 14 trigger only); **feature flags** (`admin-events {flag changed}`); **cost & lag dashboards** (consumer-lag, per-tenant LLM cost, token-budget burn, DLQ rate — reads `billing-events`/`graph-events`/Prometheus, aggregate queries over control-plane events, NOT tenant rows); **audit-log access** (read-only on `audit_logs`, access itself audited); **support impersonation** (time-boxed, customer-consented, every action tagged `actor_type=system`).
 4. **Consume `tenant-events`/`billing-events`/`graph-events`** for the cross-tenant views; **produce `admin-events`** (`flag changed`, `tenant suspended`, `erasure requested`) that `workflow-service` turns into durable orchestrations.
 
-**Canonical names:** `admin-ops-service`, `feature_flags`, `ops_audit_log`, `support_grants`, `audit_logs`, `/admin/tenant/*`, `/admin/ops/*`, `admin-events`, `tenant-events`, `billing-events`, `graph-events`, `nexus-exports`.
+**Canonical names:** `admin-ops-service`, `feature_flags`, `ops_audit_log`, `support_grants`, `audit_logs`, `/admin/tenant/*`, `/admin/ops/*`, `admin-events`, `tenant-events`, `billing-events`, `graph-events`, `mytheus-exports`.
 
 **Acceptance checks:**
-- Tenant-admin: an admin installs Jira, changes plan, sets a confidence override, requests a GDPR export (lands in `nexus-exports`, auto-expiring) — each appends to `audit_logs`.
+- Tenant-admin: an admin installs Jira, changes plan, sets a confidence override, requests a GDPR export (lands in `mytheus-exports`, auto-expiring) — each appends to `audit_logs`.
 - Internal-ops: a staff suspend emits `admin-events {tenant suspended}` → `workflow-service` flips `organizations.status=suspended` (via `identity-tenant-service`, which is the sole `tenant-events` producer); the cost/lag dashboard renders from aggregate event queries, NOT tenant-row selects; impersonation is time-boxed and every impersonated action is tagged `actor_type=system`.
 - A feature-flag flip emits `admin-events {flag changed}`.
 
@@ -580,15 +580,15 @@ Ordering is a precondition chain. **P10 before P11** because `ProactiveAgent` re
 
 **Steps:**
 
-1. **Materialize the billing tables** if not present: `subscriptions`, `invoices` (immutable once finalized, 7-yr, `nexus-invoices` object lock), `plans` (global, no `org_id` — the deliberate exception). `seats` as Stripe subscription quantity.
+1. **Materialize the billing tables** if not present: `subscriptions`, `invoices` (immutable once finalized, 7-yr, `mytheus-invoices` object lock), `plans` (global, no `org_id` — the deliberate exception). `seats` as Stripe subscription quantity.
 2. **Stripe object mapping:** `organizations`→Customer, `subscriptions`→Subscription, seats→quantity, metered overage→metered price items (reported from `usage_aggregates`), `invoices`→Invoice, tax→**Stripe Tax** (VAT/GST/US sales tax; VAT-ID validation for EU B2B reverse-charge).
-3. **`POST /stripe/webhook`** — signature-verified, idempotent on the Stripe event id via `nexus:{org_id}:dedupe:stripe:{event_id}`. Translate `customer.subscription.created/updated`→sync `subscriptions`/`seats`; `invoice.finalized`→write `invoices` + PDF to `nexus-invoices`; `invoice.paid`→mark paid + call `identity-tenant-service` to flip `organizations.status=active` if recovering; `invoice.payment_failed`→`past_due` + start dunning. **`billing-metering-service` never produces `tenant-events`** — it calls `identity-tenant-service` which owns `organizations.status`.
+3. **`POST /stripe/webhook`** — signature-verified, idempotent on the Stripe event id via `nexus:{org_id}:dedupe:stripe:{event_id}`. Translate `customer.subscription.created/updated`→sync `subscriptions`/`seats`; `invoice.finalized`→write `invoices` + PDF to `mytheus-invoices`; `invoice.paid`→mark paid + call `identity-tenant-service` to flip `organizations.status=active` if recovering; `invoice.payment_failed`→`past_due` + start dunning. **`billing-metering-service` never produces `tenant-events`** — it calls `identity-tenant-service` which owns `organizations.status`.
 4. **Dunning saga** (`workflow-service`, durable timers): day 0 (email + in-app, `past_due`), retry (Stripe smart retries), day 7 (reminder #2 + owner Slack DM), day 14 (reminder #3 + agent-throttle warning → `agent_budgets.state=throttled`), day 21 (`workflow-service` calls `identity-tenant-service.suspend(org_id)` → `tenant-events {suspended}`). Delivery via `notification-service`.
 
-**Canonical names:** `subscriptions`, `invoices`, `plans`, `usage_aggregates`, `agent_budgets`, `billing-events`, `/stripe/webhook`, `/billing/*`, `nexus-invoices`, `nexus:{org_id}:dedupe:stripe:{event_id}`.
+**Canonical names:** `subscriptions`, `invoices`, `plans`, `usage_aggregates`, `agent_budgets`, `billing-events`, `/stripe/webhook`, `/billing/*`, `mytheus-invoices`, `nexus:{org_id}:dedupe:stripe:{event_id}`.
 
 **Acceptance checks:**
-- A new Pro subscription bills $25/seat; metered overage reports to Stripe from `usage_aggregates`; an invoice finalizes immutably into `nexus-invoices` under object lock.
+- A new Pro subscription bills $25/seat; metered overage reports to Stripe from `usage_aggregates`; an invoice finalizes immutably into `mytheus-invoices` under object lock.
 - Stripe Tax computes VAT for an EU B2B customer with reverse-charge; `invoices.tax_cents` mirrors it.
 - A failed payment runs the dunning saga to day-21 suspension; `tenant-events {suspended}` is emitted by `identity-tenant-service`, not billing.
 - A redelivered Stripe webhook is a no-op (deduped on event id).
@@ -644,12 +644,12 @@ Ordering is a precondition chain. **P10 before P11** because `ProactiveAgent` re
 **Steps:**
 
 1. **Enable continuous WAL archiving + PITR** and provision an async **read replica** (lag < 5s) on the managed/Supabase Postgres ([14 §4](../14-reliability-and-dr.md)). Route read-heavy paths (`bff` dashboard reads, `search-service` FTS, `rag-service` FTS arm) to the replica; writes + read-your-write (token mint, decision confirm) to the primary.
-2. **`audit_logs` monthly range partitioning + cold archive** to `nexus-audit-archive` (object lock); 1y hot. (The table has captured since P2; P13 hardens partitioning/archival, [22 §3.1](../22-roadmap-and-phasing.md).)
+2. **`audit_logs` monthly range partitioning + cold archive** to `mytheus-audit-archive` (object lock); 1y hot. (The table has captured since P2; P13 hardens partitioning/archival, [22 §3.1](../22-roadmap-and-phasing.md).)
 3. **RPO/RTO:** in-region PITR RPO ≈ seconds, RTO ≤ 2h (Free single-region tier — the MVP go-live posture). Multi-region cross-replica is Plan 14.
 
 **Acceptance checks:**
 - A PITR restore to a pre-incident timestamp succeeds in staging; the read replica serves dashboard reads at < 5s lag.
-- A monthly `audit_logs` partition rolls to `nexus-audit-archive` under object lock.
+- A monthly `audit_logs` partition rolls to `mytheus-audit-archive` under object lock.
 
 #### 3.20 Cloudflare + custom domain + live production deploy (single-node VPS)
 
@@ -677,8 +677,8 @@ Cite [22-roadmap-and-phasing.md §3.1](../22-roadmap-and-phasing.md) (stores by 
 |---|---|---|---|---|---|
 | **P10** | `agent_authz_scopes` (identity, ADR-0013); `agent_collaborations` (core-api, if not earlier) | reads `FOLLOWS_FROM`/`ASSIGNED_TO`/`ATTENDED` (confirmed edges from P8) | reads `decisions__{org_id}` | `nexus:{org_id}:a2a:grant:*` (60s TTL) | — |
 | **P11** | — | reads lineage for `ProactiveAgent` | reads `decisions__{org_id}` (conflict complement) | `nexus:{org_id}:queue:agent:{user_id}`; `nexus:{org_id}:pubsub:meeting:{meeting_id}` | — |
-| **P12** | `integration_connections`, `oauth_tokens` (integration); `feature_flags`, `ops_audit_log`, `support_grants` (admin-ops) | — | — | `nexus:{org_id}:oauth:{state}` (10-min TTL) | `nexus-attachments`; `nexus-exports` (export jobs) |
-| **P13** | `subscriptions`, `invoices`, `plans` (full Stripe surface); `audit_logs` partitioning/archival hardened (table live since P2) | — | — | `nexus:{org_id}:dedupe:stripe:{event_id}` | `nexus-invoices`, `nexus-audit-archive`, `nexus-exports` |
+| **P12** | `integration_connections`, `oauth_tokens` (integration); `feature_flags`, `ops_audit_log`, `support_grants` (admin-ops) | — | — | `nexus:{org_id}:oauth:{state}` (10-min TTL) | `mytheus-attachments`; `mytheus-exports` (export jobs) |
+| **P13** | `subscriptions`, `invoices`, `plans` (full Stripe surface); `audit_logs` partitioning/archival hardened (table live since P2) | — | — | `nexus:{org_id}:dedupe:stripe:{event_id}` | `mytheus-invoices`, `mytheus-audit-archive`, `mytheus-exports` |
 
 All tenant-scoped tables carry `org_id UUID REFERENCES organizations(id)` with RLS `ENABLE` + `FORCE` and the canonical `tenant_isolation` policy; `plans` is the deliberate global exception (no `org_id`). Postgres PITR + read replica are configured in P13 (§3.19).
 
@@ -713,7 +713,7 @@ This band lands the back half of every SaaS overlay stream and closes the W36 MV
 
 - **Security shift-left → final attestation (P13, §3.18).** The continuous program (threat model P1, authz-in-every-PR P2+, SCA/secret-scan day one) culminates in a final attestation + pre-Enterprise pen test/SOC2 readiness. A2A deny-by-default authz (P10) is the band's most novel security surface; `oauth_tokens` envelope encryption (P12) is the crown-jewel control.
 - **Billing + budgets (P13, §3.15).** Metering + per-tenant `agent_budgets` shipped at P7; the full Stripe subscriptions/seats/dunning/tax + immutable `invoices` complete monetization. The ~30% cost optimization (§3.17) protects the C4 margin against the live pipeline.
-- **Compliance (P12-P13).** Subprocessor DPAs/SCCs cover the new egress (Slack/Jira/Google + the existing Deepgram/LLM/LiveKit); `data_residency` pins region; RTBF + `nexus-exports`; `audit_logs` partition/archival to `nexus-audit-archive` under object lock. R8 caps the subprocessor surface.
+- **Compliance (P12-P13).** Subprocessor DPAs/SCCs cover the new egress (Slack/Jira/Google + the existing Deepgram/LLM/LiveKit); `data_residency` pins region; RTBF + `mytheus-exports`; `audit_logs` partition/archival to `mytheus-audit-archive` under object lock. R8 caps the subprocessor surface.
 - **Reliability/DR (P13, §3.19).** PITR + read replica + RPO/RTO for the **Free single-region tier** (the MVP posture). Multi-region active-passive, cells, and chaos engineering are **Plan 14**.
 - **Dedicated inference (already P6/P7).** This band runs `ContextGapAgent`/`ProactiveAgent` on that tier off the API tier; it does not re-decide it.
 

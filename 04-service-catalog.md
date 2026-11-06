@@ -233,7 +233,7 @@ Note one boundary: `core-api` owns the full relational heart — including `work
 - **Owned data.** `meeting_rooms` (LiveKit room ↔ meeting map, egress/recording refs). Store: Postgres, RLS by `org_id`.
 - **API surface (canon §6).** `POST /api/meetings/:id/token`, `POST /livekit/webhook`.
 - **Events.** Consumes `meeting-events` (to open/close rooms). Produces `meeting-room-events` (joined/left/recording-ready). The raw-audio handoff to `transcription-service` is a **server-side LiveKit hook, not a topic**.
-- **Dependencies.** Upstream: `bff`, `core-api` (`meeting-events`), LiveKit (webhooks). Downstream: `transcription-service` (server-side LiveKit audio hook). On the LiveKit `recording.ready` webhook, the recording artifact is written to the `nexus-recordings` object-storage bucket (`{org_id}/{meeting_id}/`, 02 §6) and referenced via `meeting_rooms` egress/recording refs — it does **not** flow into `ingestion-service`, which handles unstructured.io document ingestion (PDF/DOCX/PPTX/HTML/MD/EML) triggered only by `integration-events` (calendar attachments) and direct `/ingest` uploads.
+- **Dependencies.** Upstream: `bff`, `core-api` (`meeting-events`), LiveKit (webhooks). Downstream: `transcription-service` (server-side LiveKit audio hook). On the LiveKit `recording.ready` webhook, the recording artifact is written to the `mytheus-recordings` object-storage bucket (`{org_id}/{meeting_id}/`, 02 §6) and referenced via `meeting_rooms` egress/recording refs — it does **not** flow into `ingestion-service`, which handles unstructured.io document ingestion (PDF/DOCX/PPTX/HTML/MD/EML) triggered only by `integration-events` (calendar attachments) and direct `/ingest` uploads.
 - **Scaling profile.** Canon §4 places it in the CRUD/req-s autoscaler family; functionally scales on concurrent rooms (A5 = 20k peak concurrent meetings). Real-time-adjacent; audio hook fan-out.
 
 > [SaaS-scale adjustment] The PDF left the meeting SDK open (R2: evaluate ≥2 in Phase 1). Canon locks **LiveKit** (self-hostable SFU caps per-minute cost, no per-participant ceiling, strong server-side audio hooks) — always behind the transport adapter so the pick stays swappable (06 §2.7).
@@ -310,7 +310,7 @@ Note one boundary: `core-api` owns the full relational heart — including `work
 
 | Table | Tenant key | Notable fields | Store / note |
 |---|---|---|---|
-| `audit_logs` | `org_id` | `actor_id`, `actor_type` (`user`/`agent`/`system`), `action`, `target_type`, `target_id`, `metadata jsonb`, `ip`, `occurred_at` | Postgres RLS; **append-only, no UPDATE/DELETE** (tamper-evident); monthly range-partition; 1y hot then `nexus-audit-archive`. |
+| `audit_logs` | `org_id` | `actor_id`, `actor_type` (`user`/`agent`/`system`), `action`, `target_type`, `target_id`, `metadata jsonb`, `ip`, `occurred_at` | Postgres RLS; **append-only, no UPDATE/DELETE** (tamper-evident); monthly range-partition; 1y hot then `mytheus-audit-archive`. |
 
 > [SaaS-scale adjustment] `admin-ops-service` owns the compliance `audit_logs` trail and the ops audit log; the entire tenant-admin / internal-ops console surface is SaaS-added — the PDF had no tenant administration or cross-tenant ops tooling.
 
@@ -419,7 +419,7 @@ flowchart LR
 - **Owned data.** `document_chunks` (`org_id`, `document_id`, `element_id`, `element_type`, `text`, `position`) + `document_elements` (typed) + ingestion job state. Postgres, RLS by `org_id`; mirrors Qdrant `document_chunks` payload for citation (02 §2.1, §3).
 - **API surface (canon §6).** `POST /ingest` (file/url), `GET /ingest/jobs/:id`.
 - **Events.** Consumes `integration-events` (calendar attachments to ingest). Produces `document-chunks` (Avro).
-- **Dependencies.** Upstream: `integration-service` (calendar attachments), direct uploads via `bff`. Downstream consumers of `document-chunks`: `embedding-service`, `agent-runtime-service`. Source docs in `nexus-documents`/`nexus-attachments` buckets (02 §6).
+- **Dependencies.** Upstream: `integration-service` (calendar attachments), direct uploads via `bff`. Downstream consumers of `document-chunks`: `embedding-service`, `agent-runtime-service`. Source docs in `mytheus-documents`/`mytheus-attachments` buckets (02 §6).
 - **Scaling profile.** Horizontal + queue-driven; scales on ingestion backlog. Bursty; AI tier. Document attach rate A15 = 30% of meetings, ~27.8 vectors/doc (V3).
 
 > [SaaS-scale adjustment] `ingestion-service` owns `document_chunks` (`rag-service` reads it). A PII-redaction pass on ingest is added for compliance (06 §2.11).

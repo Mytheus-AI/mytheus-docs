@@ -139,9 +139,9 @@ Provisioning **chooses the isolation posture** by writing `data_residency` ([Mul
 ### 2.4 Suspension and offboarding — `suspend -> offboard`
 
 - **Suspend** is reversible. It is triggered by terminal dunning (§4.4) or by an ops action (`admin-events {tenant suspended}` → `workflow-service`). On suspend, the agent tier denies new spawns (deny-by-default authz still applies), the realtime path rejects new room tokens, but **all data is retained** and reads remain available so the customer can pay and recover.
-- **Offboard** is the path to deletion. A cancellation moves the tenant to `pending_deletion` after a grace window (default 30 days, set in `tenant_settings`), during which the tenant admin can pull a full GDPR export (`nexus-exports` bucket, auto-expiring 7 days after generation). When the window elapses — or on an explicit right-to-be-forgotten request — `admin-events {erasure requested}` triggers the **single `org_id`-parameterized RTBF Temporal workflow** that deletes across Postgres, Qdrant, AGE `nexus_knowledge`, Redis, and object storage, then appends an RTBF completion record to `audit_logs` ([Data Model §7](_canon/02-data-model.md), [Multi-Tenancy §RTBF](06-multi-tenancy.md)).
+- **Offboard** is the path to deletion. A cancellation moves the tenant to `pending_deletion` after a grace window (default 30 days, set in `tenant_settings`), during which the tenant admin can pull a full GDPR export (`mytheus-exports` bucket, auto-expiring 7 days after generation). When the window elapses — or on an explicit right-to-be-forgotten request — `admin-events {erasure requested}` triggers the **single `org_id`-parameterized RTBF Temporal workflow** that deletes across Postgres, Qdrant, AGE `nexus_knowledge`, Redis, and object storage, then appends an RTBF completion record to `audit_logs` ([Data Model §7](_canon/02-data-model.md), [Multi-Tenancy §RTBF](06-multi-tenancy.md)).
 
-Because every store is `org_id`-keyed, deletion is mechanical: drop the tenant's monthly partitions and rows, drop its Qdrant `__{org_id}` collections, remove its `$org_id` AGE nodes/edges, flush `nexus:{org_id}:*` Redis keys, and delete the `{org_id}/*` object prefixes. `invoices` are the one exception — they are immutable and retained **7 years** for tax/compliance ([Data Model §2.2](_canon/02-data-model.md)), stored in `nexus-invoices` under object lock, and excluded from the purge by policy.
+Because every store is `org_id`-keyed, deletion is mechanical: drop the tenant's monthly partitions and rows, drop its Qdrant `__{org_id}` collections, remove its `$org_id` AGE nodes/edges, flush `nexus:{org_id}:*` Redis keys, and delete the `{org_id}/*` object prefixes. `invoices` are the one exception — they are immutable and retained **7 years** for tax/compliance ([Data Model §2.2](_canon/02-data-model.md)), stored in `mytheus-invoices` under object lock, and excluded from the purge by policy.
 
 ---
 
@@ -208,7 +208,7 @@ Enterprise overrides set `sso_saml`, `scim_provisioning`, `cell_isolation`, `pro
 | `subscriptions` | Subscription | 1:1 active per tenant | `stripe_subscription_id`; status mirrored (`active`/`past_due`/`canceled`) |
 | `seats` | Subscription quantity (per-seat price) | 1:1 with subscription quantity | seat count drives recurring charge |
 | metered overage (minutes, tokens, storage) | Subscription metered price items | usage-based | reported via Stripe usage records from aggregation (§5) |
-| `invoices` | Invoice | 1:many per subscription | immutable once finalized; PDF in `nexus-invoices`, 7-yr retention |
+| `invoices` | Invoice | 1:many per subscription | immutable once finalized; PDF in `mytheus-invoices`, 7-yr retention |
 | Tax / VAT | Stripe Tax | computed by Stripe | `invoices.tax_cents` mirrored; reverse-charge VAT for EU B2B handled by Stripe Tax |
 
 > [SaaS-scale adjustment] **Tax/VAT is delegated to Stripe Tax**, not hand-rolled. Selling to 3,000 orgs across `us`/`eu`/`ap` ([Data Model §data_residency](_canon/02-data-model.md)) means VAT, GST, and US sales-tax nexus — automating this through Stripe Tax (with VAT-ID validation for EU B2B reverse-charge) is the only sane posture and keeps `invoices.tax_cents` authoritative for the customer's region.
@@ -224,7 +224,7 @@ A **seat** is a billable user slot. Seat count is `subscriptions.seats`; adding 
 | Stripe event | NEXUS effect | Emitted internal event |
 |---|---|---|
 | `customer.subscription.created/updated` | sync `subscriptions.status`, `seats`, period dates | `billing-events {plan-changed}` if plan/seats changed |
-| `invoice.finalized` | write `invoices` row (status `open`), store PDF in `nexus-invoices` | — |
+| `invoice.finalized` | write `invoices` row (status `open`), store PDF in `mytheus-invoices` | — |
 | `invoice.paid` | mark `invoices.status=paid`; call `identity-tenant-service` to flip `organizations.status=active` if recovering | `billing-events {recovered}` (the `tenant-events {activated}` is emitted by `identity-tenant-service`, see note) |
 | `invoice.payment_failed` | move tenant to `past_due`; start dunning saga | `billing-events {dunning}` |
 | `customer.subscription.deleted` | invoke `identity-tenant-service` to move tenant toward `pending_deletion` after grace | `billing-events {canceled}` (the `tenant-events {pending_deletion}` is emitted by `identity-tenant-service`, see note) |
@@ -360,7 +360,7 @@ The tenant-admin console is the **org-scoped self-serve** surface of `admin-ops-
 | **Integrations** | `integration_connections` | install/revoke Calendar/Slack/Jira-Linear OAuth (guardrail R8) | `admin` |
 | **SSO & SCIM** | `tenant_settings.sso_config`, SCIM state | configure SAML IdP, enable SCIM provisioning | `owner` (Enterprise only, gated by `features.sso_saml`) |
 | **Settings** | `tenant_settings` | retention days, PII redaction, agent confidence overrides, default locale | `admin` |
-| **Data export & erasure** | export job state | request GDPR export (→ `nexus-exports`), request erasure (→ RTBF) | `admin` (erasure: `owner`) |
+| **Data export & erasure** | export job state | request GDPR export (→ `mytheus-exports`), request erasure (→ RTBF) | `admin` (erasure: `owner`) |
 
 > [SaaS-scale adjustment] The Billing section delegates card and payment-method management to the **Stripe Customer Portal** (a hosted, PCI-scoped surface) rather than building a card form — NEXUS never touches PAN data. The Usage section reads `usage_aggregates`, never raw `usage_events`, so the console stays fast even at T3 = 1.728B chunk-rows/month-class volume ([Capacity §4](_canon/05-capacity-math.md)).
 
@@ -414,7 +414,7 @@ sequenceDiagram
   alt within budget
     BM->>ST: report metered usage record (overage)
     ST-->>BM: invoice.finalized / invoice.paid (webhook)
-    BM->>BM: write invoices (immutable, → nexus-invoices)
+    BM->>BM: write invoices (immutable, → mytheus-invoices)
   else 80% / 95% threshold
     BM->>RP: billing-events {quota approaching}
     RP->>NS: notify owner/admin (in-app + email)

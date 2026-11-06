@@ -215,7 +215,7 @@ flowchart TB
     RDc["caches · pub/sub · queues · dedupe · budgets"]
   end
   subgraph OBJ["Object storage (Cloudflare R2, S3-compatible)"]
-    OBJr["nexus-recordings · nexus-documents ·<br/>nexus-attachments · nexus-invoices ·<br/>nexus-audit-archive · nexus-exports"]
+    OBJr["mytheus-recordings · mytheus-documents ·<br/>mytheus-attachments · mytheus-invoices ·<br/>mytheus-audit-archive · mytheus-exports"]
   end
   PGcore --> AGE
   PGpart -->|embedding consumer| QD
@@ -320,7 +320,7 @@ flowchart LR
   W["transcript-chunks (finals)"] --> R{"tenant class?"}
   R -->|pooled long tail| P["shared monthly partitions<br/>RLS + (org_id, meeting_id, start_ms)"]
   R -->|large/enterprise| C["cell DB<br/>dedicated monthly partitions"]
-  P --> Cold["drop/tier > 90d → nexus-recordings cold prefix"]
+  P --> Cold["drop/tier > 90d → mytheus-recordings cold prefix"]
   C --> Cold
 ```
 
@@ -598,14 +598,14 @@ Object storage is **S3-compatible**, regionally placed per tenant via `data_resi
 
 | Bucket | Contents | Key prefix | Lifecycle / retention |
 | --- | --- | --- | --- |
-| `nexus-recordings` | Meeting recordings (LiveKit `recording.ready`) + **cold transcript partitions** | `{org_id}/{meeting_id}/` | Per-tenant `retention_days_transcripts`; cold tier after 30d; purge on RTBF |
-| `nexus-documents` | Source docs ingested via unstructured.io | `{org_id}/{document_id}/` | Tenant retention; kept while `document_chunks` exist |
-| `nexus-attachments` | Calendar event attachments routed through ingestion | `{org_id}/{meeting_id}/` | Tenant retention; deleted with parent meeting |
-| `nexus-invoices` | Finalized invoice PDFs (`invoices.pdf_url`) | `{org_id}/{invoice_id}.pdf` | 7-year legal retention; object lock (immutable) |
-| `nexus-audit-archive` | Cold-archived `audit_logs` partitions | `{org_id}/{YYYY-MM}/` | SOC2 retention; write-once object lock |
-| `nexus-exports` | GDPR data-export bundles (right-of-access) | `{org_id}/{export_id}.zip` | Auto-expire 7 days after generation |
+| `mytheus-recordings` | Meeting recordings (LiveKit `recording.ready`) + **cold transcript partitions** | `{org_id}/{meeting_id}/` | Per-tenant `retention_days_transcripts`; cold tier after 30d; purge on RTBF |
+| `mytheus-documents` | Source docs ingested via unstructured.io | `{org_id}/{document_id}/` | Tenant retention; kept while `document_chunks` exist |
+| `mytheus-attachments` | Calendar event attachments routed through ingestion | `{org_id}/{meeting_id}/` | Tenant retention; deleted with parent meeting |
+| `mytheus-invoices` | Finalized invoice PDFs (`invoices.pdf_url`) | `{org_id}/{invoice_id}.pdf` | 7-year legal retention; object lock (immutable) |
+| `mytheus-audit-archive` | Cold-archived `audit_logs` partitions | `{org_id}/{YYYY-MM}/` | SOC2 retention; write-once object lock |
+| `mytheus-exports` | GDPR data-export bundles (right-of-access) | `{org_id}/{export_id}.zip` | Auto-expire 7 days after generation |
 
-**Cold transcript archive.** At T4 = 21B `transcript_chunks` rows/year, hot Postgres holds only the most recent 90 days. When a monthly partition ages past 90 days, the nightly Temporal job exports it to Parquet under `nexus-recordings/{org_id}/_cold/transcript_chunks/{YYYY-MM}/` (columnar, compressed, queryable by Athena/DuckDB for rare historical access) and then drops the Postgres partition. The transcript view reads hot partitions from Postgres FTS; historical/legal access reads the Parquet cold tier.
+**Cold transcript archive.** At T4 = 21B `transcript_chunks` rows/year, hot Postgres holds only the most recent 90 days. When a monthly partition ages past 90 days, the nightly Temporal job exports it to Parquet under `mytheus-recordings/{org_id}/_cold/transcript_chunks/{YYYY-MM}/` (columnar, compressed, queryable by Athena/DuckDB for rare historical access) and then drops the Postgres partition. The transcript view reads hot partitions from Postgres FTS; historical/legal access reads the Parquet cold tier.
 
 > [SaaS-scale adjustment] The PDF stored recordings/attachments implicitly and kept all `transcript_chunks` in one Postgres table. We define explicit region-pinned, lifecycle-managed buckets with per-tenant prefixes, and add a **cold Parquet transcript archive** so the hot Postgres relation stays bounded at ~90 days while T4-scale history remains durable, residency-correct, and purge-able.
 
@@ -617,7 +617,7 @@ Retention is **per-tenant and partition-aligned**: `tenant_settings.retention_da
 
 | Store | Hot | Warm/cold | Purge trigger |
 | --- | --- | --- | --- |
-| Postgres `transcript_chunks` | recent 90d partitions (RAM/SSD) | Parquet in `nexus-recordings/_cold` | beyond `retention_days_transcripts` / RTBF |
+| Postgres `transcript_chunks` | recent 90d partitions (RAM/SSD) | Parquet in `mytheus-recordings/_cold` | beyond `retention_days_transcripts` / RTBF |
 | Qdrant | ~90d int8-in-RAM | ≤13mo memmap cold collection | beyond A18 (13mo) / RTBF |
 | AGE `nexus_knowledge` | live confirmed graph | soft-deleted (`deleted_at`) tagged | scheduled hard purge / RTBF |
 | Redis | TTL'd live keys | — | TTL expiry / per-tenant flush |
@@ -638,7 +638,7 @@ flowchart TD
   WF --> AUD["admin-ops-service: append RTBF completion record to audit_logs (append-only)"]
 ```
 
-Note the one exception: `nexus-invoices` (7-year tax retention, object lock) and `nexus-audit-archive` (SOC2, write-once) are under legal hold and survive RTBF; the workflow records the legal-hold carve-out in the audit log.
+Note the one exception: `mytheus-invoices` (7-year tax retention, object lock) and `mytheus-audit-archive` (SOC2, write-once) are under legal hold and survive RTBF; the workflow records the legal-hold carve-out in the audit log.
 
 > [SaaS-scale adjustment] Wholly added vs the PDF. Per-tenant retention windows, partition-drop-based purges, the A18-aligned Qdrant tiering, and the single cross-store Temporal RTBF saga are all SaaS-scale and compliance requirements (GDPR/CCPA, SOC2). The PDF had soft delete on individual entities but no tenant-wide, multi-store deletion guarantee. See [Compliance & Privacy](12-compliance-and-privacy.md) and [SaaS Business Architecture](18-saas-business-architecture.md).
 

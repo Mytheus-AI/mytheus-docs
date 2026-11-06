@@ -101,19 +101,19 @@ The physical stores from [Data Architecture](05-data-architecture.md) come onlin
 | Phase | Postgres tables | Qdrant | AGE | Redis namespaces | Object buckets |
 |---|---|---|---|---|---|
 | P2 | `organizations`, `users`, `teams`, `team_members`, `departments`, `meetings`, `meeting_participants`, `tenant_settings`, `data_residency`, `audit_logs` (capture begins) | — | — | `user_ctx` (stub) | — |
-| P3 | `meeting_rooms`, `chat_messages` | — | — | `presence`, `pubsub:meeting` | `nexus-recordings` |
-| P4 | `transcript_chunks`, `meeting_speakers` | — | — | — | `nexus-recordings` (recording.ready) |
+| P3 | `meeting_rooms`, `chat_messages` | — | — | `presence`, `pubsub:meeting` | `mytheus-recordings` |
+| P4 | `transcript_chunks`, `meeting_speakers` | — | — | — | `mytheus-recordings` (recording.ready) |
 | P5 | (extends `users`, `teams`) | — | — | `user_ctx` (live, 5-min TTL) | — |
-| P6 | `document_chunks` | `transcript_chunks__{org_id}`, `document_chunks__{org_id}` | — | `dedupe:{topic}` (inbox) | `nexus-documents` |
+| P6 | `document_chunks` | `transcript_chunks__{org_id}`, `document_chunks__{org_id}` | — | `dedupe:{topic}` (inbox) | `mytheus-documents` |
 | P7 | `worklogs`, `agent_budgets`, `usage_events` | — | — | `budget:{period}`, `ratelimit` | — |
 | P8 | `decisions`, `action_items` | `decisions__{org_id}` | `nexus_knowledge` (org-partitioned) | — | — |
 | P9 | `agent_suggestions` | — | — | `rag:{user_id}:{query_hash}` | — |
 | P10 | `agent_collaborations` | — | — | — | — |
 | P11 | — | — | — | `queue:agent:{user_id}` | — |
-| P12 | `integration_connections`, `oauth_tokens`, `feature_flags`, `ops_audit_log`, `support_grants` (admin-ops-service) | — | — | — | `nexus-attachments` |
-| P13 | `subscriptions`, `invoices`, `plans` (full billing surface); `audit_logs` partitioning/archival hardened (table itself live since P2) | — | — | — | `nexus-invoices`, `nexus-audit-archive`, `nexus-exports` |
+| P12 | `integration_connections`, `oauth_tokens`, `feature_flags`, `ops_audit_log`, `support_grants` (admin-ops-service) | — | — | — | `mytheus-attachments` |
+| P13 | `subscriptions`, `invoices`, `plans` (full billing surface); `audit_logs` partitioning/archival hardened (table itself live since P2) | — | — | — | `mytheus-invoices`, `mytheus-audit-archive`, `mytheus-exports` |
 
-> [SaaS-scale adjustment] `tenant_settings`, `data_residency`, `agent_budgets`, `usage_events`, `audit_logs`, `subscriptions`, `invoices`, `plans`, `integration_connections`, `oauth_tokens`, and the admin-ops-service stores (`feature_flags`, `ops_audit_log`, `support_grants`) are all wholly added vs the PDF (which had no tenant column, no billing, no compliance state, and no admin/ops consoles). They are sequenced to land at the phase that first reads them — `data_residency` early (P2, because P4 depends on it), `agent_budgets`/`usage_events` at P7 (when tokens start flowing), the admin-ops stores at P12 (when there is a billing plan, members, and integrations worth administering), and the full Stripe billing surface at P13. **`audit_logs` is the exception: it is stood up at P2, not P13** — the shift-left security program (§4.1) means tenant-isolation and authz events are reviewed and *recorded* from P2 onward, so a tamper-evident audit trail must exist the moment RLS goes live. What P13 hardens is the table's monthly range-partitioning and cold-archive to `nexus-audit-archive`, not the audit trail itself, which has been capturing since P2.
+> [SaaS-scale adjustment] `tenant_settings`, `data_residency`, `agent_budgets`, `usage_events`, `audit_logs`, `subscriptions`, `invoices`, `plans`, `integration_connections`, `oauth_tokens`, and the admin-ops-service stores (`feature_flags`, `ops_audit_log`, `support_grants`) are all wholly added vs the PDF (which had no tenant column, no billing, no compliance state, and no admin/ops consoles). They are sequenced to land at the phase that first reads them — `data_residency` early (P2, because P4 depends on it), `agent_budgets`/`usage_events` at P7 (when tokens start flowing), the admin-ops stores at P12 (when there is a billing plan, members, and integrations worth administering), and the full Stripe billing surface at P13. **`audit_logs` is the exception: it is stood up at P2, not P13** — the shift-left security program (§4.1) means tenant-isolation and authz events are reviewed and *recorded* from P2 onward, so a tamper-evident audit trail must exist the moment RLS goes live. What P13 hardens is the table's monthly range-partitioning and cold-archive to `mytheus-audit-archive`, not the audit trail itself, which has been capturing since P2.
 
 ---
 
