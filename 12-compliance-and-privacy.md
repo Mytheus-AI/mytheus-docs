@@ -1,6 +1,6 @@
 # Compliance & Data Privacy
 
-The frozen, production-grade specification of how NEXUS classifies data, satisfies GDPR/CCPA data-subject rights, governs subprocessors (Deepgram/OpenAI/Anthropic/LiveKit) with DPAs and SCCs, pins data to a region, redacts PII before storage and third-party send, enforces per-tenant retention and right-to-be-forgotten, audit-logs every privileged action, and maps it all to a SOC2 control set.
+The frozen, production-grade specification of how NEXUS classifies data, satisfies GDPR/CCPA data-subject rights, governs subprocessors (Deepgram/Anthropic/LiveKit) with DPAs and SCCs, pins data to a region, redacts PII before storage and third-party send, enforces per-tenant retention and right-to-be-forgotten, audit-logs every privileged action, and maps it all to a SOC2 control set.
 
 ## Related documents
 
@@ -20,7 +20,7 @@ The frozen, production-grade specification of how NEXUS classifies data, satisfi
 
 > [SaaS-scale adjustment] This entire document is wholly added relative to the NEXUS Execution Plan v2.1 PDF. The PDF was a single-deployment, single-tenant MVP (seeder `2 orgs x 10 users x 5 meetings`) with no tenant column, no subprocessor governance, no residency model, no consent capture, and no retention/erasure machinery — its only privacy-adjacent note was per-entity soft delete. Selling a meeting-intelligence platform that ships raw human conversation to third-party LLM and ASR vendors, across thousands of paying tenants in regulated jurisdictions, makes the compliance program in this document table-stakes, not optional. Every section below is therefore a SaaS-scale addition; we reserve inline `[SaaS-scale adjustment]` callouts for the design decisions that go *beyond* what the canon already records.
 
-NEXUS processes the most sensitive payload a SaaS can hold: **verbatim transcripts of private human conversation** (`transcript_chunks`), the per-person notes derived from them (`worklogs`), and the decisions/actions extracted from them. That data is then forwarded, by design, to four external subprocessors (Deepgram for ASR, OpenAI/Anthropic for LLM inference, LiveKit for media transport). The compliance posture is built around that single uncomfortable fact.
+NEXUS processes the most sensitive payload a SaaS can hold: **verbatim transcripts of private human conversation** (`transcript_chunks`), the per-person notes derived from them (`worklogs`), and the decisions/actions extracted from them. That data is then forwarded, by design, to three external subprocessors (Deepgram for ASR, Anthropic for LLM inference, LiveKit for media transport). The compliance posture is built around that single uncomfortable fact.
 
 Five locked principles bind this document:
 
@@ -40,7 +40,7 @@ Every NEXUS data class maps to a handling regime: where it may be stored, whethe
 
 | Class | Definition | Canon entities (verbatim) | Third-party egress | Encryption | Default retention |
 |---|---|---|---|---|---|
-| **C4 — Restricted PII / conversational** | Verbatim human conversation and personal notes derived from it; the crown jewels. | `transcript_chunks`, `worklogs`, `chat_messages`, `meeting_speakers`, transcript audio in `nexus-recordings`, transcript vectors in Qdrant `transcript_chunks` | Deepgram (audio→text), OpenAI/Anthropic (windowed text on the LLM path), LiveKit (media transport) — **all under DPA/SCC + PII redaction** | TLS 1.3 in transit; AES-256 at rest; tenant-scoped | `tenant_settings.retention_days_transcripts` (per-tenant) |
+| **C4 — Restricted PII / conversational** | Verbatim human conversation and personal notes derived from it; the crown jewels. | `transcript_chunks`, `worklogs`, `chat_messages`, `meeting_speakers`, transcript audio in `nexus-recordings`, transcript vectors in Qdrant `transcript_chunks` | Deepgram (audio→text), Anthropic (windowed text on the LLM path), LiveKit (media transport) — **all under DPA/SCC + PII redaction** | TLS 1.3 in transit; AES-256 at rest; tenant-scoped | `tenant_settings.retention_days_transcripts` (per-tenant) |
 | **C3 — Derived business content** | Extracted, lower-density artifacts and uploaded source docs. | `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `document_chunks`, `nexus-documents`, `nexus-attachments`, `decisions`/`document_chunks` Qdrant collections, AGE `nexus_knowledge` nodes/edges | LLM path (extraction/RAG) under DPA/SCC; PM integrations (Jira/Linear) per `integration_connections` scope | AES-256 at rest; tenant-scoped | Tenant retention; AGE soft-delete then purge |
 | **C2 — Secrets / credentials** | Material that grants access; never logged, never returned by API. | `oauth_tokens` (`access_token_enc`/`refresh_token_enc`), `tenant_settings.sso_config`, Clerk JWT material, Deepgram/LLM API keys | Never | **Envelope encryption, per-tenant KMS data key** ([Data Model §2.2](_canon/02-data-model.md)); secret-scanned in CI | Until rotated/revoked |
 | **C1 — Operational / tenant metadata** | Identity, org structure, billing, telemetry needed to run the service. | `users`, `organizations`, `teams`, `team_members`, `departments`, `meetings`, `meeting_participants`, `subscriptions`, `invoices`, `usage_events`, `plans`, `audit_logs`, `data_residency`, `tenant_settings`, `agent_budgets`, `integration_connections` | Stripe (billing fields), email/Slack (notification fields) under DPA | AES-256 at rest; `invoices`/`audit_logs` immutable/object-locked | Mixed: `invoices` 7yr, `audit_logs` 1yr hot + SOC2 archive, rest per tenant lifetime |
@@ -65,7 +65,7 @@ flowchart LR
   subgraph C1["C1 Operational metadata"]
     US["users / organizations"]; SUB["subscriptions / invoices"]; AL["audit_logs"]
   end
-  C4 -->|redacted, DPA/SCC| SUBPROC["Deepgram · OpenAI · Anthropic · LiveKit"]
+  C4 -->|redacted, DPA/SCC| SUBPROC["Deepgram · Anthropic · LiveKit"]
   C3 -->|redacted, DPA/SCC| SUBPROC
   C2 -.->|never leaves| X["no egress"]
   C1 -->|billing/notify fields only| STRIPE["Stripe · email · Slack"]
@@ -142,7 +142,7 @@ Erasure reuses the cross-store RTBF Temporal saga in [Data Architecture §8.1](0
 
 ## 4. Subprocessors: DPAs and SCCs
 
-NEXUS sends C4/C3 data to four subprocessors. Each is bound by a DPA; each EU-data transfer to a US-incorporated subprocessor relies on SCCs plus a zero-data-retention vendor configuration so transient processing leaves no residual copy in a non-EU region.
+NEXUS sends C4/C3 data to three subprocessors. Each is bound by a DPA; each EU-data transfer to a US-incorporated subprocessor relies on SCCs plus a zero-data-retention vendor configuration so transient processing leaves no residual copy in a non-EU region.
 
 > [SaaS-scale adjustment] Subprocessor governance is wholly new. The PDF named these vendors as technology choices ([Tech Decisions §2.5/§2.7](_canon/06-tech-decisions.md)) but assigned them no data-protection obligations. NEXUS publishes this list as its subprocessor register (a GDPR Art 28 transparency requirement) and notifies tenants before adding a new one.
 
@@ -152,7 +152,6 @@ NEXUS sends C4/C3 data to four subprocessors. Each is bound by a DPA; each EU-da
 |---|---|---|---|---|---|
 | **Deepgram** | Live meeting **audio** → text; C4 derived | Streaming ASR + diarization (one stream/meeting) | US or EU endpoint chosen by `data_residency.region` | DPA + SCCs (Module 2/3) for `eu` tenants on US endpoint fallback | Zero-retention / no-model-training flag set |
 | **Anthropic** | Windowed transcript/doc **text**, redacted (C4/C3) | LLM extraction, triage, high-stakes reasoning (Haiku→Sonnet→Opus) | Regional API where available; else US under SCC | DPA + SCCs; zero-retention enterprise terms | No training on inputs; ephemeral processing |
-| **OpenAI** | Windowed text, redacted (C4/C3) | LLM routing alternative via LiteLLM | US under SCC | DPA + SCCs; zero-retention | No training; no retention beyond abuse window (disabled) |
 | **LiveKit** | Real-time **media** (audio/video tracks) | SFU transport; server-side audio hook | Self-hostable SFU pinned to tenant region | First-party (self-hosted) or DPA+SCC if managed | Media not persisted by SFU; recordings land in tenant-region `nexus-recordings` |
 
 Supporting (controller-side, C1 only): **Stripe** (billing under DPA), **Clerk** (identity under DPA), email/Slack delivery (`notification-service`).
@@ -161,7 +160,7 @@ Supporting (controller-side, C1 only): **Stripe** (billing under DPA), **Clerk**
 
 The hard question a GDPR reviewer asks: *when a `region=eu` tenant's transcript reaches a US-based LLM, what makes it lawful?* The answer is a three-layer control, applied on the LiteLLM path inside `agent-runtime-service` and `rag-service`:
 
-1. **Prefer a regional endpoint.** LiteLLM routing reads `data_residency.region`; for `eu` tenants it routes to an EU-resident model endpoint where the provider offers one (Anthropic/OpenAI regional inference), keeping the transfer in-region.
+1. **Prefer a regional endpoint.** LiteLLM routing reads `data_residency.region`; for `eu` tenants it routes to an EU-resident model endpoint where the provider offers one (Anthropic regional inference), keeping the transfer in-region.
 2. **If only a US endpoint exists, the transfer rides SCCs + zero-retention.** The data is redacted of direct identifiers (§5), processed ephemerally (no training, no logging by the vendor), and the SCC + DPA establish the legal basis under GDPR Chapter V.
 3. **A tenant may hard-disable cross-border inference** via `tenant_settings`. With it set, an `eu` tenant whose only model option is US-resident gets the **descope path**: the agent falls through to RAG-only / silent rather than transmit out of region — reusing the ContextGapAgent fallback chain (peer-agents → related-meeting agents → RAG → silent) from [Tech Decisions §2.6](_canon/06-tech-decisions.md).
 
@@ -214,7 +213,7 @@ flowchart LR
     DCS --> WIN
     WIN --> RED3["LLM-egress redaction (ALWAYS)"]
   end
-  RED3 -->|redacted only| LLM["OpenAI / Anthropic (DPA/SCC, zero-retention)"]
+  RED3 -->|redacted only| LLM["Anthropic (DPA/SCC, zero-retention)"]
 ```
 
 ---
@@ -349,7 +348,7 @@ flowchart TB
     AUD["admin-ops-service: audit_logs (C1, append-only)"]
   end
   subgraph SUBPROC["Subprocessors — DPA + SCC + zero-retention"]
-    LLM["OpenAI / Anthropic"]
+    LLM["Anthropic"]
   end
   REDX -->|"redacted text C4/C3 · regional endpoint preferred, SCC fallback"| LLM
   LLM -->|tokens| AGENT
@@ -378,7 +377,7 @@ Reading the diagram:
 |---|---|
 | Data classes | C4 conversational PII · C3 derived content · C2 secrets · C1 operational metadata |
 | Residency field | `data_residency.region ∈ {us, eu, ap}` (not `org_region`), immutable after `locked_at` |
-| Subprocessors | Deepgram, OpenAI, Anthropic, LiveKit — all under DPA; EU transfers under SCC + zero-retention |
+| Subprocessors | Deepgram, Anthropic, LiveKit — all under DPA; EU transfers under SCC + zero-retention |
 | Redaction boundaries | `ingestion-service` (docs), `transcription-service` (at-rest, gated), LLM-egress (always-on) |
 | DSR SLA | 30 days; access/portability via `nexus-exports`; erasure via the [§8.1](05-data-architecture.md) RTBF saga |
 | Consent | Captured at `meeting-service` token-mint; recorded on `meeting_participants` + audit. Schema ratified ([ADR-0018](adr/0018-consent-entity-behind-flag.md)) — `consented_at`/`consent_version` on `meeting_participants` and `consent_required` on `tenant_settings`, defaulted `false`. Migration and 428 application code are later tasks |

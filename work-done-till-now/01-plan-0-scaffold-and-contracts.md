@@ -78,9 +78,13 @@ What exists instead is substantial but off the Plan 0 track: a Next.js marketing
 
 What Plan 0 asked for and is missing: the Clerk provider and the API-client placeholder. `@clerk/nextjs` is not in `package.json`. Auth is bypassed and every screen reads mock data.
 
+**Superseded by audit 2026-11-06 (static, not executed):** Clerk is wired in `mytheus-ui`. The paragraph above was true on 2026-07-23 and is kept as history.
+
 ### 1.6 `mytheus-mobile` (Phase 0G) - NOT DONE
 
 The repo holds a polished single-device "Meeting Pod" prototype on 100 percent mock data (`src/data/mock.ts`), rebuilt around a brand redesign. Plan 0 asked for the Clerk SDK, an `httpClient`, an env base URL, and a `REALIGN.md` backlog. None are present: `@clerk/clerk-expo` is not in `package.json`, and there is no `REALIGN.md`.
+
+**Superseded by audit 2026-11-06 (static, not executed):** Clerk is wired in `mytheus-mobile`, and its API layer landed in commit `77290c3`. See the audit section at the end of this file.
 
 ### 1.7 `mytheus-platform` (Phases 0F, 0G) - complete
 
@@ -181,3 +185,11 @@ make ci
 | 6 | Every one of the nine HTTP services is route-less: `create_app()` plus a `TODO`. No `/api/v1` surface exists. | Everything user-facing. | Plan 1-2 sections 3.4 through 3.9. |
 | 7 | The deploy-target change (Railway or Render, to self-hosted VPS) contradicts a resolved program decision and has no ADR. | Plan 1-2 section 1 precondition 4 cannot be marked GREEN honestly. | Needs an ADR superseding the deploy decision, plus a `plan/README.md` update, before Plan 1-2 entry. |
 | 8 | Both Plan 1-2 `DECISION-REQUIRED` items are unanswered: the Clerk `org_id` claim shape, and the RBAC-tier versus `users.role` split. | The `api-gateway` edge extraction and both client repos. | Must be answered before Plan 1-2 section 3.8 is finalized. |
+
+## 6. Audit 2026-11-06
+
+Static code audit, **not executed**: nothing was run, so nothing here is a "green". Other agents' code changes were in flight; this records state at audit time and the lead will fold in final results. Earlier sections stay as the record of 2026-07-23.
+
+- **CI (observed in source).** `mytheus-platform` `ci.yml`: the `python` job is unguarded (see 00 gap 25) and `avro-compat` is fragile. `mytheus-intelligence` and `mytheus-realtime` have no CI. This qualifies the "CI workflow valid" and "Conventions" DoD rows, which were checked for `mytheus-platform`'s file validity only. See 00 gap 40.
+- **Auth reconciliation DoD row.** That row's "grep guard clean" sub-item is not supported: no Supabase-auth grep guard was found in `mytheus-backend`'s `ci.yml`. Verdict for that sub-item: **NOT MET** as stated (the files being deleted remains true). See 00 gap 41.
+- **`mytheus-ui` and `mytheus-mobile` DoD rows.** Both have Clerk wired, so the Clerk-absent evidence in sections 1.5, 1.6 and the DoD table, and open gaps 2 and 3 below, are stale. Superseded, not deleted. See 00 gap 42.

@@ -348,7 +348,7 @@ flowchart LR
 
 | Secret class | Stored as | Consumed by |
 | --- | --- | --- |
-| Platform service credentials (Clerk API + JWKS, Deepgram key, LiteLLM provider keys for OpenAI/Anthropic, Stripe keys, LiveKit API key/secret, Qdrant/Redis/Redpanda creds) | Secrets Manager → ESO → K8s Secret | The owning service only (e.g. Deepgram key never leaves `transcription-service`, matching the server-side-key rule in [Real-time & Transcription](10-realtime-and-transcription.md)) |
+| Platform service credentials (Clerk API + JWKS, Deepgram key, LiteLLM provider key for Anthropic, Stripe keys, LiveKit API key/secret, Qdrant/Redis/Redpanda creds) | Secrets Manager → ESO → K8s Secret | The owning service only (e.g. Deepgram key never leaves `transcription-service`, matching the server-side-key rule in [Real-time & Transcription](10-realtime-and-transcription.md)) |
 | **Per-tenant KMS data keys** for `oauth_tokens` envelope encryption | Cloud KMS data keys, referenced by `oauth_tokens.token_version` | `integration-service` only |
 | Database / store connection strings | Secrets Manager → ESO; rotated via Terraform `secrets` layer | Per-service, least-privilege |
 

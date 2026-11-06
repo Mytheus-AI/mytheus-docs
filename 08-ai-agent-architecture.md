@@ -341,7 +341,7 @@ Grounded in existing canon mechanisms, layered:
 1. **Confidence gating** (§6.1) — low-confidence output is silently logged or dropped, never surfaced.
 2. **Citation contract** — every RAG/peer-agent fill carries `meeting_id` + `chunk_id` + `speaker` (transcripts) or `document_id` + `element_id` (documents); the eval harness verifies citations resolve, and an unresolvable citation blocks surfacing ([RAG Pipeline & Inference Serving](09-rag-and-inference-serving.md)).
 3. **Confirmation before commit** — decisions/actions are candidates until a user confirms (§2.2); the graph and the system of record never hold an unconfirmed agent claim.
-4. **PII redaction before LLM egress** — windows are redacted before they leave for OpenAI/Anthropic via LiteLLM ([Security Architecture](11-security-architecture.md), [Data Architecture](05-data-architecture.md)).
+4. **PII redaction before LLM egress** — windows are redacted before they leave for Anthropic via LiteLLM ([Security Architecture](11-security-architecture.md), [Data Architecture](05-data-architecture.md)).
 5. **Silent-on-empty** — `ContextGapAgent` returns nothing rather than fabricating when the fallback chain exhausts (§5.2).
 
 ---

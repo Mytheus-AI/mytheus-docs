@@ -131,7 +131,7 @@ The `org_id`-injection middleware and PostgreSQL RLS land in P2 with the first m
 
 > [SaaS-scale adjustment] Compliance is wholly added vs the PDF. It is gated to be **green before W9 (P4)** because P4 is the first phase that captures real human speech. Three things must exist first: the **Deepgram subprocessor DPA + SCCs** (P1 decision, executed before P4), the **PII redaction pass** in the audio/ingestion path, and the **data-residency pin** so `transcript_chunks` land in the tenant's region (`us`/`eu`/`ap`).
 
-The thread is concrete: P1 decides residency regions and signs subprocessor DPAs (Deepgram, OpenAI, Anthropic, LiveKit); P2 creates the `data_residency` and `tenant_settings` tables; the redaction pass and residency enforcement go live by W9 so the very first persisted final in `transcript_chunks` is already compliant. The right-to-be-forgotten Temporal workflow that purges across all six stores is built later (it needs the stores to exist) but the *deletion contract* is designed at P1. See [Compliance & Privacy](12-compliance-and-privacy.md).
+The thread is concrete: P1 decides residency regions and signs subprocessor DPAs (Deepgram, Anthropic, LiveKit); P2 creates the `data_residency` and `tenant_settings` tables; the redaction pass and residency enforcement go live by W9 so the very first persisted final in `transcript_chunks` is already compliant. The right-to-be-forgotten Temporal workflow that purges across all six stores is built later (it needs the stores to exist) but the *deletion contract* is designed at P1. See [Compliance & Privacy](12-compliance-and-privacy.md).
 
 ```mermaid
 flowchart LR

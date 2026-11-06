@@ -236,7 +236,7 @@ Cross-cutting concepts referenced across the set. PDF-original concepts are dash
 | Confidence thresholds | concept | Surfacing policy: `> 0.7` surface · `0.4–0.7` silent-log to `worklogs` · `< 0.4` drop. | — |
 | Windowed batching | concept | Agents run on 30-second speaker-merged windows (`A17`), not per raw `transcript_chunks` row — the core R4 cost fix. | added (SaaS) |
 | Relevance pre-gating | concept | A cheap Haiku triage call per window scoring relevance; ~35% pass, the rest dropped before any extraction call. | added (SaaS) |
-| Tiered routing (LiteLLM) | concept | Cheapest-capable model routing: Haiku triage/score → Sonnet extract → Opus high-stakes, via the LiteLLM router. | — (LiteLLM is PDF; per-tier mix is hardened) |
+| Tiered routing (LiteLLM) | concept | Cheapest-capable model routing: Haiku triage/score → Sonnet extract → Opus high-stakes, via the LiteLLM router. Provider is Anthropic only ([ADR-0027](adr/0027-anthropic-only-llm-provider.md)); fast-response tier is Haiku 5.5 (`claude-haiku-5-5`); other tiers: Anthropic models, mapping to be set. | — (LiteLLM is PDF; per-tier mix is hardened) |
 | Prompt caching | concept | Semantic + Anthropic prompt caching of stable prefixes (role taxonomy, system prompt, prior-window context). | added (SaaS) |
 | Per-tenant token budgets / hard quotas | concept | `agent_budgets`-backed per (tenant, month) caps; 80/95% alerts; deny-by-default at `hard_cap`. PDF had per-user budgets; SaaS adds tenant-level hard caps. | PDF→SaaS (no rename) |
 | `MeetingLifecycleWorkflow` | concept | Temporal workflow orchestrating a meeting's lifecycle. | — |

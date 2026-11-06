@@ -48,7 +48,7 @@ C4Context
   System_Ext(clerk, "Clerk", "Identity provider. Auth, JWT, SSO/SAML/SCIM, webhook user-sync. Source of truth for identity.")
   System_Ext(livekit, "LiveKit", "Meeting transport (SFU). Audio/video, room hooks, recording egress. Subprocessor: audio.")
   System_Ext(deepgram, "Deepgram", "Streaming ASR + diarization. Subprocessor: audio + transcript text.")
-  System_Ext(llm, "OpenAI + Anthropic (via LiteLLM)", "LLM inference for agents & RAG. Subprocessor: transcript-derived prompts.")
+  System_Ext(llm, "Anthropic (via LiteLLM)", "LLM inference for agents & RAG. Subprocessor: transcript-derived prompts.")
   System_Ext(qdrant, "Qdrant Cloud", "Managed vector DB. Subprocessor: per-tenant embeddings + citation payload.")
   System_Ext(redpanda, "Redpanda", "Kafka-API event streaming, tenant-partitioned topics + Avro. Subprocessor: event payloads.")
   System_Ext(temporal, "Temporal Cloud", "Durable workflow orchestration. Workflow state only; no raw transcripts.")
@@ -106,7 +106,7 @@ flowchart TB
   end
 
   subgraph subproc["Subprocessor boundary: DPA + SCCs, regional placement"]
-    SUB["Clerk · LiveKit · Deepgram · OpenAI/Anthropic ·<br/>Qdrant · Redpanda · Temporal · Stripe · Calendar/Slack/Jira-Linear"]
+    SUB["Clerk · LiveKit · Deepgram · Anthropic ·<br/>Qdrant · Redpanda · Temporal · Stripe · Calendar/Slack/Jira-Linear"]
   end
 
   EU & TA & OP -->|HTTPS/WSS| CF
@@ -142,7 +142,7 @@ flowchart TB
 
 - **Human ingress is single-boundary.** Every end user, tenant admin, and operator reaches NEXUS only through `Cloudflare -> api-gateway`. The gateway pre-validates the Clerk JWT, extracts `org_id`, and injects it into request context so the Postgres RLS policy `USING (org_id = current_setting('app.current_org')::uuid)` is the fail-closed backstop. See [Security Architecture](../11-security-architecture.md).
 - **The audio path keeps keys server-side.** LiveKit captures meeting audio via a server-side room hook; NEXUS proxies one diarized Deepgram WebSocket stream **per meeting** (not per participant — a 6x cost lever per [Capacity & Scaling Math §7](../_canon/05-capacity-math.md)), persisting only finals to `transcript_chunks` and emitting the `transcript-chunks` topic. See [RAG & Inference Serving](../09-rag-and-inference-serving.md) and [Event Architecture](../07-event-architecture.md).
-- **LLM inference leaves the boundary as derived prompts only.** The six agents (PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent) route through LiteLLM to OpenAI/Anthropic under the cost-controlled pipeline (relevance pre-gating → windowed batching → tiered Haiku/Sonnet/Opus routing → caching → per-tenant token budgets). Raw audio never crosses to the LLM subprocessor. See [AI Agent Architecture](../08-ai-agent-architecture.md).
+- **LLM inference leaves the boundary as derived prompts only.** The six agents (PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent) route through LiteLLM to Anthropic under the cost-controlled pipeline (relevance pre-gating → windowed batching → tiered Haiku/Sonnet/Opus routing → caching → per-tenant token budgets). Raw audio never crosses to the LLM subprocessor. See [AI Agent Architecture](../08-ai-agent-architecture.md).
 - **Identity is brokered by Clerk, never owned by NEXUS.** Clerk is the source of truth; NEXUS verifies JWTs inbound and syncs users via the `/clerk/webhook` receiver hardened with outbox + reconciliation (Clerk authoritative). SSO/SAML/SCIM for Enterprise tenants ride the same boundary.
 - **Confirmed knowledge flows outward to PM and Slack.** On user confirmation (no silent commits), `decisions`/`actions` create `nexus_knowledge` graph edges (`PRODUCED`, `ASSIGNED_TO`) and the `integration-service` syncs actions bidirectionally to Jira/Linear; Slack receives Block Kit prep briefs, summaries, and day-10 escalation DMs via the Temporal `ActionFollowUpWorkflow`. See [Integration Architecture](../21-integration-architecture.md).
 - **The operator path is the highest-risk line.** The NEXUS operator's cross-tenant reach (ops console, suspend/migrate, audit access) is deny-by-default and every action lands in append-only `audit_logs` — the only routine path that legitimately spans the tenant boundary. See [Multi-Tenancy](../06-multi-tenancy.md) and [SaaS Business Architecture](../18-saas-business-architecture.md).

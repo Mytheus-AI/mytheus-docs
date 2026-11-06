@@ -317,7 +317,7 @@ LLM is **94% of variable infra cost (C3)**, so the dominant margin lever is the 
 
 > [SaaS-scale adjustment] The compliance suite is wholly added vs the PDF and is table-stakes for selling to thousands of orgs.
 
-GDPR/CCPA, subprocessor DPAs (Deepgram / OpenAI / Anthropic / LiveKit) + SCCs, data residency + regional placement, PII redaction (in `ingestion-service`), retention + right-to-be-forgotten deletion workflows, append-only tamper-evident audit logging, and SOC2 readiness. Right-to-be-forgotten is a single Temporal workflow in `workflow-service` that deletes by `org_id` / `user_id` across all stores — Postgres, Qdrant, AGE, Redis, and object storage — then appends a completion record to the audit log. See [Data Model](_canon/02-data-model.md) §7 and [Data Architecture](05-data-architecture.md).
+GDPR/CCPA, subprocessor DPAs (Deepgram / Anthropic / LiveKit) + SCCs, data residency + regional placement, PII redaction (in `ingestion-service`), retention + right-to-be-forgotten deletion workflows, append-only tamper-evident audit logging, and SOC2 readiness. Right-to-be-forgotten is a single Temporal workflow in `workflow-service` that deletes by `org_id` / `user_id` across all stores — Postgres, Qdrant, AGE, Redis, and object storage — then appends a completion record to the audit log. See [Data Model](_canon/02-data-model.md) §7 and [Data Architecture](05-data-architecture.md).
 
 ---
 

@@ -81,6 +81,8 @@ Both DECISION-REQUIRED callouts in the plan (section 8) are resolved and recorde
 
 ### 1.5 `mytheus-ui`: untouched, by decision
 
+> **Superseded by audit 2026-11-06 (static, not executed):** "untouched" is false. Commits `51cdcd2`, `df6cf56` and `0f757ca` exist in `mytheus-ui`; see section 8 and 00 gap 47. The text below is kept as the record of the band at 2026-08-06.
+
 Sections 3.4 (meeting room video grid, in-meeting chat and presence UI) and 3.8 (live captions, transcript view, speaker-mapping UI) were not built. This is a deliberate exclusion recorded in the governing decisions for this band, not an omission: `mytheus-ui` was declared out of scope. Clerk sign-in went live mid-band for reasons unrelated to this band's scope (see the header note); no meeting-surface code was added.
 
 ### 1.6 `mytheus-mobile`: untouched, deferred
@@ -414,3 +416,13 @@ not only the code under test.
 - [02-plan-1-2-foundation-and-tenancy.md](02-plan-1-2-foundation-and-tenancy.md) for what this band inherited, including the entry preconditions this band's own recon confirmed GREEN.
 - [adr/0017-transcript-chunks-composite-partition-key.md](../adr/0017-transcript-chunks-composite-partition-key.md) and [adr/0018-consent-entity-behind-flag.md](../adr/0018-consent-entity-behind-flag.md) for the two decisions this band ratified.
 - [plan/plan-5-6-org-context-and-ai-infra.md](../plan/plan-5-6-org-context-and-ai-infra.md) for the next band, whose entry preconditions this band's recon already checked: identity live (GREEN), this band's tier live (GREEN once merged), `libs/shared` building blocks (GREEN), infra reachable (PARTIAL - Qdrant, an S3-compatible store, and a GPU runner are still missing), and the partition-key decision (already ratified here, see ADR-0017).
+
+## 8. Audit 2026-11-06
+
+Static code audit, **not executed**. Other agents were changing this area at audit time; the lead will fold in final results.
+
+- **The live audio path did not exist (observed in source).** `transcription-service` `/internal/audio` is a stub, and `LiveKitTransport.subscribe_room_audio` raises `NotImplementedError`. The Definition-of-Done lines for end-to-end transcription are therefore at best PARTIAL (Protocol-plus-Fake only), independent of the credential block in gap 1. See 00 gap 46.
+- **No recording egress** exists, so the `recording.ready` to `nexus-recordings` check cannot pass yet even with an R2 bucket.
+- **Redaction is regex-only**, consistent with 00 gap 13.
+- **Known flaky test:** `tests/test_relay.py::test_relay_real_bus_roundtrip` (gap 11 above records a rewrite never verified by running).
+- **`mytheus-ui` is not untouched**: commits `51cdcd2`, `df6cf56`, `0f757ca`.
