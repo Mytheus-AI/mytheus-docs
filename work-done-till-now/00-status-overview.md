@@ -237,3 +237,9 @@ Closed after the first round, all observed by running the named commands:
 - Verified: `make ci` green in `mytheus-backend` (595 passed) and `mytheus-realtime` (47 gateway, 112 transcription); `mytheus-events` `make ci` green; `mytheus-intelligence` 236 of 237 passed once, with one intermittent failure in `test_calendar_attachment_flows_through_relay_into_qdrant` (a dead-letter topic was non-empty; passed in 20 of 21 reruns; the test now prints the dead-letter contents when it fails, so the next occurrence names the cause).
 
 Still open: the Clerk session claim did not persist when saved in the dashboard; credentials (Clerk webhook secret, LiveKit, Deepgram, R2 token); GPU measurement; re-costing `_canon/05`; an alert receiver; an end-to-end run with a real Clerk sign-in.
+
+### Clerk session token claim (2026-11-06, later)
+
+Closed: the maintainer pasted the claims `org_id` (`{{org.id}}`) and `internal_org_id` (`{{org.public_metadata.internal_org_id}}`) into Configure, Sessions, Customize session token on the Mytheus Development instance. Observed afterwards by reloading the page, which shows both claims. The earlier "did not persist" entries above were failed attempts to drive the editor with synthetic typing; the Monaco editor auto-closes quotes and braces, so paste the JSON rather than typing it.
+
+Still needed before a real token carries values: an organization whose public metadata holds `internal_org_id` (written by `POST /orgs` with the real `CLERK_SECRET_KEY`, or set by hand on a test organization), and a fresh sign-in. Not yet verified by decoding a real session token.
