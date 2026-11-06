@@ -14,7 +14,7 @@
 | **Repos touched** | `mytheus-backend` (`identity-tenant-service`, `libs/shared`, Alembic), `mytheus-intelligence` (`embedding-service`, `reranker-service`, `ingestion-service`, `search-service`, `libs/shared`, `proto/`), `mytheus-events` (Avro schemas, Schema Registry registration, topic/DLQ provisioning, `nexus_events` lib), `mytheus-ui` (`web-app` org-chart + people pages, `bff` aggregation), `mytheus-mobile` (person profile screen) |
 | **Folders touched** | `mytheus-backend/services/identity-tenant-service/`, `mytheus-backend/libs/shared/`, `mytheus-backend/migrations/`, `mytheus-intelligence/services/{embedding,reranker,ingestion,search}-service/`, `mytheus-intelligence/libs/shared/`, `mytheus-intelligence/proto/`, `mytheus-events/schemas/`, `mytheus-events/provisioning/`, `mytheus-events/src/nexus_events/`, `mytheus-ui/apps/web-app/`, `mytheus-mobile/app/` |
 | **Demoable at end of P5** | Open the web-app org chart for a seeded org; click a person; see their `role`, `skills`, team, department, and recent meetings rendered from `get_user_context()` (Redis-cached, 5-min TTL). Same data renders on the mobile person profile. |
-| **Demoable at end of P6** | Upload a PDF via `POST /ingest`; watch it land in `nexus-documents`, parse into `document_chunks`, emit `document-chunks`, and the embedding consumer embed it (batch 32, sub-100 ms) into `document_chunks__{org_id}` in Qdrant; run a `/search` FTS query and a Qdrant vector search and see both return org-scoped hits; observe `embedding-events` acks and a clean DLQ. |
+| **Demoable at end of P6** | Upload a PDF via `POST /ingest`; watch it land in `mytheus-documents`, parse into `document_chunks`, emit `document-chunks`, and the embedding consumer embed it (batch 32, sub-100 ms) into `document_chunks__{org_id}` in Qdrant; run a `/search` FTS query and a Qdrant vector search and see both return org-scoped hits; observe `embedding-events` acks and a clean DLQ. |
 
 ---
 
@@ -43,7 +43,7 @@ Use these **verbatim**. None are invented here beyond the two net-new Avro schem
 - **Topics** (21 + 21 DLQs): all of `transcript-chunks`, `document-chunks`, `agent-results`, `agent-stream`, `decisions`, `actions`, `agent-requests`, `agent-responses`, `notifications`, `tenant-events`, `meeting-events`, `meeting-room-events`, `integration-events`, `usage-events`, `billing-events`, `graph-events`, **`embedding-events`**, `presence-events`, `notification-delivery-events`, `user-sync-events`, `admin-events`, each paired with `<topic>.dlq`. **Created/registered** in this band; the ones produced/consumed *live* here are `transcript-chunks`, `document-chunks`, `embedding-events` (and the `user-sync-events`/`tenant-events` already used by identity).
 - **Avro schemas**: the 7 FROZEN (`TranscriptChunk`, `AgentResult`, `Decision`, `Action`, `Notification`, `AgentRequest`, `AgentResponse`) registered; net-new `DocumentChunk` (document-chunk envelope) and `EmbeddingEvent` registered. Every value opens with `EventEnvelopeHeader` (`event_id`, `idempotency_key`, `org_id`, `schema_version`, `producer`, `occurred_at`, `correlation_id`, `causation_id`).
 - **Redis keys**: `nexus:{org_id}:user_ctx:{user_id}` (5-min TTL), `nexus:{org_id}:qembed:{query_hash}` (~10-min TTL), `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (24h TTL).
-- **Object buckets**: `nexus-documents` (`{org_id}/{document_id}/`), `nexus-attachments` (`{org_id}/{meeting_id}/`).
+- **Object buckets**: `mytheus-documents` (`{org_id}/{document_id}/`), `mytheus-attachments` (`{org_id}/{meeting_id}/`).
 - **Internal surfaces**: `GET /context/{user_id}` (identity), `GET /taxonomy/role-topics` (identity), `POST /embed` (embedding, internal gRPC), `POST /rerank` (reranker, internal gRPC), `POST /ingest` + `GET /ingest/jobs/:id` (ingestion), `GET /search` (search).
 
 ---
@@ -493,7 +493,7 @@ P6 precondition chain: event backbone GA (3.6) → embedding-service + Qdrant + 
 
 ---
 
-#### 3.9 `ingestion-service` — unstructured.io → `document_chunks` + `document-chunks` topic + `nexus-documents`
+#### 3.9 `ingestion-service` — unstructured.io → `document_chunks` + `document-chunks` topic + `mytheus-documents`
 
 **Repo / folder:** `mytheus-intelligence/services/ingestion-service/`.
 
@@ -528,13 +528,13 @@ P6 precondition chain: event backbone GA (3.6) → embedding-service + Qdrant + 
                    payload=DocumentChunk(document_id, element_id, el_type, piece, pos))
    ```
    Narrative docs use `SemanticChunker`; tables/lists keep the typed element boundary.
-3. Source blobs land in **`nexus-documents`** at `{org_id}/{document_id}/` (calendar attachments route to `nexus-attachments` at `{org_id}/{meeting_id}/`). Object writes are per-tenant-prefixed.
+3. Source blobs land in **`mytheus-documents`** at `{org_id}/{document_id}/` (calendar attachments route to `mytheus-attachments` at `{org_id}/{meeting_id}/`). Object writes are per-tenant-prefixed.
 4. Surfaces: `POST /ingest` (file/url) and `GET /ingest/jobs/:id`. Consume `integration-events` (calendar attachment → ingest). The `document-chunks` events flow to the §3.7 embedding consumer.
 
-**Canonical names:** `ingestion-service`, `document_chunks`, `document_elements`, `document-chunks`, `DocumentChunk`, `nexus-documents`, `nexus-attachments`, `tenant_settings.pii_redaction_enabled`.
+**Canonical names:** `ingestion-service`, `document_chunks`, `document_elements`, `document-chunks`, `DocumentChunk`, `mytheus-documents`, `mytheus-attachments`, `tenant_settings.pii_redaction_enabled`.
 
 **Acceptance checks:**
-- `POST /ingest` of a sample PDF writes the blob to `nexus-documents/{org_id}/{document_id}/`, rows into `document_chunks` with `element_type` ∈ {Title,NarrativeText,Table,ListItem}, and emits one `document-chunks` event per chunk.
+- `POST /ingest` of a sample PDF writes the blob to `mytheus-documents/{org_id}/{document_id}/`, rows into `document_chunks` with `element_type` ∈ {Title,NarrativeText,Table,ListItem}, and emits one `document-chunks` event per chunk.
 - `GET /ingest/jobs/:id` reports status; a re-run is idempotent (stable `element_id` → dedupe).
 - With `pii_redaction_enabled=true` the emitted chunk text is redacted before the bus.
 - The embedded result of an ingested doc appears in `document_chunks__{org_id}` (end-to-end ingestion → embedding).
@@ -578,7 +578,7 @@ Citing the roadmap data-store provisioning table (`22-roadmap-and-phasing.md §3
 | **Qdrant Cloud** | Per-tenant collections `transcript_chunks__{org_id}` + `document_chunks__{org_id}` (and `decisions__{org_id}` provisioned-but-idle), 384-dim cosine, int8 scalar quantization, `on_disk_payload` | Per-tenant collection boundary + mandatory `org_id` payload filter (ADR-0006) |
 | **Apache AGE** `nexus_knowledge` | `Topic` nodes seeded from the role→topics taxonomy (no edges yet) | `org_id` property on every node; `$org_id` on every Cypher template |
 | **Redis** (Upstash) | `nexus:{org_id}:user_ctx:{user_id}` (5-min), `nexus:{org_id}:qembed:{query_hash}` (~10-min), `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (24h) | Key builder rejects unprefixed keys |
-| **Object storage** | `nexus-documents` (`{org_id}/{document_id}/`), `nexus-attachments` (`{org_id}/{meeting_id}/`) | Per-tenant key prefix |
+| **Object storage** | `mytheus-documents` (`{org_id}/{document_id}/`), `mytheus-attachments` (`{org_id}/{meeting_id}/`) | Per-tenant key prefix |
 | **Redpanda + Schema Registry** | All 21 topics + 21 DLQs created; 7 frozen + `DocumentChunk` + `EmbeddingEvent` Avro subjects registered (BACKWARD) | Partitioned by `org_id` (composite `{org_id}:{meeting_id}` for `transcript-chunks`/`agent-stream`, [ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)) |
 
 ---
@@ -663,7 +663,7 @@ Realign one screen onto the new org-context substrate; **no agent UI yet**.
 - All 21 topics + 21 DLQs created; 9 Avro subjects registered BACKWARD; CI compatibility gate live; outbox relay + inbox/dedupe + DLQ routing working.
 - `embedding-service` embeds `transcript-chunks` + `document-chunks` at batch 32 sub-100 ms into per-tenant Qdrant collections (only writer); `embedding-events` acks flow; lag < 5 s.
 - `reranker-service` `/rerank` top-50→top-10 warm p95 < 500 ms with a warm floor.
-- `ingestion-service` `POST /ingest` → `nexus-documents` → `document_chunks` → `document-chunks` → embedded, end-to-end; PII redaction gated by `tenant_settings`.
+- `ingestion-service` `POST /ingest` → `mytheus-documents` → `document_chunks` → `document-chunks` → embedded, end-to-end; PII redaction gated by `tenant_settings`.
 - `search-service` `GET /search` returns org-scoped FTS hits under RLS.
 - Both §8 DECISION-REQUIRED items have a recorded ratification (or an explicit deferral with the chosen default).
 - **P6 demo:** upload a PDF, watch it traverse ingest → bucket → `document_chunks` → `document-chunks` → embedding consumer → `document_chunks__{org_id}`; run an FTS `/search` and a Qdrant vector search side by side returning org-scoped hits; force a poison message and show it land in the DLQ while the partition keeps moving; show the embedding-lag and DLQ-rate Grafana panels green.

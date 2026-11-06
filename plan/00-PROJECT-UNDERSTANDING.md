@@ -138,7 +138,7 @@ Overridable per tenant via `tenant_settings.agent_confidence_overrides`.
 | **Graph** | **Apache AGE** (`nexus_knowledge`), co-located in Postgres | Org-partitioned. Nodes: Person / Meeting / Decision / Action / Topic. Edges: ATTENDED / PRODUCED / ASSIGNED_TO / RELATES_TO / FOLLOWS_FROM. **Edges written on confirmation only.** Derived / rebuildable from confirmed rows. R1 exit path: Neptune / Neo4j Aura or relational MV fallback. |
 | **Vector** | **Qdrant Cloud** | Per-tenant collections `transcript_chunks__{org_id}`, `document_chunks__{org_id}`, `decisions__{org_id}`. BGE-small-en 384-dim cosine, int8 quantized. **Mandatory `org_id` payload filter** (defense-in-depth). Derived / rebuildable. |
 | **Cache / coordination** | **Redis (Upstash)** | Namespaced `nexus:{org_id}:...` for user_ctx (5 m TTL), rag cache (10 m), dedupe (24 h), budget mirror, pub/sub, presence, queues. Ephemeral. |
-| **Object** | Object storage | `nexus-recordings`, `nexus-documents`, `nexus-attachments`, `nexus-invoices` (7-yr WORM), `nexus-audit-archive`, `nexus-exports`. Region-pinned via `data_residency`. |
+| **Object** | Object storage | `mytheus-recordings`, `mytheus-documents`, `mytheus-attachments`, `mytheus-invoices` (7-yr WORM), `mytheus-audit-archive`, `mytheus-exports`. Region-pinned via `data_residency`. |
 
 Only the relational store and the object store are systems of record; AGE, Qdrant, and Redis are **derived / rebuildable** from confirmed rows.
 

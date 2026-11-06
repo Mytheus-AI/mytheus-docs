@@ -9,13 +9,13 @@
 - **Phases / weeks:** **P3 Meeting Platform Integration (W6-8)** then **P4 Real-time & Transcription (W9-12)**. P3 stands up media transport + the non-AV fan-out plane; P4 adds the audio→Deepgram→`transcript_chunks` pipeline behind a compliance gate.
 - **Goal:** A participant joins a real LiveKit room from `web-app` (and `mytheus-mobile`), sees other participants and presence, chats in-meeting, and — once P4 lands — sees live captions streaming under the 2 s budget while diarized finals persist to `transcript_chunks` and flow onto the `transcript-chunks` topic. No agents yet (that is Plan 5+); this band delivers the *capture* substrate they consume.
 - **Repos & folders touched:**
-  - `mytheus-backend` — **`meeting-service`** (LiveKit transport adapter, token mint, webhook, `meeting_rooms`, `nexus-recordings`); **`core-api`** (`chat_messages` persistence + `POST /chat`, `meeting_speakers` mapping + `meeting-events` producer wiring); `libs/shared` (reuse outbox/inbox/envelope/tenancy); `migrations/`.
+  - `mytheus-backend` — **`meeting-service`** (LiveKit transport adapter, token mint, webhook, `meeting_rooms`, `mytheus-recordings`); **`core-api`** (`chat_messages` persistence + `POST /chat`, `meeting_speakers` mapping + `meeting-events` producer wiring); `libs/shared` (reuse outbox/inbox/envelope/tenancy); `migrations/`.
   - `mytheus-realtime` — **primary, currently docs-only.** New `services/realtime-gateway/` (Node + Socket.io), `services/transcription-service/` (Python FastAPI WS proxy), `proto/`, `libs/`, `docker-compose.yml`.
   - `mytheus-events` — Avro subjects `transcript-chunks-value`, `meeting-room-events-value`, `presence-events-value` (+ their `.dlq`), registered BACKWARD.
   - `mytheus-ui` (`web-app`) — meeting room (LiveKit video grid), live-captions view, transcript view, speaker-mapping UI, in-meeting chat + presence.
   - `mytheus-mobile` — realign `live-session` + `start-session` screens onto real LiveKit media + `realtime-gateway` Socket.io; real meeting clock; mic capture + permissions.
 - **Demoable at the end:**
-  - **End of P3:** two browsers (+ one phone) join the same `meeting_id` LiveKit room through a `meeting-service`-minted token; video grid renders; presence list updates on join/leave; chat messages fan out across `realtime-gateway` pods and persist to `chat_messages`; a `recording.ready` webhook lands an egress ref in `meeting_rooms` and an object in `nexus-recordings/{org_id}/{meeting_id}/`. Staging deploy fires on merge to `main`.
+  - **End of P3:** two browsers (+ one phone) join the same `meeting_id` LiveKit room through a `meeting-service`-minted token; video grid renders; presence list updates on join/leave; chat messages fan out across `realtime-gateway` pods and persist to `chat_messages`; a `recording.ready` webhook lands an egress ref in `meeting_rooms` and an object in `mytheus-recordings/{org_id}/{meeting_id}/`. Staging deploy fires on merge to `main`.
   - **End of P4:** the same meeting now shows **live captions** (Deepgram interims → finals) under p95 < 2 s; **finals only** land in `transcript_chunks` and on the `transcript-chunks` topic (Avro `TranscriptChunk`); the transcript view replays ordered chunks; the speaker-mapping UI assigns a diarized `speaker_id` → `user_id` in `meeting_speakers`; the **compliance gate** is demonstrably green (Deepgram DPA/SCC on file, at-rest PII redaction node firing when `tenant_settings.pii_redaction_enabled`, `transcript_chunks` and the Deepgram endpoint pinned to `data_residency.region`).
 
 ---
@@ -44,7 +44,7 @@ This band introduces **no new** service, table, topic, collection, Redis-key, or
 - **Tables:** `meeting_rooms` (owner `meeting-service`), `transcript_chunks` (owner `transcription-service`), `meeting_speakers` (owner `core-api`), `chat_messages` (owner `core-api`), `meetings` / `meeting_participants` (owner `core-api`), `tenant_settings` / `data_residency` (owner `identity-tenant-service`, read here).
 - **Topics:** `transcript-chunks`, `meeting-room-events`, `presence-events`, `meeting-events` (each paired with `<topic>.dlq`).
 - **Frozen Avro schema (canon):** `TranscriptChunk`. **Net-new (not frozen canon) schema names** introduced by [07](../07-event-architecture.md): `MeetingRoomEvent`, `PresenceEvent` — usable but flagged.
-- **Object bucket:** `nexus-recordings` (key prefix `{org_id}/{meeting_id}/`).
+- **Object bucket:** `mytheus-recordings` (key prefix `{org_id}/{meeting_id}/`).
 - **Redis keys (all `nexus:{org_id}:…`):** `nexus:{org_id}:pubsub:meeting:{meeting_id}` (Socket.io fan-out channel), `nexus:{org_id}:presence:{meeting_id}` (presence set), `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (inbox cache), `nexus:{org_id}:dedupe:livekit:{room}:{event}:{participant_sid}` (webhook dedupe).
 - **Adapter / interface names:** `MeetingTransport` (Protocol), `LiveKitTransport` (concrete), `TranscriptionProvider` (Protocol), `DeepgramProvider` (concrete).
 - **Capacity symbols (imported, never re-derived):** `A5`, `A6`, `A8`, `A9`, `A12`, `D1`, `T2`.
@@ -59,7 +59,7 @@ Ordering is a precondition chain. **P3 before P4** because transcription needs a
 
 ### PHASE P3 — Meeting Platform Integration (W6-8)
 
-#### 3.1 `meeting-service` — LiveKit transport adapter, token mint, webhooks, `meeting_rooms`, `nexus-recordings`
+#### 3.1 `meeting-service` — LiveKit transport adapter, token mint, webhooks, `meeting_rooms`, `mytheus-recordings`
 
 **Repo / folder:** `mytheus-backend/services/meeting-service/` (today: a stub `main.py` that boots FastAPI with no routes).
 
@@ -84,7 +84,7 @@ Ordering is a precondition chain. **P3 before P4** because transcription needs a
      livekit_room    text        NOT NULL,              -- the LiveKit room name
      status          text        NOT NULL DEFAULT 'pending', -- pending|active|ended
      egress_id       text,                              -- LiveKit egress id (recording)
-     recording_ref   text,                              -- nexus-recordings object key
+     recording_ref   text,                              -- mytheus-recordings object key
      created_at      timestamptz NOT NULL DEFAULT now(),
      updated_at      timestamptz NOT NULL DEFAULT now(),
      deleted_at      timestamptz,
@@ -170,15 +170,15 @@ Ordering is a precondition chain. **P3 before P4** because transcription needs a
    ```
    The webhook handler verifies → dedupes → normalizes → returns `2xx` fast; the `meeting-room-events` emit rides the outbox in the same transaction as the `meeting_rooms` write.
 6. **Consume `meeting-events`** (produced by `core-api`) to open/close rooms: on `meeting.created` pre-create the `meeting_rooms` row + LiveKit room name; on `meeting.ended` mark `status='ended'` and trigger egress stop. Re-assert `org_id` from the header; dedupe via inbox.
-7. **`nexus-recordings` bucket.** Create the region-pinned bucket (or per-region buckets) with a `{org_id}/{meeting_id}/` key convention and lifecycle (cold after 30 d; purge on RTBF per [05 §7](../05-data-architecture.md)). Wire `boto3` with `data_residency.object_bucket_region` so the recording lands in the tenant region. LiveKit egress writes directly to the bucket; `recording.ready` only persists the *reference*.
+7. **`mytheus-recordings` bucket.** Create the region-pinned bucket (or per-region buckets) with a `{org_id}/{meeting_id}/` key convention and lifecycle (cold after 30 d; purge on RTBF per [05 §7](../05-data-architecture.md)). Wire `boto3` with `data_residency.object_bucket_region` so the recording lands in the tenant region. LiveKit egress writes directly to the bucket; `recording.ready` only persists the *reference*.
 8. **Staging deploy on merge.** Add the `meeting-service` module to the CI matrix; on merge to `main`, build the image and deploy to the staging deployable (modular monolith — `meeting-service` is a module, not yet its own pod). Smoke: hit `POST /api/meetings/{id}/token` against a seeded participant.
 9. **Env vars** (`mytheus-backend/.env`): `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_WEBHOOK_KEY` (HMAC), `NEXUS_RECORDINGS_BUCKET`, `AWS_*`/S3 creds.
 
-**Canonical names:** `meeting-service`, `meeting_rooms`, `nexus-recordings`, `meeting-room-events`, `meeting-events`, `MeetingTransport`, `LiveKitTransport`, `POST /api/meetings/:id/token`, `POST /livekit/webhook`.
+**Canonical names:** `meeting-service`, `meeting_rooms`, `mytheus-recordings`, `meeting-room-events`, `meeting-events`, `MeetingTransport`, `LiveKitTransport`, `POST /api/meetings/:id/token`, `POST /livekit/webhook`.
 
 **Acceptance checks:**
 - A seeded participant gets `{token, room, livekit_url}`; a non-participant gets `403 NOT_A_PARTICIPANT`. Token-mint p95 < 250 ms under a k6 smoke.
-- A signed `egress_ended` webhook persists `meeting_rooms.recording_ref` and lands an object at `nexus-recordings/{org_id}/{meeting_id}/…`; a **redelivered** identical webhook is a no-op (inbox dedupe).
+- A signed `egress_ended` webhook persists `meeting_rooms.recording_ref` and lands an object at `mytheus-recordings/{org_id}/{meeting_id}/…`; a **redelivered** identical webhook is a no-op (inbox dedupe).
 - `org_id` is never read from the request body anywhere in this service (grep test).
 - RLS isolation test: tenant A cannot read tenant B's `meeting_rooms`.
 
@@ -467,7 +467,7 @@ Per the roadmap data-store schedule (`22-roadmap-and-phasing.md` §3.1) and [05 
 | PostgreSQL `transcript_chunks` | FINALS-ONLY rows, monthly range partition on `created_at`, local index `(meeting_id, start_ms)`, `pg_partman` premake | `transcription-service` | P4 |
 | Redis `nexus:{org_id}:presence:{meeting_id}` | live presence set (ephemeral) | `realtime-gateway` | P3 |
 | Redis `nexus:{org_id}:pubsub:meeting:{meeting_id}` | Socket.io cross-pod fan-out channel + caption bridge | `realtime-gateway` | P3/P4 |
-| Object `nexus-recordings` | LiveKit recordings, key `{org_id}/{meeting_id}/`, region from `data_residency.object_bucket_region`, cold after 30 d | `meeting-service` | P3 |
+| Object `mytheus-recordings` | LiveKit recordings, key `{org_id}/{meeting_id}/`, region from `data_residency.object_bucket_region`, cold after 30 d | `meeting-service` | P3 |
 
 Not in this band: Qdrant collections and the AGE `nexus_knowledge` graph (Plan 5+, when embeddings/agents/knowledge-graph land). The cold Parquet transcript archive and `pg_partman` nightly maintenance job are wired with `workflow-service` later; this band only creates the current-month partitions.
 
@@ -553,7 +553,7 @@ Billing/budgets and dedicated GPU inference are **not** in this band (no LLM tie
 ## 10. Definition of Done & end-of-phase demo  (a demo at the END of EVERY phase)
 
 **End of P3 (W8) — Meeting Platform demo + DoD:**
-- **Demo:** two browsers + one phone join the same `meeting_id` LiveKit room via `meeting-service`-minted tokens; video grid + presence + cross-pod chat work live; a `recording.ready` webhook persists a `meeting_rooms.recording_ref` and an object in `nexus-recordings/{org_id}/{meeting_id}/`.
+- **Demo:** two browsers + one phone join the same `meeting_id` LiveKit room via `meeting-service`-minted tokens; video grid + presence + cross-pod chat work live; a `recording.ready` webhook persists a `meeting_rooms.recording_ref` and an object in `mytheus-recordings/{org_id}/{meeting_id}/`.
 - **DoD:** `meeting-service` token mint (p95 < 250 ms) + webhook (HMAC-verified, inbox-deduped) shipped; `meeting_rooms` migrated with RLS FORCE; `realtime-gateway` scaffolded with Redis-adapter fan-out, presence, chat relay; `chat_messages` + `meeting_speakers` migrated in `core-api`; staging deploy fires on merge; mobile media + presence wired; cross-pod fan-out test, RLS isolation test, token-mint deny-by-default test all green.
 
 **End of P4 (W12) — Real-time & Transcription demo + DoD:**
@@ -569,7 +569,7 @@ Authoring references used (by path):
 - [03-container-architecture.md](../03-container-architecture.md) — C4 L2 containers, the three WebSocket flows (§4.3), store ownership (§5), edge path (§6).
 - [04-service-catalog.md](../04-service-catalog.md) — `meeting-service` (§3.6), `realtime-gateway` (§4.1), `transcription-service` (§4.2) responsibilities, owned data, events, failure modes.
 - [12-compliance-and-privacy.md](../12-compliance-and-privacy.md) — subprocessor DPA/SCC (§4), PII redaction boundaries (§5), residency pin (§6), consent (§3.3).
-- [05-data-architecture.md](../05-data-architecture.md) — `transcript_chunks` partitioning/indexing (§3.2-§3.4), Redis namespaces (§6), `nexus-recordings` + cold archive (§7).
+- [05-data-architecture.md](../05-data-architecture.md) — `transcript_chunks` partitioning/indexing (§3.2-§3.4), Redis namespaces (§6), `mytheus-recordings` + cold archive (§7).
 - [_canon/03-event-taxonomy.md](../_canon/03-event-taxonomy.md) — `transcript-chunks` / `meeting-room-events` / `presence-events` schemas, partition keys, retention, idempotency; the `org_id`-sole-key freeze.
 - [adr/0003-meeting-sdk-livekit.md](../adr/0003-meeting-sdk-livekit.md) — LiveKit lock, transport adapter, `meeting_rooms`, one diarized stream per meeting, reversibility.
 - [adr/0012-realtime-transport-websocket-tier.md](../adr/0012-realtime-transport-websocket-tier.md) — `realtime-gateway` split, Socket.io rooms by `meeting_id`, Redis pub/sub backbone, sticky/stateless, captions/presence/chat phasing.

@@ -68,7 +68,7 @@ flowchart TB
     QDA[("Qdrant<br/>per-tenant collections")]
     RDA[("Redis (Upstash)<br/>namespaced — ephemeral")]
     RPA[["Redpanda<br/>tenant-partitioned, multi-AZ"]]
-    OBJA[("Object storage<br/>nexus-recordings/-documents/-invoices/-audit")]
+    OBJA[("Object storage<br/>mytheus-recordings/-documents/-invoices/-audit")]
   end
 
   subgraph PASSIVE["Region B — PASSIVE (warm standby)"]
@@ -154,7 +154,7 @@ This is the section most "DR" treatments get wrong by covering only Postgres. NE
 | **Qdrant** (per-tenant collections) | **Derived** — BGE-small vectors from transcripts/docs/decisions | Periodic collection snapshots; **fully rebuildable** by re-embedding from Postgres `transcript_chunks` / `document_chunks` + object originals | Snapshot interval (e.g. 6h) / unbounded if rebuilt | ≤ 1h (snapshot) / per-tenant minutes, global days at EM2 ~525/s (§4.1) | Restore snapshot (the global DR path), or re-embed via the embedding consumer from the durable source rows |
 | **Redis** (Upstash, namespaced) | **Ephemeral** — `get_user_context` cache, RAG cache, presence, pub/sub, priority queues, dedupe cache | **None — not backed up by design** | n/a (lossy) | Seconds (cold caches refill) | Recreate empty; caches repopulate on demand; in-flight pub/sub fan-out is reconstructed from Redpanda + Socket.io reconnect |
 | **Redpanda** (tenant-partitioned, multi-AZ) | **Replayable log** — all topics | Multi-AZ replication + topic retention + MirrorMaker2 to passive region | 0 within-AZ / mirror lag cross-region | Minutes (consumer offset replay) | Consumers replay from last committed offset; idempotent inbox dedupes redelivery |
-| **Object storage** (S3-compatible) | **Durable blobs** — `nexus-recordings`, `nexus-documents`, `nexus-attachments`, `nexus-invoices`, `nexus-audit-archive`, `nexus-exports` | Cross-region async replication; **object-lock** (WORM) on `nexus-invoices` (7-yr) and `nexus-audit-archive` | ≤ 5s | Seconds (replica is live) | Failover to replica bucket; object-lock prevents tamper/early-delete |
+| **Object storage** (S3-compatible) | **Durable blobs** — `mytheus-recordings`, `mytheus-documents`, `mytheus-attachments`, `mytheus-invoices`, `mytheus-audit-archive`, `mytheus-exports` | Cross-region async replication; **object-lock** (WORM) on `mytheus-invoices` (7-yr) and `mytheus-audit-archive` | ≤ 5s | Seconds (replica is live) | Failover to replica bucket; object-lock prevents tamper/early-delete |
 
 ```mermaid
 flowchart LR
@@ -188,7 +188,7 @@ The corollary: backups for Qdrant and AGE exist purely to shorten RTO (snapshot 
 
 ### 4.2 Right-to-be-forgotten interacts with DR
 
-RTBF deletion ([Data Architecture §8.1](05-data-architecture.md)) runs as a Temporal workflow across the canon RTBF store set — **Postgres, Qdrant, AGE `nexus_knowledge`, Redis, object storage, and an `audit-service` completion record** ([Canonical Data Model §7](_canon/02-data-model.md)). Note this set is **not** the same as the §4 backup matrix: Redpanda is *not* an RTBF deletion target — it is a replayable log whose tenant-partitioned data ages out by retention-based expiry, not by point-delete — and `audit-service` *is* a target (it appends the mandatory RTBF-completion record). DR must not resurrect deleted data: PITR restores and replica promotions replay the deletion tombstones, and the object-lock retention windows (`nexus-invoices` 7yr, `nexus-audit-archive` SOC2) are the *only* data that survives an RTBF by legal exception. A restore that predates an RTBF completion triggers a re-run of the deletion workflow against the restored state — this reconciliation step is mandatory in the runbook.
+RTBF deletion ([Data Architecture §8.1](05-data-architecture.md)) runs as a Temporal workflow across the canon RTBF store set — **Postgres, Qdrant, AGE `nexus_knowledge`, Redis, object storage, and an `audit-service` completion record** ([Canonical Data Model §7](_canon/02-data-model.md)). Note this set is **not** the same as the §4 backup matrix: Redpanda is *not* an RTBF deletion target — it is a replayable log whose tenant-partitioned data ages out by retention-based expiry, not by point-delete — and `audit-service` *is* a target (it appends the mandatory RTBF-completion record). DR must not resurrect deleted data: PITR restores and replica promotions replay the deletion tombstones, and the object-lock retention windows (`mytheus-invoices` 7yr, `mytheus-audit-archive` SOC2) are the *only* data that survives an RTBF by legal exception. A restore that predates an RTBF completion triggers a re-run of the deletion workflow against the restored state — this reconciliation step is mandatory in the runbook.
 
 ---
 

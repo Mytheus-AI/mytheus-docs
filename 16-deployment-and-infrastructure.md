@@ -415,7 +415,7 @@ Each wave moves with the **strangler-fig** pattern, and because every service is
 | Data residency | Tenant compute + data pinned to `data_residency.region` (`us`/`eu`/`ap`) | [Data Model](_canon/02-data-model.md) |
 | Postgres DR | Primary + read replica + **PITR**; async cross-region replication to the passive region | [Data Architecture](05-data-architecture.md) (PDF Phase 13) |
 | Failover routing | Cloudflare health-checked DNS failover to the passive region | §2.1 |
-| Object storage | **Cloudflare R2** buckets (`nexus-recordings`, `nexus-documents`, …) per `object_bucket_region` ([ADR-0023](adr/0023-object-storage-cloudflare-r2.md)); R2 has no S3-style cross-region replication, so DR beyond bucket durability is an explicit copy job | [Data Model §object buckets](_canon/02-data-model.md) |
+| Object storage | **Cloudflare R2** buckets (`mytheus-recordings`, `mytheus-documents`, …) per `object_bucket_region` ([ADR-0023](adr/0023-object-storage-cloudflare-r2.md)); R2 has no S3-style cross-region replication, so DR beyond bucket durability is an explicit copy job | [Data Model §object buckets](_canon/02-data-model.md) |
 | Availability SLOs | Free 99.5% (single-region), Pro 99.9% (active-passive), Enterprise 99.95% (cell, active-active candidate) | [Capacity §11.2](_canon/05-capacity-math.md) |
 
 ```mermaid

@@ -27,6 +27,17 @@ Columns:
 
 > [SaaS-scale adjustment] **The PDF named no services.** It was a 13-phase, role-agnostic, single-deployment plan. Every service below is therefore **added (SaaS)**, not renamed. Likewise, [Tech Decisions §3](_canon/06-tech-decisions.md) records that all PDF→SaaS changes were made *without renaming*. Consequently the canon contains **no `old → new` service or entity rename**, and the Renamed-from-PDF column is dashes throughout, with origin marks. The single cross-document reconciliation that resembles a rename is handled in prose in §10, not as a PDF rename.
 
+## Recorded renames
+
+| Old name | New name | Why |
+|---|---|---|
+| `nexus-recordings` | `mytheus-recordings` | The R2 buckets were created with the product name; see [ADR-0028](adr/0028-object-storage-buckets-use-the-mytheus-prefix.md). |
+| `nexus-documents` | `mytheus-documents` | Same. |
+| `nexus-attachments` | `mytheus-attachments` | Same. |
+| `nexus-invoices` | `mytheus-invoices` | Same. |
+| `nexus-exports` | `mytheus-exports` | Same. |
+| `nexus-audit-archive` | `mytheus-audit-archive` | Same. |
+
 > [Naming-authority note] [`_canon/02-data-model.md`](_canon/02-data-model.md) uses informal service labels (`identity-service`, `agent-service`, `tenant-service`, `billing-service`, `graph-service`, `budget-service`, `audit-service`) in its ownership map. These are **not canonical** — the [Service Catalog](04-service-catalog.md) ([`_canon/01`](_canon/01-service-catalog.md)) is the single service-naming authority, and [Event Architecture §2.2](07-event-architecture.md) already ruled this conflict in the catalog's favor. This glossary uses **only the 20 catalog service names**; the data-model labels are mapped to their catalog equivalents in §10 and never used as canonical service rows.
 
 ---

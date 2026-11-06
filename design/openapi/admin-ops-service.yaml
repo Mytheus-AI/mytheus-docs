@@ -31,7 +31,7 @@ info:
     `mytheus_app` makes the table append-only FOR THE REQUEST PATH. It does not make it
     tamper-EVIDENT: `mytheus_admin` owns the table and can still modify it or drop a
     partition. Genuine tamper-evidence needs a per-row hash chain or write-once export to
-    `nexus-audit-archive`, neither of which is built in this band. The claim is scoped
+    `mytheus-audit-archive`, neither of which is built in this band. The claim is scoped
     here deliberately rather than overstated.
 
 servers:

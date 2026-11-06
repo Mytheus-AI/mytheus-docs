@@ -20,7 +20,7 @@ flowchart TD
   WF --> AGE["AGE nexus_knowledge<br/>remove nodes and edges by $org_id"]
   WF --> RD["Redis<br/>flush nexus:{org_id}:* keys"]
   WF --> OBJ["Object storage<br/>delete {org_id}/ prefixes"]
-  WF --> HOLD["Legal-hold carve-out<br/>nexus-invoices, nexus-audit-archive"]
+  WF --> HOLD["Legal-hold carve-out<br/>mytheus-invoices, mytheus-audit-archive"]
   WF --> AUD["audit_logs<br/>append the RTBF completion record"]
 ```
 
@@ -32,7 +32,7 @@ flowchart TD
 | **Qdrant** | Delete points by `org_id` payload filter, or drop the per-tenant collection outright for full tenant erasure. | Not built until the AI band. |
 | **AGE `nexus_knowledge`** | Remove nodes and edges carrying the tenant's `$org_id`. | The graph is org-partitioned by property, so this is a parameterized Cypher delete. |
 | **Redis** | Flush `nexus:{org_id}:*`. | See the gap in section 5. |
-| **Object storage** | Delete every object under the `{org_id}/` prefix, across `nexus-recordings`, `nexus-documents`, and `nexus-exports`. | Regional buckets follow `data_residency.object_bucket_region`. |
+| **Object storage** | Delete every object under the `{org_id}/` prefix, across `mytheus-recordings`, `mytheus-documents`, and `mytheus-exports`. | Regional buckets follow `data_residency.object_bucket_region`. |
 | **Redpanda** | No deletion. Topics are retention-bounded and replayable; erasure is by expiry, not by seek-and-destroy. | Stated explicitly because "delete from the event log" is a natural but wrong instinct. |
 | **Subprocessors** | Trigger each processor's own deletion API or contractual deletion obligation. | See [subprocessors.md](subprocessors.md). |
 
@@ -42,8 +42,8 @@ Two things are **not** deleted, and this is deliberate:
 
 | Retained | Why | Retention |
 |---|---|---|
-| `nexus-invoices` | Tax and financial-record obligations outlive an erasure request. | 7 years |
-| `nexus-audit-archive` | The audit trail is the evidence that the erasure itself was performed correctly. Deleting it would destroy the proof. | Per SOC 2 policy, write-once object lock |
+| `mytheus-invoices` | Tax and financial-record obligations outlive an erasure request. | 7 years |
+| `mytheus-audit-archive` | The audit trail is the evidence that the erasure itself was performed correctly. Deleting it would destroy the proof. | Per SOC 2 policy, write-once object lock |
 
 A completed RTBF **appends** to `audit_logs`. The record of the erasure survives the erasure. This is not a contradiction: the audit row records that data was deleted, not the deleted data.
 

@@ -40,8 +40,8 @@ Every NEXUS data class maps to a handling regime: where it may be stored, whethe
 
 | Class | Definition | Canon entities (verbatim) | Third-party egress | Encryption | Default retention |
 |---|---|---|---|---|---|
-| **C4 — Restricted PII / conversational** | Verbatim human conversation and personal notes derived from it; the crown jewels. | `transcript_chunks`, `worklogs`, `chat_messages`, `meeting_speakers`, transcript audio in `nexus-recordings`, transcript vectors in Qdrant `transcript_chunks` | Deepgram (audio→text), Anthropic (windowed text on the LLM path), LiveKit (media transport) — **all under DPA/SCC + PII redaction** | TLS 1.3 in transit; AES-256 at rest; tenant-scoped | `tenant_settings.retention_days_transcripts` (per-tenant) |
-| **C3 — Derived business content** | Extracted, lower-density artifacts and uploaded source docs. | `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `document_chunks`, `nexus-documents`, `nexus-attachments`, `decisions`/`document_chunks` Qdrant collections, AGE `nexus_knowledge` nodes/edges | LLM path (extraction/RAG) under DPA/SCC; PM integrations (Jira/Linear) per `integration_connections` scope | AES-256 at rest; tenant-scoped | Tenant retention; AGE soft-delete then purge |
+| **C4 — Restricted PII / conversational** | Verbatim human conversation and personal notes derived from it; the crown jewels. | `transcript_chunks`, `worklogs`, `chat_messages`, `meeting_speakers`, transcript audio in `mytheus-recordings`, transcript vectors in Qdrant `transcript_chunks` | Deepgram (audio→text), Anthropic (windowed text on the LLM path), LiveKit (media transport) — **all under DPA/SCC + PII redaction** | TLS 1.3 in transit; AES-256 at rest; tenant-scoped | `tenant_settings.retention_days_transcripts` (per-tenant) |
+| **C3 — Derived business content** | Extracted, lower-density artifacts and uploaded source docs. | `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `document_chunks`, `mytheus-documents`, `mytheus-attachments`, `decisions`/`document_chunks` Qdrant collections, AGE `nexus_knowledge` nodes/edges | LLM path (extraction/RAG) under DPA/SCC; PM integrations (Jira/Linear) per `integration_connections` scope | AES-256 at rest; tenant-scoped | Tenant retention; AGE soft-delete then purge |
 | **C2 — Secrets / credentials** | Material that grants access; never logged, never returned by API. | `oauth_tokens` (`access_token_enc`/`refresh_token_enc`), `tenant_settings.sso_config`, Clerk JWT material, Deepgram/LLM API keys | Never | **Envelope encryption, per-tenant KMS data key** ([Data Model §2.2](_canon/02-data-model.md)); secret-scanned in CI | Until rotated/revoked |
 | **C1 — Operational / tenant metadata** | Identity, org structure, billing, telemetry needed to run the service. | `users`, `organizations`, `teams`, `team_members`, `departments`, `meetings`, `meeting_participants`, `subscriptions`, `invoices`, `usage_events`, `plans`, `audit_logs`, `data_residency`, `tenant_settings`, `agent_budgets`, `integration_connections` | Stripe (billing fields), email/Slack (notification fields) under DPA | AES-256 at rest; `invoices`/`audit_logs` immutable/object-locked | Mixed: `invoices` 7yr, `audit_logs` 1yr hot + SOC2 archive, rest per tenant lifetime |
 
@@ -83,14 +83,14 @@ NEXUS is a **processor** of tenant content on behalf of the tenant organization 
 
 | Right | GDPR | CCPA | NEXUS mechanism | Owning surface | SLA |
 |---|---|---|---|---|---|
-| **Access** (right to know) | Art 15 | §1798.110/.115 | Generate an export bundle of all rows keyed to the subject across stores → `nexus-exports/{org_id}/{export_id}.zip` (auto-expire 7 days, [Data Model §6](_canon/02-data-model.md)) | `admin-ops-service` → `workflow-service` | ≤ 30 days |
+| **Access** (right to know) | Art 15 | §1798.110/.115 | Generate an export bundle of all rows keyed to the subject across stores → `mytheus-exports/{org_id}/{export_id}.zip` (auto-expire 7 days, [Data Model §6](_canon/02-data-model.md)) | `admin-ops-service` → `workflow-service` | ≤ 30 days |
 | **Erasure** (right to be forgotten) | Art 17 | §1798.105 | Cross-store deletion Temporal saga ([Data Architecture §8.1](05-data-architecture.md)); soft-delete immediate, hard purge scheduled | `admin-ops-service` → `workflow-service` | ≤ 30 days (soft-delete immediate) |
-| **Portability** | Art 20 | §1798.130 | Same `nexus-exports` bundle, in machine-readable JSON + CSV per entity; C2 excluded | `admin-ops-service` → `workflow-service` | ≤ 30 days |
+| **Portability** | Art 20 | §1798.130 | Same `mytheus-exports` bundle, in machine-readable JSON + CSV per entity; C2 excluded | `admin-ops-service` → `workflow-service` | ≤ 30 days |
 | **Consent / objection** | Art 6/7, 21 | §1798.120 (opt-out of sale — N/A, NEXUS does not sell) | Recording/transcription consent at meeting join (§3.3); processing-purpose flags in `tenant_settings` | `meeting-service` + `identity-tenant-service` | At capture / immediate |
 
 ### 3.2 Access & portability: one bundle, two rights
 
-Both rights are served by the same builder workflow, differing only in framing (human-readable vs. machine-readable). The builder queries every store for rows where `org_id` = tenant and (for a single user) `user_id` = subject, writes JSON + CSV per entity into a zip, encrypts it, and lands it in `nexus-exports` with a 7-day lifecycle expiry. The download link is single-use and audit-logged.
+Both rights are served by the same builder workflow, differing only in framing (human-readable vs. machine-readable). The builder queries every store for rows where `org_id` = tenant and (for a single user) `user_id` = subject, writes JSON + CSV per entity into a zip, encrypts it, and lands it in `mytheus-exports` with a 7-day lifecycle expiry. The download link is single-use and audit-logged.
 
 ```mermaid
 flowchart TD
@@ -99,7 +99,7 @@ flowchart TD
   WF --> TX["transcript_chunks + meeting_speakers<br/>(subject as speaker)"]
   WF --> OBJ["Object: recordings/docs the subject owns"]
   PG & TX & OBJ --> ZIP["JSON+CSV per entity → encrypt"]
-  ZIP --> EXP["nexus-exports/{org_id}/{export_id}.zip<br/>7-day auto-expire"]
+  ZIP --> EXP["mytheus-exports/{org_id}/{export_id}.zip<br/>7-day auto-expire"]
   EXP --> AUD["admin-ops-service: log export (single-use link)"]
 ```
 
@@ -136,7 +136,7 @@ If a participant declines, they are not admitted to the recorded session; the te
 
 Erasure reuses the cross-store RTBF Temporal saga in [Data Architecture §8.1](05-data-architecture.md) — Postgres partition/row purge, Qdrant point delete by `org_id` filter across all three collections, AGE `deleted_at`-tag-then-remove, Redis `nexus:{org_id}:*` flush, object-prefix delete — ending with an append-only `audit_logs` record. This document adds only the **legal basis for what survives erasure**:
 
-> Under **GDPR Article 17(3)(b)/(e)**, erasure does not apply where processing is necessary for compliance with a legal obligation or the establishment/exercise/defence of legal claims. Accordingly `nexus-invoices` (7-year tax retention, object-locked) and `nexus-audit-archive` (SOC2 evidence, write-once) are **carved out of erasure** and survive an RTBF request. The carve-out is itself recorded in the audit log so the gap is provably intentional, not a deletion failure.
+> Under **GDPR Article 17(3)(b)/(e)**, erasure does not apply where processing is necessary for compliance with a legal obligation or the establishment/exercise/defence of legal claims. Accordingly `mytheus-invoices` (7-year tax retention, object-locked) and `mytheus-audit-archive` (SOC2 evidence, write-once) are **carved out of erasure** and survive an RTBF request. The carve-out is itself recorded in the audit log so the gap is provably intentional, not a deletion failure.
 
 ---
 
@@ -152,7 +152,7 @@ NEXUS sends C4/C3 data to three subprocessors. Each is bound by a DPA; each EU-d
 |---|---|---|---|---|---|
 | **Deepgram** | Live meeting **audio** → text; C4 derived | Streaming ASR + diarization (one stream/meeting) | US or EU endpoint chosen by `data_residency.region` | DPA + SCCs (Module 2/3) for `eu` tenants on US endpoint fallback | Zero-retention / no-model-training flag set |
 | **Anthropic** | Windowed transcript/doc **text**, redacted (C4/C3) | LLM extraction, triage, high-stakes reasoning (Haiku→Sonnet→Opus) | Regional API where available; else US under SCC | DPA + SCCs; zero-retention enterprise terms | No training on inputs; ephemeral processing |
-| **LiveKit** | Real-time **media** (audio/video tracks) | SFU transport; server-side audio hook | Self-hostable SFU pinned to tenant region | First-party (self-hosted) or DPA+SCC if managed | Media not persisted by SFU; recordings land in tenant-region `nexus-recordings` |
+| **LiveKit** | Real-time **media** (audio/video tracks) | SFU transport; server-side audio hook | Self-hostable SFU pinned to tenant region | First-party (self-hosted) or DPA+SCC if managed | Media not persisted by SFU; recordings land in tenant-region `mytheus-recordings` |
 
 Supporting (controller-side, C1 only): **Stripe** (billing under DPA), **Clerk** (identity under DPA), email/Slack delivery (`notification-service`).
 
@@ -253,14 +253,14 @@ Retention is **per-tenant and partition-aligned**, driven by `tenant_settings.re
 
 | Data | Default retention | Floor / ceiling | Driver |
 |---|---|---|---|
-| `transcript_chunks`, `nexus-recordings` audio | `retention_days_transcripts` | Tenant-configurable; hot 90d then cold tier | `tenant_settings` |
+| `transcript_chunks`, `mytheus-recordings` audio | `retention_days_transcripts` | Tenant-configurable; hot 90d then cold tier | `tenant_settings` |
 | `worklogs` | `retention_days_worklogs` | Tenant-configurable | `tenant_settings` |
 | Qdrant vectors (all collections) | 13 months hot (A18) | Bounded stock, purged in lockstep with Postgres | A18 + RTBF |
 | `decisions`, `action_items`, AGE graph | Tenant lifetime; soft-delete then purge on RTBF | — | Tenant policy + RTBF |
 | `invoices` | **7 years** | Legal floor (tax) — survives RTBF | Compliance |
 | `audit_logs` | **1 year hot + SOC2 archive** | Legal floor (SOC2) — survives RTBF | Compliance |
 | `usage_events` | 90d raw, then summarized | Aggregated nightly | Billing |
-| `nexus-exports` bundles | **7 days** | Auto-expire | Privacy hygiene |
+| `mytheus-exports` bundles | **7 days** | Auto-expire | Privacy hygiene |
 
 ### 7.2 The single RTBF saga (referenced)
 
@@ -274,7 +274,7 @@ Deletion across all six stores is the one Temporal saga specified in [Data Archi
 
 ## 8. Audit logging
 
-`audit_logs` is the compliance evidence base. It is owned by `admin-ops-service` — the canonical [Service Catalog](_canon/01-service-catalog.md) folds the compliance `audit_logs` trail into `admin-ops-service` (which also routes ops audit-log access); the cross-store saga mechanics live in [Data Architecture §8.1](05-data-architecture.md). The table is **append-only with no UPDATE/DELETE** (tamper-evident), RLS-scoped by `org_id`, range-partitioned monthly, retained 1 year hot, and archived write-once to `nexus-audit-archive` for SOC2.
+`audit_logs` is the compliance evidence base. It is owned by `admin-ops-service` — the canonical [Service Catalog](_canon/01-service-catalog.md) folds the compliance `audit_logs` trail into `admin-ops-service` (which also routes ops audit-log access); the cross-store saga mechanics live in [Data Architecture §8.1](05-data-architecture.md). The table is **append-only with no UPDATE/DELETE** (tamper-evident), RLS-scoped by `org_id`, range-partitioned monthly, retained 1 year hot, and archived write-once to `mytheus-audit-archive` for SOC2.
 
 > [SaaS-scale adjustment] Centralized, tamper-evident audit logging is new. The PDF had structured logs but no immutable audit trail, no actor taxonomy, and no archive.
 
@@ -297,7 +297,7 @@ flowchart LR
   AGT["agent action (a2a grant, write)"] --> AUD
   SYS["system (workflow, lifecycle)"] --> AUD
   AUD -->|append-only, RLS by org_id| PG["audit_logs (monthly partitions)"]
-  PG -->|1yr → write-once archive| ARC["nexus-audit-archive/{org_id}/{YYYY-MM}/"]
+  PG -->|1yr → write-once archive| ARC["mytheus-audit-archive/{org_id}/{YYYY-MM}/"]
 ```
 
 ---
@@ -379,8 +379,8 @@ Reading the diagram:
 | Residency field | `data_residency.region ∈ {us, eu, ap}` (not `org_region`), immutable after `locked_at` |
 | Subprocessors | Deepgram, Anthropic, LiveKit — all under DPA; EU transfers under SCC + zero-retention |
 | Redaction boundaries | `ingestion-service` (docs), `transcription-service` (at-rest, gated), LLM-egress (always-on) |
-| DSR SLA | 30 days; access/portability via `nexus-exports`; erasure via the [§8.1](05-data-architecture.md) RTBF saga |
+| DSR SLA | 30 days; access/portability via `mytheus-exports`; erasure via the [§8.1](05-data-architecture.md) RTBF saga |
 | Consent | Captured at `meeting-service` token-mint; recorded on `meeting_participants` + audit. Schema ratified ([ADR-0018](adr/0018-consent-entity-behind-flag.md)) — `consented_at`/`consent_version` on `meeting_participants` and `consent_required` on `tenant_settings`, defaulted `false`. Migration and 428 application code are later tasks |
-| Legal-hold carve-out | `nexus-invoices` (7yr) + `nexus-audit-archive` (SOC2) survive erasure under GDPR Art 17(3) |
+| Legal-hold carve-out | `mytheus-invoices` (7yr) + `mytheus-audit-archive` (SOC2) survive erasure under GDPR Art 17(3) |
 | Audit | Append-only `audit_logs` (`actor_type ∈ {user, agent, system}`), 1yr hot + write-once archive |
 | SOC2 | Type II readiness over Security/Availability/Processing Integrity/Confidentiality, mapped to canon mechanisms |

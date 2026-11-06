@@ -362,7 +362,7 @@ Every store has exactly one **owning service** that writes it. Reads by other se
 | Apache AGE `nexus_knowledge` | Co-located in PostgreSQL | `knowledge-graph-service` only | Org-partitioned: every node carries `org_id`; every Cypher template parameterized by `$org_id` |
 | Qdrant Cloud | Per-tenant collections | `embedding-service` only (upserts) | Physical per-tenant collection `transcript_chunks__{org_id}` / `document_chunks__{org_id}` / `decisions__{org_id}` + mandatory `org_id` payload filter |
 | Redis (Upstash) | Single namespaced cluster | `rag-service` (answer cache), `realtime-gateway` (pub/sub + presence), `agent-runtime-service` (budget mirror + dedupe inbox), `identity-tenant-service` (`get_user_context` cache) | Every key prefixed `nexus:{org_id}:…` |
-| S3-compatible object storage | Regional buckets | `meeting-service` (`nexus-recordings`), `ingestion-service` (`nexus-documents`, `nexus-attachments`), `billing-metering-service` (`nexus-invoices`), `admin-ops-service`/`workflow-service` (`nexus-exports`, `nexus-audit-archive`) | Per-tenant key prefix `{org_id}/…`; region from `data_residency.object_bucket_region` |
+| S3-compatible object storage | Regional buckets | `meeting-service` (`mytheus-recordings`), `ingestion-service` (`mytheus-documents`, `mytheus-attachments`), `billing-metering-service` (`mytheus-invoices`), `admin-ops-service`/`workflow-service` (`mytheus-exports`, `mytheus-audit-archive`) | Per-tenant key prefix `{org_id}/…`; region from `data_residency.object_bucket_region` |
 
 ```mermaid
 flowchart TB
