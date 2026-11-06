@@ -223,3 +223,17 @@ Branch `feat/phase-0-6-completion` in `mytheus-backend`, `mytheus-events`, `myth
 - The audio tap runs in the API process (single replica only); more replicas need a dedicated worker.
 - The `mytheus-intelligence` compose uses `network_mode: bridge` (Docker address pools were exhausted on the host) and `minio/minio:latest`; both should be revisited.
 - Out of scope this round: `mytheus-mobile`, CI workflows, `mytheus-ui` and `non/mytheus-web`.
+
+### Follow-up round 2026-11-06 (same day)
+
+Closed after the first round, all observed by running the named commands:
+
+- Model load time: the embedding and reranker services now load weights from the local cache first (`libs/shared/model_loading.py`). BGE-small-en loads in 0.3 s instead of 6.9 s; the extra time was the Hugging Face Hub update check. Warm batch of 32 is 60 ms on CPU (identical short inputs, so a lower bound); the earlier 3.5 s figure was a cold start. The GPU images set `HF_HUB_OFFLINE=1` after baking weights; they were never built.
+- Object storage is Cloudflare R2 (ADR-0023). The intelligence client reads `S3_*` first (the `MINIO_*` names remain a local-dev fallback), sends checksums only when required, honours `S3_REGION=auto` and `S3_FORCE_PATH_STYLE`, and only auto-creates a bucket on a true 404 (`S3_AUTO_CREATE_BUCKETS=0` in production). The backend lifecycle client got the same checksum setting. Never run against real R2.
+- Audio tap: a dedicated worker (`python -m services.meeting_service.audio_tap_worker`) claims rooms through Redis keys `nexus:{org_id}:tap:{meeting_id}` with a TTL that is refreshed on each scan, so the API process no longer has to be a single replica. `AUDIO_TAP_MODE` is `in-process` in development and `worker` otherwise. 25 new tests, fakes only.
+- `api-gateway` serves `/metrics` without a bearer token only to requests that carry no ingress header; it is not proxied.
+- `transcript_chunks` has monthly partitions through 2027-12 (migration `e4a7c91b3d28`) and `scripts/ensure_partitions.py`; the platform README says to run both helpers monthly (no cron was added).
+- `mytheus-platform` compose gained `core-api-consumer`, `meeting-consumer` and `audio-tap-worker`, scraped on :9100, with an `AudioTapWorkerDown` alert. The intelligence compose pins MinIO by digest.
+- Verified: `make ci` green in `mytheus-backend` (595 passed) and `mytheus-realtime` (47 gateway, 112 transcription); `mytheus-events` `make ci` green; `mytheus-intelligence` 236 of 237 passed once, with one intermittent failure in `test_calendar_attachment_flows_through_relay_into_qdrant` (a dead-letter topic was non-empty; passed in 20 of 21 reruns; the test now prints the dead-letter contents when it fails, so the next occurrence names the cause).
+
+Still open: the Clerk session claim did not persist when saved in the dashboard; credentials (Clerk webhook secret, LiveKit, Deepgram, R2 token); GPU measurement; re-costing `_canon/05`; an alert receiver; an end-to-end run with a real Clerk sign-in.
