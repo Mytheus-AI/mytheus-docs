@@ -40,7 +40,7 @@ This legend is binding for every diagram below.
 | **Synchronous** | solid arrow `-->` labeled `REST` or `gRPC` | HTTPS (external), HTTP/1.1 or gRPC (internal mesh) | Request/response reads and commands where the caller needs the answer now. |
 | **Asynchronous** | solid arrow `-->` labeled with a topic name | Redpanda (Kafka API), Avro + Schema Registry | Fire-and-forget, fan-out, and decoupled inter-tier flow. At-least-once with idempotency. |
 | **WebSocket** | bidirectional arrow `<-->` labeled `WSS` / `WebSocket` | WSS (Socket.io or raw WS) | Long-lived, low-latency, bidirectional streams: live captions, agent output, audio. |
-| **Managed-plane call** | dashed arrow `-.->` | Provider SDK/API over HTTPS/WSS | Calls to Clerk, Deepgram, LiveKit, Stripe, Temporal Cloud, Anthropic/OpenAI. |
+| **Managed-plane call** | dashed arrow `-.->` | Provider SDK/API over HTTPS/WSS | Calls to Clerk, Deepgram, LiveKit, Stripe, Temporal Cloud, Anthropic. |
 
 > [SaaS-scale adjustment] The PDF mixed all inter-component calls into one in-process FastAPI app. At SaaS scale the **internal sync mesh standardizes on gRPC** for service-to-service calls in the AI/inference and real-time tiers (tight latency budgets — see [Capacity & Scaling Math](_canon/05-capacity-math.md) §11), while the `bff` and CRUD-tier services expose REST. External ingress is always HTTPS/WSS through `api-gateway`. The rationale is locked in [Inference & LLM Pipeline](09-rag-and-inference-serving.md): `rag-service` → `reranker-service` and `rag-service` → `embedding-service` are on the warm-RAG p95 < 500 ms path and cannot afford JSON/HTTP overhead.
 
@@ -108,7 +108,7 @@ flowchart TB
     LK(["LiveKit SFU"])
     TMP(["Temporal Cloud"])
     STRIPE(["Stripe"])
-    LLM(["Anthropic / OpenAI<br/>via LiteLLM"])
+    LLM(["Anthropic<br/>via LiteLLM"])
   end
 
   %% Edge ingress
@@ -462,7 +462,7 @@ These containers are not NEXUS-owned but are first-class in the L2 view because 
 | **Deepgram** | `transcription-service` | WSS | Streaming ASR + diarization; key kept server-side |
 | **Temporal Cloud** | `workflow-service` | Task-queue gRPC | Durable `MeetingLifecycleWorkflow`, `ActionFollowUpWorkflow`, RTBF + dunning sagas |
 | **Stripe** | `billing-metering-service`, `integration-service` | HTTPS + webhook | Subscriptions, seats, dunning, tax |
-| **Anthropic / OpenAI (via LiteLLM)** | `agent-runtime-service`, `rag-service` | HTTPS | Tiered LLM routing (Haiku → Sonnet → Opus), query expansion |
+| **Anthropic (via LiteLLM)** | `agent-runtime-service`, `rag-service` | HTTPS | Tiered LLM routing (Haiku → Sonnet → Opus), query expansion |
 
 > [SaaS-scale adjustment] LiveKit is the locked meeting SDK (resolving PDF risk R2), kept behind a transport adapter inside `meeting-service` so the choice stays swappable — see [Tech Decisions](_canon/06-tech-decisions.md) §2.7. Stripe and the full SaaS billing plane are wholly added vs. the PDF.
 

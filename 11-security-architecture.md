@@ -241,7 +241,7 @@ The per-tenant limit and the per-tenant token budget (`agent_budgets`, [Multi-Te
 
 ### 6.1 The secret store
 
-Service-level secrets — Deepgram, OpenAI/Anthropic (via LiteLLM), LiveKit API keys, Clerk backend keys, Redpanda credentials, Stripe keys, the Svix webhook secret — live in a managed secret manager (HashiCorp Vault, or the cloud provider's Secrets Manager on EKS/GKE per [Tech Decisions §2.1](_canon/06-tech-decisions.md)). Rules:
+Service-level secrets — Deepgram, Anthropic (via LiteLLM), LiveKit API keys, Clerk backend keys, Redpanda credentials, Stripe keys, the Svix webhook secret — live in a managed secret manager (HashiCorp Vault, or the cloud provider's Secrets Manager on EKS/GKE per [Tech Decisions §2.1](_canon/06-tech-decisions.md)). Rules:
 
 1. **No secret in source, image, or env file.** Pods fetch secrets at startup from the secret manager via workload identity (IRSA / GKE Workload Identity) — never a long-lived static credential baked into an image.
 2. **Fail closed on missing secret.** A pod that cannot fetch a required secret crashes on startup rather than running degraded/insecure.
@@ -323,7 +323,7 @@ flowchart TB
 
   subgraph SubTB["Trust boundary 5: Subprocessors (DPA + SCC)"]
     DG["Deepgram"]
-    LLM["OpenAI / Anthropic"]
+    LLM["Anthropic"]
     LK["LiveKit"]
   end
 
@@ -351,7 +351,7 @@ The boundaries crossed by an attacker, in order: Edge (1) → AuthN/AuthZ (2) �
 | **Multi-agent context** (`agent-requests`/`agent-responses`) | `correlation_id` envelope + responder verifies requester within own `org_id` ([Multi-Tenancy §6.1](06-multi-tenancy.md)) | Tenant-keyed partitions; record carries `org_id`, consumer re-asserts before write | Every collaboration logged to `agent_collaborations` + `audit_logs` (`actor_type='agent'`) | **A2A deny-by-default, org/role scope** ([Tech Decisions §2.6](_canon/06-tech-decisions.md)); **foreign `org_id` → DLQ, never served** | Collaboration `deadline` + fall-through (peer → related-meeting → RAG → silent); per-tenant token budget | Agent inherits principal's tenant + deny-by-default scope; grant check before processing |
 | **APIs** (`core-api`, `rag-service`, …) | JWT required on every route; internal calls re-verify signed `org_id` header ([Multi-Tenancy §4](06-multi-tenancy.md)) | Pydantic v2 validation; RLS `WITH CHECK` on writes; Avro schema validation on events | Structured JSON audit log per mutating call; immutable invoices | RLS + `org_id` injection; unset GUC ⇒ zero rows ([Multi-Tenancy §6](06-multi-tenancy.md)) | WAF + global/per-tenant rate limit (§5.2); CRUD p95 < 300 ms SLO ([Capacity §11.1](_canon/05-capacity-math.md)) | Authz middleware permit/deny (§3.2); fail-closed; CI asserts authz per route |
 | **Integrations** (Calendar/Slack/Jira/Linear) | OAuth signed callbacks; provider webhook signatures verified at `/webhooks/{provider}` | `integration_connections` id-map validated; bidirectional sync idempotent (outbox/inbox) | `audit_logs` records install/revoke (`admin` action) and external status syncs | `oauth_tokens` envelope-encrypted, per-tenant KMS key, never API-returned (§6.2); guardrail R8 scope cap | Per-tenant webhook rate limit; bursty sync queue-driven, isolated from CRUD | Only `admin`/`owner` may install/revoke; tokens scoped to least OAuth scope set |
-| **Subprocessors** (Deepgram/OpenAI/Anthropic/LiveKit) | Server-side keys only; no client ever holds a subprocessor credential | Avro/JSON contracts validated on return; citations re-anchored to `meeting_id`/`chunk_id` | DPA + audit of data sent; PII redaction pass before egress | **DPAs + SCCs** ([Tech Decisions §2.11](_canon/06-tech-decisions.md)); PII redaction ([Data Architecture](05-data-architecture.md)); regional placement | One Deepgram stream/meeting (not per-participant, [Capacity §7](_canon/05-capacity-math.md)) caps cost/exposure; LiteLLM provider failover | Subprocessor responses are data, never code; no eval of returned content |
+| **Subprocessors** (Deepgram/Anthropic/LiveKit) | Server-side keys only; no client ever holds a subprocessor credential | Avro/JSON contracts validated on return; citations re-anchored to `meeting_id`/`chunk_id` | DPA + audit of data sent; PII redaction pass before egress | **DPAs + SCCs** ([Tech Decisions §2.11](_canon/06-tech-decisions.md)); PII redaction ([Data Architecture](05-data-architecture.md)); regional placement | One Deepgram stream/meeting (not per-participant, [Capacity §7](_canon/05-capacity-math.md)) caps cost/exposure; LiteLLM provider failover | Subprocessor responses are data, never code; no eval of returned content |
 
 ### 8.3 Repudiation: the append-only audit log
 

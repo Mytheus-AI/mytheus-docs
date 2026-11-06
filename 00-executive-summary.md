@@ -153,7 +153,7 @@ The PDF was a single-deployment student build. Eight changes turn it into a comm
 
 > [SaaS-scale adjustment] **Cost-controlled AI.** The PDF ran an agent on every raw transcript chunk — the R4 cost bomb (~41.5B naive LLM calls/month, ≈$224M/mo all-Sonnet). Production replaces it with relevance pre-gating → 30s windowed batching (agents run per window, not per raw chunk) → tiered Haiku/Sonnet/Opus routing → semantic + Anthropic prompt caching → per-tenant hard quotas, an **86% call-volume reduction (L10)** before caching savings. See [Capacity & Scaling Math](_canon/05-capacity-math.md) §8.
 
-> [SaaS-scale adjustment] **Compliance.** Wholly added: GDPR/CCPA, subprocessor DPAs (Deepgram/OpenAI/Anthropic/LiveKit) + SCCs, data residency and regional placement, PII redaction, retention + right-to-be-forgotten deletion workflows, append-only audit logging, and SOC2 readiness — table-stakes for selling to thousands of orgs.
+> [SaaS-scale adjustment] **Compliance.** Wholly added: GDPR/CCPA, subprocessor DPAs (Deepgram/Anthropic/LiveKit) + SCCs, data residency and regional placement, PII redaction, retention + right-to-be-forgotten deletion workflows, append-only audit logging, and SOC2 readiness — table-stakes for selling to thousands of orgs.
 
 > [SaaS-scale adjustment] **Multi-region.** The PDF was single-region Railway/Render. Production runs on Kubernetes (EKS/GKE) + Terraform IaC, multi-region active-passive evolving to active-active, with per-plan availability tiers (Free 99.5%, Pro 99.9%, Enterprise 99.95%). Railway and Render are struck entirely; the early-stage substrate is a self-hosted single-node VPS running Docker Compose ([ADR-0016](adr/0016-self-hosted-vps-mvp-substrate.md)).
 

@@ -4,7 +4,7 @@ P1 design artifact (Plan 1-2 section 3.1 step 9). Derived from [02-system-contex
 
 ## 1. Why this exists before the integrations do
 
-Compliance-by-construction requires the subprocessor list and its signed agreements **before any transcript-class data flows**, not after the integration ships. Deepgram, LiveKit, OpenAI, and Anthropic are not called by any code in Plan 1-2, and their agreements are still executed in this band. Signing a DPA is measured in weeks of legal turnaround; discovering an unsigned one in the week you want to ship is a schedule failure with no engineering fix.
+Compliance-by-construction requires the subprocessor list and its signed agreements **before any transcript-class data flows**, not after the integration ships. Deepgram, LiveKit, and Anthropic are not called by any code in Plan 1-2, and their agreements are still executed in this band. Signing a DPA is measured in weeks of legal turnaround; discovering an unsigned one in the week you want to ship is a schedule failure with no engineering fix.
 
 Every system marked as a subprocessor must also appear in the customer-facing subprocessor list, which is a contractual obligation to customers, not an internal artifact.
 
@@ -22,8 +22,7 @@ Every system marked as a subprocessor must also appear in the customer-facing su
 |---|---|---|---|---|---|---|---|
 | **Deepgram** | T4 raw | Raw meeting audio; returns transcript text | Yes | Required | Required if non-EU processing for EU tenants | Legal | **PENDING** |
 | **LiveKit** | T4 raw | Audio and video media, recordings | Yes | Required | Required | Legal | **PENDING** |
-| **OpenAI** | T4 raw | Transcript-derived prompts, windowed, pre-gated, redacted where configured | Yes | Required | Required | Legal | **PENDING** |
-| **Anthropic** | T4 raw | Same as OpenAI, routed via LiteLLM | Yes | Required | Required | Legal | **PENDING** |
+| **Anthropic** | T4 raw | Transcript-derived prompts, windowed, pre-gated, redacted where configured; routed via LiteLLM | Yes | Required | Required | Legal | **PENDING** |
 | **Qdrant Cloud** | T4 raw | Embeddings plus citation payload | Yes | Required | Required | Legal | **PENDING** |
 | **Redpanda** | T4 raw | Avro event payloads in transit | Yes | Required if managed | Required if managed | Legal | **N/A at MVP, self-hosted on our own VPS. Becomes required if a managed or BYOC cluster is adopted.** |
 | **Slack** | T4 derived | Meeting briefs and summaries | Yes | Required | Required | Legal | PENDING, integration band |

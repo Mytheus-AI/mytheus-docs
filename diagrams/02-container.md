@@ -31,7 +31,7 @@ This legend is binding for every diagram below and is held identical to [Contain
 | **Synchronous** | solid arrow `-->` labeled `REST` or `gRPC` | HTTPS (external), HTTP/1.1 or gRPC (internal mesh) | Request/response where the caller needs the answer now. |
 | **Asynchronous** | solid arrow `-->` labeled with a **topic name** | Redpanda (Kafka API), Avro + Schema Registry, tenant-partitioned | Fire-and-forget, fan-out, decoupled inter-tier flow. At-least-once with idempotency. |
 | **WebSocket** | bidirectional arrow `<-->` labeled `WSS` | WSS (Socket.io or raw WS) | Long-lived bidirectional streams: live captions, agent output, audio. |
-| **Managed-plane call** | dashed arrow `-.->` | Provider SDK/API over HTTPS/WSS | Calls to Clerk, Deepgram, LiveKit, Stripe, Temporal Cloud, Anthropic/OpenAI. |
+| **Managed-plane call** | dashed arrow `-.->` | Provider SDK/API over HTTPS/WSS | Calls to Clerk, Deepgram, LiveKit, Stripe, Temporal Cloud, Anthropic. |
 
 > [SaaS-scale adjustment] The PDF ran all inter-component calls in one in-process FastAPI app and named no services. This L2 view splits it into the 20 catalog services and standardizes the internal sync mesh on **gRPC** for the AI/inference and real-time tiers (tight p95 budgets — see [Capacity & Scaling Math §11](../_canon/05-capacity-math.md)), while `bff` and CRUD services expose REST. All external ingress is HTTPS/WSS through `api-gateway`.
 
@@ -96,7 +96,7 @@ flowchart TB
     DG(["Deepgram<br/>(ASR + diarization)"])
     STRIPE(["Stripe<br/>(billing)"])
     TMP(["Temporal Cloud"])
-    LLM(["Anthropic / OpenAI<br/>(via LiteLLM)"])
+    LLM(["Anthropic<br/>(via LiteLLM)"])
     SLACK(["Slack / email<br/>(delivery channels)"])
   end
 
@@ -275,4 +275,4 @@ Every container in the master diagram, its tier, and its single owned store (per
 | `search-service` | AI / inference | FTS indexes / tsvector materializations |
 | `workflow-service` | Async | none (Temporal owns workflow state) |
 
-Backbone & external planes drawn: **Redpanda** (event broker, tenant-partitioned), **Temporal Cloud** (durable workflows), **Clerk** (auth), **LiveKit** (SFU), **Deepgram** (ASR), **Stripe** (billing), **Anthropic/OpenAI via LiteLLM** (LLM). For per-service responsibility and failure modes see [Service Catalog & Bounded Contexts](../04-service-catalog.md); for the full prose container treatment see [Container Architecture (C4 L2)](../03-container-architecture.md).
+Backbone & external planes drawn: **Redpanda** (event broker, tenant-partitioned), **Temporal Cloud** (durable workflows), **Clerk** (auth), **LiveKit** (SFU), **Deepgram** (ASR), **Stripe** (billing), **Anthropic via LiteLLM** (LLM). For per-service responsibility and failure modes see [Service Catalog & Bounded Contexts](../04-service-catalog.md); for the full prose container treatment see [Container Architecture (C4 L2)](../03-container-architecture.md).

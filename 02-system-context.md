@@ -54,7 +54,7 @@ C4Context
 
   System_Ext(livekit, "LiveKit", "Meeting transport (SFU). Audio/video, room hooks, recording egress. SUBPROCESSOR: audio.")
   System_Ext(deepgram, "Deepgram", "Streaming ASR + diarization. SUBPROCESSOR: audio + transcript text.")
-  System_Ext(llm, "OpenAI + Anthropic (via LiteLLM)", "LLM inference for agents & RAG. SUBPROCESSOR: transcript-derived prompts.")
+  System_Ext(llm, "Anthropic (via LiteLLM)", "LLM inference for agents & RAG. SUBPROCESSOR: transcript-derived prompts.")
   System_Ext(qdrant, "Qdrant Cloud", "Managed vector DB. SUBPROCESSOR: transcript/doc embeddings + citation payload.")
 
   System_Ext(redpanda, "Redpanda", "Managed Kafka-API event streaming. Carries transcript & agent events. SUBPROCESSOR: event payloads.")
@@ -121,7 +121,7 @@ Each row is a system NEXUS does **not** own but depends on. The "Data crossing" 
 | **Cloudflare** | CDN + WAF + DDoS + global rate limiting | Inbound edge | All client HTTPS/WSS traffic (terminated/filtered, then forwarded) | HTTPS/WSS | PDF→SaaS |
 | **LiveKit** | Meeting transport (self-hostable SFU) | Bidirectional | **Audio/video media**, room lifecycle webhooks, recording egress refs | WSS media + webhook (`/livekit/webhook`) | PDF→SaaS |
 | **Deepgram** | Streaming ASR + diarization | Bidirectional | **Raw meeting audio** out, **interim + final transcript text** back | WebSocket (Deepgram key server-side) | PDF |
-| **OpenAI + Anthropic (via LiteLLM)** | LLM inference | Bidirectional | **Transcript-derived prompts** (windowed, pre-gated), agent outputs, streamed tokens | HTTPS via LiteLLM routing | PDF |
+| **Anthropic (via LiteLLM)** | LLM inference | Bidirectional | **Transcript-derived prompts** (windowed, pre-gated), agent outputs, streamed tokens | HTTPS via LiteLLM routing | PDF |
 | **Qdrant Cloud** | Vector DB | Bidirectional | **384-dim BGE-small embeddings** + citation payload (`meeting_id`, `chunk_id`, `speaker`/`document_id`, `element_id`) | HTTPS, per-tenant collections | PDF |
 | **Redpanda** | Event streaming (Kafka API) | Bidirectional | All Avro event payloads: `transcript-chunks`, `agent-results`, `decisions`, `actions`, etc. | Kafka API + Avro + Schema Registry | PDF→SaaS |
 | **Temporal Cloud** | Durable workflow orchestration | Bidirectional | Workflow inputs/state: meeting/action/tenant/billing IDs and metadata — **no raw transcript text** | gRPC | PDF |
@@ -136,7 +136,7 @@ Each row is a system NEXUS does **not** own but depends on. The "Data crossing" 
 
 - **Clerk** is the identity source of truth; NEXUS never stores passwords. User-sync is hardened with an **outbox + reconciliation** loop (Clerk authoritative) so a dropped webhook self-heals — a SaaS-add over the PDF's plain webhook.
 - **LiveKit + Deepgram** form the real-time audio path: LiveKit's server-side audio hook feeds the `transcription-service` FastAPI WebSocket proxy, which streams to Deepgram and persists **only finals** to `transcript_chunks`. Billing is **one diarized stream per meeting, not per participant** — a 6x cost lever (Capacity `D3`).
-- **OpenAI + Anthropic via LiteLLM** are reached only through the cost-controlled pipeline (relevance pre-gating → windowed batching → tiered routing Haiku/Sonnet/Opus → prompt caching → per-tenant token budgets). Agents run on 30-second windows, **not per raw chunk** — the fix for risk R4 (see [Inference & LLM Pipeline](09-rag-and-inference-serving.md), Capacity `L7`/`L10` = 86% call reduction vs naive).
+- **Anthropic via LiteLLM** are reached only through the cost-controlled pipeline (relevance pre-gating → windowed batching → tiered routing Haiku/Sonnet/Opus → prompt caching → per-tenant token budgets). Agents run on 30-second windows, **not per raw chunk** — the fix for risk R4 (see [Inference & LLM Pipeline](09-rag-and-inference-serving.md), Capacity `L7`/`L10` = 86% call reduction vs naive).
 - **Redpanda** is the spine. All topics are **partitioned by tenant** with at-least-once delivery, idempotency keys, transactional outbox/inbox, and DLQs (see [Event Streaming](07-event-architecture.md)).
 - **Temporal Cloud** runs `MeetingLifecycleWorkflow`, `ActionFollowUpWorkflow`, tenant provisioning, right-to-be-forgotten deletion, and dunning sagas. It receives identifiers and metadata, never raw transcript bodies.
 
@@ -167,7 +167,7 @@ flowchart TB
   end
 
   subgraph subproc["Subprocessor zone (external, contractual boundary)"]
-    SP["Deepgram · LiveKit · OpenAI · Anthropic · Qdrant · Redpanda<br/>(DPAs + SCCs; receive sensitive data under contract)"]
+    SP["Deepgram · LiveKit · Anthropic · Qdrant · Redpanda<br/>(DPAs + SCCs; receive sensitive data under contract)"]
   end
 
   EU -->|HTTPS/WSS| CF
@@ -204,13 +204,13 @@ Transcripts are the crown jewels: meeting audio and its derived text are **highl
 
 ### 6.2 Which externals receive transcript-class (T4) data
 
-This is the compliance-critical list. **Five externals receive raw transcript-class (T4) data** (Deepgram, LiveKit, OpenAI + Anthropic, Qdrant, Redpanda); two more — **Slack and Jira/Linear** — receive **derived T4 content** (summaries and action-item text). Every system marked **Yes** below is a **subprocessor** and must appear in the customer-facing subprocessor list with a signed DPA (+ SCCs for cross-border transfer).
+This is the compliance-critical list. **Five externals receive raw transcript-class (T4) data** (Deepgram, LiveKit, Anthropic, Qdrant, Redpanda); two more — **Slack and Jira/Linear** — receive **derived T4 content** (summaries and action-item text). Every system marked **Yes** below is a **subprocessor** and must appear in the customer-facing subprocessor list with a signed DPA (+ SCCs for cross-border transfer).
 
 | External system | Receives T4 (transcript-class) data? | What exactly | Subprocessor? |
 | --- | --- | --- | --- |
 | **Deepgram** | **Yes — raw** | Raw meeting audio + returns transcript text | **Yes — audio + transcript** |
 | **LiveKit** | **Yes — raw** | Audio/video media; recordings | **Yes — audio/video** |
-| **OpenAI + Anthropic** | **Yes — raw** | Transcript-derived prompts (windowed, pre-gated, PII-redacted where configured) | **Yes — transcript-derived** |
+| **Anthropic** | **Yes — raw** | Transcript-derived prompts (windowed, pre-gated, PII-redacted where configured) | **Yes — transcript-derived** |
 | **Qdrant Cloud** | **Yes — raw** | Transcript/document embeddings + citation payload | **Yes — embeddings + metadata** |
 | **Redpanda** | **Yes — raw** | Avro `transcript-chunks` / `agent-results` / `decisions` payloads in transit | **Yes — event payloads** |
 | **Slack** | **Yes — derived** | Receives meeting-derived briefs/summaries — confidential content leaves the boundary | **Yes — derived content** |
@@ -226,7 +226,7 @@ flowchart LR
   TX["Meeting audio + transcript_chunks<br/>(T4 highly sensitive)"]
   TX -->|audio| DG["Deepgram<br/>(subprocessor)"]
   TX -->|media| LK["LiveKit<br/>(subprocessor)"]
-  TX -->|prompts redacted| LLM["OpenAI + Anthropic<br/>(subprocessor)"]
+  TX -->|prompts redacted| LLM["Anthropic<br/>(subprocessor)"]
   TX -->|embeddings| QD["Qdrant<br/>(subprocessor)"]
   TX -->|Avro payloads| RP["Redpanda<br/>(subprocessor)"]
   SUM["Decisions/actions/summaries<br/>(derived T4)"] -->|summaries| SL["Slack<br/>(subprocessor)"]
@@ -236,7 +236,7 @@ flowchart LR
   IDN["Identity only (T3)"] -->|JWT/SCIM| CK["Clerk (no transcripts)"]
 ```
 
-> [SaaS-scale adjustment] Data classification, the subprocessor designation, DPAs + SCCs, PII redaction before LLM egress, and per-tenant data residency are all wholly added versus the PDF, which had no compliance posture (security was batched into Phase 13). The locked compliance stance — GDPR/CCPA, subprocessor DPAs for Deepgram/OpenAI/Anthropic/LiveKit + SCCs, data residency, PII redaction, retention + right-to-be-forgotten, audit logging, SOC2 readiness — is enforced from Phase 1 (shift-left). See [Security & AuthZ](11-security-architecture.md) and [Data Architecture](05-data-architecture.md).
+> [SaaS-scale adjustment] Data classification, the subprocessor designation, DPAs + SCCs, PII redaction before LLM egress, and per-tenant data residency are all wholly added versus the PDF, which had no compliance posture (security was batched into Phase 13). The locked compliance stance — GDPR/CCPA, subprocessor DPAs for Deepgram/Anthropic/LiveKit + SCCs, data residency, PII redaction, retention + right-to-be-forgotten, audit logging, SOC2 readiness — is enforced from Phase 1 (shift-left). See [Security & AuthZ](11-security-architecture.md) and [Data Architecture](05-data-architecture.md).
 
 ### 6.3 Residency and regional placement
 
@@ -258,7 +258,7 @@ sequenceDiagram
     participant NX as NEXUS
     participant LK as LiveKit (subprocessor)
     participant DG as Deepgram (subprocessor)
-    participant LLM as OpenAI + Anthropic (subprocessor)
+    participant LLM as Anthropic (subprocessor)
 
     U->>CF: Join meeting (WSS)
     CF->>NX: Forward (JWT verified, org_id set)
@@ -290,7 +290,7 @@ On confirmation, an `action_items` row produces an `ASSIGNED_TO` edge in `nexus_
 | Implication | Where it is detailed |
 | --- | --- |
 | The tenant boundary (Zone 3) must be enforced in six stores simultaneously, with `org_id` injection as the single chokepoint. | [Multi-Tenancy & Isolation](06-multi-tenancy.md) |
-| Five externals receive raw transcript-class (T4) data (Deepgram, LiveKit, OpenAI + Anthropic, Qdrant, Redpanda); two more (Slack, Jira/Linear) receive derived-T4 content. All are subprocessors; egress requires PII redaction, DPAs, SCCs, and regional routing. | [Security & AuthZ](11-security-architecture.md), [Data Architecture](05-data-architecture.md) |
+| Five externals receive raw transcript-class (T4) data (Deepgram, LiveKit, Anthropic, Qdrant, Redpanda); two more (Slack, Jira/Linear) receive derived-T4 content. All are subprocessors; egress requires PII redaction, DPAs, SCCs, and regional routing. | [Security & AuthZ](11-security-architecture.md), [Data Architecture](05-data-architecture.md) |
 | The audio path (LiveKit hook → Deepgram → finals) and the LLM path (windowed, pre-gated) are the two cost/latency-critical external dependencies. | [Inference & LLM Pipeline](09-rag-and-inference-serving.md), [Capacity & Scaling Math](_canon/05-capacity-math.md) |
 | Redpanda carries all T4 event payloads tenant-partitioned with at-least-once + idempotency. | [Event Streaming & Schema Registry](07-event-architecture.md) |
 | The operator persona's cross-tenant reach is the highest-risk human path and must be deny-by-default + audited. | [Security & AuthZ](11-security-architecture.md) |

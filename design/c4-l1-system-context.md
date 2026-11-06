@@ -33,7 +33,7 @@ flowchart TB
     CLERK["Clerk<br/>identity (T3)"]
     DG["Deepgram<br/>audio + transcript (T4 raw)"]
     LK["LiveKit<br/>media (T4 raw)"]
-    LLM["OpenAI + Anthropic<br/>via LiteLLM (T4 raw)"]
+    LLM["Anthropic<br/>via LiteLLM (T4 raw)"]
     STRIPE["Stripe<br/>billing (T2)"]
     SLACK["Slack, Jira/Linear<br/>derived T4"]
     GCAL["Google Calendar<br/>inbound"]
@@ -84,7 +84,7 @@ This diagram is the whole target. The band builds the CRUD spine only.
 | Zone 3 Redpanda | Producer side only: `tenant-events`, `meeting-events`, `notifications`, plus the `user-sync-events` inbox. Consumers land in later bands. |
 | Zone 3 Qdrant, AGE, object storage | Not built. Later bands. |
 | Clerk | Live: JWKS verification, Svix user-sync webhook. |
-| Deepgram, LiveKit, OpenAI, Anthropic, Stripe, Slack, Jira/Linear, Google Calendar | Not integrated. Their DPAs are executed in this band regardless, because compliance-by-construction requires the subprocessor list before any T4 data flows. See [subprocessors.md](subprocessors.md). |
+| Deepgram, LiveKit, Anthropic, Stripe, Slack, Jira/Linear, Google Calendar | Not integrated. Their DPAs are executed in this band regardless, because compliance-by-construction requires the subprocessor list before any T4 data flows. See [subprocessors.md](subprocessors.md). |
 
 ## 4. Related
 

@@ -258,7 +258,7 @@ Ordering is a precondition chain. **Within P7: billing before runtime before the
    python -m venv .venv && source .venv/bin/activate
    pip install -e ".[dev]"   # or:
    pip install langgraph litellm "fastapi" "uvicorn[standard]" aiokafka confluent-kafka fastavro \
-               redis grpcio grpcio-tools pydantic anthropic openai sqlalchemy
+               redis grpcio grpcio-tools pydantic anthropic sqlalchemy
    ```
 2. **`AgentState` dataclass** (`libs/shared/state.py`) — exactly the PDF fields plus the tenant/cost additions ([08 §3.1](../08-ai-agent-architecture.md)):
    ```python
@@ -340,7 +340,7 @@ Ordering is a precondition chain. **Within P7: billing before runtime before the
 10. **Emit `usage-events` for every metered call** — Avro `UsageEvent`, `event_type=agent_token`, `model_tier` set, idempotency `usage:{org_id}:agent_token:{occurred_at}:{call_id}`, partition key `org_id`, via the transactional outbox. This is the only durable side effect the runtime has, and it is what `billing-metering-service` (§3.1) consumes.
 11. **Wire `agent-stream`** — bridge LiteLLM streaming token deltas onto `agent-stream` (token-delta envelope) so the UI sees output land under the R5 budget (p50 < 2s) via `realtime-gateway`. Per-user priority queue `nexus:{org_id}:queue:agent:{user_id}` so urgent output pre-empts notes.
 12. **The runtime spawner** (`agent_runtime_service/spawner.py`): on a meeting starting (consume `meeting-events`/`meeting-room-events`), spawn **one `PersonalListenerAgent` per participant per meeting**; the per-meeting agents (Decision/Action/Question) are registered but only Listener ships in P7. `spawn` injects `org_id` and the budget mirror into `AgentState`.
-13. **Env vars:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `LITELLM_CONFIG` (tier map + budget hooks), `REDIS_URL`, `REDPANDA_BROKERS`, `SCHEMA_REGISTRY_URL`, `IDENTITY_GRPC_URL` (`get_user_context`), `OTEL_EXPORTER_OTLP_ENDPOINT`, `SENTRY_DSN`.
+13. **Env vars:** `ANTHROPIC_API_KEY`, `LITELLM_CONFIG` (tier map + budget hooks), `REDIS_URL`, `REDPANDA_BROKERS`, `SCHEMA_REGISTRY_URL`, `IDENTITY_GRPC_URL` (`get_user_context`), `OTEL_EXPORTER_OTLP_ENDPOINT`, `SENTRY_DSN`.
 
 **Canonical names:** `agent-runtime-service`, `BaseAgent`, `AgentState`, `PromptLoader`, `LiteLLMRouter`, `agent-results`, `agent-stream`, `usage-events`, `get_user_context`, `check_budget`, `nexus:{org_id}:budget:{period}`.
 
@@ -412,7 +412,7 @@ Ordering is a precondition chain. **Within P7: billing before runtime before the
    -- monthly partition; index (org_id, user_id, meeting_id); RLS FORCE + tenant_isolation; pg_partman.
    ```
    The `core-api` consumer dedupes on the `agent-results` `idempotency_key`, sets `surfaced` from the confidence band, and exposes `GET /api/v1/meetings/:id/worklogs?user_id=me` for the My Notes panel.
-4. **PII redaction before LLM egress** (always-on, per [08 §6.4](../08-ai-agent-architecture.md)): the window is redacted before it leaves for Anthropic/OpenAI via LiteLLM, gated by `tenant_settings.pii_redaction_enabled`. This is the LLM-egress redaction node that Plan 3-4 explicitly deferred to this band — wire it now in `agent-runtime-service` (do not skip).
+4. **PII redaction before LLM egress** (always-on, per [08 §6.4](../08-ai-agent-architecture.md)): the window is redacted before it leaves for Anthropic via LiteLLM, gated by `tenant_settings.pii_redaction_enabled`. This is the LLM-egress redaction node that Plan 3-4 explicitly deferred to this band — wire it now in `agent-runtime-service` (do not skip).
 5. **Register in the spawner** as per-participant. Add to the golden-set eval harness (relevance precision/recall vs role labels) before merge — a prompt change must beat the current default.
 
 **Canonical names:** `PersonalListenerAgent`, `worklogs`, `agent-results`, `get_user_context`, `tenant_settings.agent_confidence_overrides`.
@@ -743,10 +743,10 @@ The dominant overlay this band is **billing + budgets + the R4 enforcement arm**
 
 1. **Billing + metering + per-tenant token budgets (P7, BUILD FIRST).** `usage-events → usage_aggregates → quotas/agent_budgets`; the Redis hot mirror; the `ok → throttled → blocked` state machine; deny-by-default at `hard_cap`; the 100% quota-breach enforcement SLO. Ships alert-only first, then per-cohort enforcement. This is the billing-safety backstop that lets NEXUS sell to A4=3,000 tenants without a runaway bill. Durable facts are **never** shed for quota — only discretionary LLM work degrades.
 2. **Dedicated GPU inference cost center (P9).** `rag-service` orchestrates over `embedding-service` / `reranker-service` (off the API tier, Plan 5-6) — the inference tier scales and bills independently of CRUD, which is what makes `agent_budgets` and the `C2` model meaningful.
-3. **LLM-egress PII redaction (P7).** Windows are redacted before they leave for Anthropic/OpenAI via LiteLLM, gated by `tenant_settings.pii_redaction_enabled` — the always-on egress node Plan 3-4 flagged as deferred to the agent/RAG band. Wire it now; do not skip.
+3. **LLM-egress PII redaction (P7).** Windows are redacted before they leave for Anthropic via LiteLLM, gated by `tenant_settings.pii_redaction_enabled` — the always-on egress node Plan 3-4 flagged as deferred to the agent/RAG band. Wire it now; do not skip.
 4. **Security shift-left.** Agent-to-agent authz (deny-by-default, org+role scope, audited) is built into the runtime contract (`AgentState.agent_id`, `org_id` fail-closed on spawn) even though `ContextGapAgent` ships in P10 — the boundary is established here so P10 inherits it. An authz check is reviewed in every PR.
 
-Compliance gate (subprocessor DPA/SCC) was green from Plan 3-4 (Deepgram); Anthropic/OpenAI subprocessor DPAs + SCCs must be on file before the first LLM egress in P7 — verify the subprocessor register lists them with the zero-retention/no-training flags.
+Compliance gate (subprocessor DPA/SCC) was green from Plan 3-4 (Deepgram); Anthropic subprocessor DPAs + SCCs must be on file before the first LLM egress in P7 — verify the subprocessor register lists them with the zero-retention/no-training flags.
 
 ---
 
