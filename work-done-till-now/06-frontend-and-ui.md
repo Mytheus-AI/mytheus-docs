@@ -1,6 +1,6 @@
 # Frontend and UI
 
-Status: IN PROGRESS. Last verified 2026-08-08.
+Status: IN PROGRESS. Last verified 2026-11-07 (section 6); sections 1 to 5 last verified 2026-08-08.
 
 Written because "which repo is the actual product" was a live question, and the answer was not
 recorded anywhere. Two repositories hold a Next.js application and only one of them is the
@@ -120,3 +120,99 @@ networks, not merely unique within its own stack.
 - `mytheus-web` characterised by grep across its tree: 0 matches for clerk, 0 for
   fetch/axios/useSWR/NEXT_PUBLIC_API, 0 for livekit, 7 files matching mock/fixture.
 - Subdomain claim verified by grepping every markdown file in this repo; zero matches.
+
+## 6. Auth pages, the missing screens, and dev-server speed (2026-11-07)
+
+All in `mytheus-ui`, branch `feat/custom-auth-pages`, commits `a561629`, `dce7bf2`, `53b0c1e`,
+`bcf3a00`.
+
+### 6.1 Custom auth flows (`a561629`)
+
+Sign-up crashed with Clerk's "the SignUp component is not configured correctly": `/sign-in` and
+`/sign-up` were plain pages, not catch-all routes, so Clerk could not render its sub-steps.
+Both are now `[[...rest]]` routes, which is the layout doc 20 section 2.2 already specifies. The
+boxed Clerk components were replaced with full-page custom flows built on `useSignIn` and
+`useSignUp`, in the site's design language:
+
+| Route | What it does |
+|---|---|
+| `/sign-in` | email and password, or Google |
+| `/sign-in/factor-one` | one-time code by email |
+| `/sign-in/factor-two` | two-step verification (authenticator, email or SMS code, backup code) |
+| `/sign-in/forgot-password` | reset by emailed code, then signs in |
+| `/sign-up` | details, or Google |
+| `/sign-up/verify-email-address` | six-digit email code |
+| `/sign-up/continue` | anything Clerk still requires, for example after Google |
+| `/sso-callback` | the Google return page and Clerk's bot check (`#clerk-captcha`) |
+| `/onboarding/organization` | Clerk's `choose-organization` session task, mapped by `taskUrls` |
+
+The middleware allowlist gained `/sso-callback` and `/onboarding`. A new account is signed in
+but "pending" until it belongs to an organization, and `auth.protect()` treats pending as
+signed out, so gating the onboarding page would loop the user back to sign-in.
+
+Creating a workspace there creates a Clerk organization only. It does not provision a tenant:
+`POST /api/v1/orgs` stays operator-only, so a self-created workspace signs in but its data reads
+are refused until an operator provisions it. That is unchanged from the prebuilt Clerk screen.
+
+### 6.2 The screens doc 20 and the plans name but the app lacked (`dce7bf2`)
+
+| Route | Source in the doc set | Data |
+|---|---|---|
+| `/people/[id]` | Plan 5-6 section 3.5 | real `GET /bff/people/{user_id}` for a `user_id`; mock for org-chart name slugs |
+| `/meetings/[meetingId]/decisions/[decisionId]` | Plan 7-9 section 3.8 (decision lineage, `FOLLOWS_FROM`) | mock |
+| `/meetings/[meetingId]/collaborations` | Plan 10-13 section 3.5 (`agent_collaborations` log) | mock |
+| `/tenant` | doc 20 section 7, Plan 10-13 section 3.14 (tenant admin console) | mock |
+| `/tenant/usage` | Plan 7-9 sections 3.1 and 3.4 (usage and agent budget) | mock |
+
+Mock pages say so on the page, and buttons with no service behind them (invite, export,
+erasure) are disabled rather than faked.
+
+Deviation: doc 20 files the tenant admin console under `(admin)/tenant`. It lives in the
+`(app)` shell instead, because in `mytheus-ui` the `(admin)` group is the platform-staff surface
+(every tenant, ops) with its own header and no app navigation, while a workspace admin
+managing their own team belongs in the app they already use. The URL, `/tenant`, is unchanged.
+
+The workspace role in the org context now comes from the Clerk organization role
+(`org:admin` maps to `admin`), so workspace admins see an Admin section in the navigation. It
+decides only what the UI offers; the API enforces the RBAC tier. The platform-staff consoles
+(`/admin`, `/ops`) left the workspace navigation and stay reachable by URL.
+
+### 6.3 Dev-server speed (`53b0c1e`, `bcf3a00`)
+
+Clicking around under `next dev` was slow on every machine, not one. The production build was
+fast: on public pages it answered in 0.006 to 0.08 s, against 1.4 to 2.3 s for a first visit on
+the dev server.
+
+Root cause: `optimizePackageImports` listed only `@phosphor-icons/react`. The 16 Server
+Component files that render icons import from the separate `@phosphor-icons/react/dist/ssr`
+entry, which re-exports about 1,500 icons and their 1,500 definitions and was not optimized.
+Every dev compile of a page importing one icon from it processed all of them, and
+`settings/primitives` plus the dashboard parts use it, so nearly every signed-in screen paid
+the cost. Production was never affected because it tree-shakes the unused icons.
+
+Fix: both `ssr` entries added to `optimizePackageImports`. Measured with a throwaway page
+importing five icons, cold dev server: 4,976 modules in 8.2 s before, 1,861 modules in 4.4 s
+after, two more modules than the page it sits in. Bundle sizes in `next build` are unchanged.
+
+Ruled out by measurement: Turbopack (`next dev --turbo`) was slower here, 13.1 s against 7.2 s
+to first-load ten pages, and repeat requests 0.13 to 0.27 s against 0.04 to 0.09 s. Next's idle
+page disposal was not the cause either: pages left idle for 75 s still answered in 0.06 to
+0.10 s.
+
+What remains is inherent to `next dev`: it compiles each page on first visit and after every
+edit, never prefetches, and runs React's development build. `mytheus-ui`'s
+`docs/CONTRIBUTING.md` and `README.md` now say to use `npm run build && npm start` to click
+around, demo, or judge speed, and `npm run dev` for editing only.
+
+### 6.4 Verification
+
+- `npx tsc --noEmit` and `npx next lint` clean after each change.
+- `npm run build` succeeds; route table and bundle sizes recorded from its output.
+- Auth pages rendered and checked in a browser at 1024x768 and 375x812, with no horizontal
+  overflow on the phone size. The invalid-email error path was exercised with a made-up
+  address. The real sign-up, Google and workspace-creation paths were exercised by the
+  maintainer.
+- The five new screens were not viewed by this session (the browser it drove was not signed
+  in); only the typecheck, lint and build evidence above covers them.
+- Speed numbers are `curl` timings against `localhost:3000` and the dev server's own
+  "Compiled ... (N modules)" log lines.
