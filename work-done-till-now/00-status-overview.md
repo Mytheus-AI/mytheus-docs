@@ -243,3 +243,15 @@ Still open: the Clerk session claim did not persist when saved in the dashboard;
 Closed: the maintainer pasted the claims `org_id` (`{{org.id}}`) and `internal_org_id` (`{{org.public_metadata.internal_org_id}}`) into Configure, Sessions, Customize session token on the Mytheus Development instance. Observed afterwards by reloading the page, which shows both claims. The earlier "did not persist" entries above were failed attempts to drive the editor with synthetic typing; the Monaco editor auto-closes quotes and braces, so paste the JSON rather than typing it.
 
 Still needed before a real token carries values: an organization whose public metadata holds `internal_org_id` (written by `POST /orgs` with the real `CLERK_SECRET_KEY`, or set by hand on a test organization), and a fresh sign-in. Not yet verified by decoding a real session token.
+
+### Credentials (2026-11-07)
+
+Observed in the local `.env` files by key presence only; no value was read, and nothing was run against the vendors:
+
+- LiveKit URL, key and secret: set in `mytheus-backend` and `transcription-service`.
+- `DEEPGRAM_API_KEY`: set in `transcription-service`.
+- R2: `mytheus-intelligence` `S3_*` points at an R2 account endpoint; `mytheus-backend` `S3_ENDPOINT_URL` still points at local MinIO.
+- `CLERK_WEBHOOK_SECRET`: set in `mytheus-backend`.
+
+This supersedes "LiveKit, Deepgram and S3 or R2 credentials are unset" above for local development. Still open: the same values in the VPS deploy environment; the Deepgram DPA, so `COMPLIANCE_GATE_GREEN` stays `False`; and a Clerk webhook endpoint Clerk can reach.
+

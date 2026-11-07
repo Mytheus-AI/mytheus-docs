@@ -216,3 +216,55 @@ around, demo, or judge speed, and `npm run dev` for editing only.
   in); only the typecheck, lint and build evidence above covers them.
 - Speed numbers are `curl` timings against `localhost:3000` and the dev server's own
   "Compiled ... (N modules)" log lines.
+
+## 7. Doodle avatars, UI polish, and the auth sketchbook (2026-11-07, later)
+
+All in `mytheus-ui`, pushed to `main`: commits `d8bcecf`, `4c4d049`, `de3159a`.
+
+### 7.1 Doodle avatars (`d8bcecf`)
+
+Every person now has a hand-drawn doodle face instead of two initials.
+
+- `src/lib/doodle.ts` draws a doodle from a short seed: hair or hat, eyes, mouth, extras and colours, with tens of thousands of combinations. It is a pure function, so the server render and the browser always draw the same face.
+- `Avatar` prefers, in order: the chosen doodle, a real photo, then a default doodle keyed by email. Email is the key every surface can see for a person, so their own sidebar and a teammate's view of `/people/[id]` agree. Clerk's generic placeholder image counts as no photo.
+- Storage. No backend change and no new route. The seed goes to Clerk `unsafeMetadata.doodle`. The rendered PNG becomes the Clerk profile image, and the existing `user.updated` webhook in `identity-tenant-service` copies `image_url` into `users.avatar_url`. That is how the doodle reaches Postgres on the VPS.
+- Existing accounts. `DoodleImageSync`, mounted in the app shell, gives an account with no seed its default doodle on its next signed-in visit and uploads the picture. It also finishes a sign-up doodle, whose picture could not upload before the session existed.
+- Settings, Profile gained a doodle picker. A save drops the tagged profile cache through the `refreshMyProfile` Server Action.
+
+Deviation: a Google sign-in photo is replaced by the default doodle on the next visit unless the user picks one. This was requested: doodles everywhere, existing accounts included.
+
+Not verified: the webhook round trip into `users.avatar_url`. It needs a signed-in browser plus a webhook endpoint Clerk can reach, and neither was available to this session.
+
+### 7.2 Polish (`4c4d049`)
+
+- A new themed `Select` primitive replaces the native selects on Decisions (meeting filter) and Search (sort). The operating-system menu ignored the dark theme.
+- Segmented controls on Search, Decisions and Tasks are now full pills inside their pill track, with even count badges.
+- Tasks: assignee, due date and priority sit in fixed-width cells, so the rows line up.
+- Command palette: the `.mx-app :focus-visible` ring drew an orange box around the bare input. It is removed.
+- Usage: "View as table" is a styled disclosure row with a scrollable table and a sticky header.
+
+### 7.3 Auth redesign (`de3159a`)
+
+Every auth page is redrawn as a sketchbook.
+
+- The stage is a doodled meeting around an ink-drawn table: people speak in hand-drawn bubbles, and the agent pencils the decision into a margin note.
+- Type is the app's own pair (Newsreader and Hanken Grotesk) plus Caveat for handwriting, scoped by `src/styles/auth.css` under `.mx-auth`.
+- Sign-up lets the visitor pick their doodle, which takes the empty seat at the table. The seed is sent with `signUp.create` and with `authenticateWithRedirect`.
+- Organization onboarding has two paths, join a team or start a workspace. Join lists:
+  - memberships and invitations;
+  - verified-domain suggestions (`useOrganizationList` `userSuggestions`), with a "Requested" state.
+
+  An empty state explains how to get invited. Clerk does not let anyone browse organizations they are not in, so joining by name search is not possible by design.
+- The SSO callback ("making sure you're human") shows a doodle under a magnifying glass and a handwritten checklist. The checklist is pacing, not progress, and never claims completion. The Clerk challenge slot hides while empty.
+
+Joining an existing workspace is the path that works end to end today. A self-created workspace still needs operator provisioning (`POST /api/v1/orgs`) before its data reads succeed.
+
+### 7.4 Verification
+
+- `npx tsc --noEmit` and `npx next lint` are clean, and `next build` succeeds (69 pages).
+- Checked in a browser at 1440x900 and 375x812, with no horizontal overflow at the phone size:
+  - sign-in and sign-up;
+  - the doodle grid;
+  - Tasks, Decisions, Search and the command palette, rendered with mock data on a temporary page that has since been deleted.
+- Not viewed: the onboarding page, which needs a pending session, and the SSO callback past its first frame, because Clerk redirects without an OAuth handshake.
+- The meetings and call surfaces were not modified. `/meetings/[id]/collaborations` renders through the shared `Avatar`, so it shows doodles.
