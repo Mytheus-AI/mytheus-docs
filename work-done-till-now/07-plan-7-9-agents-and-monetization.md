@@ -123,6 +123,17 @@ From the plan's section 10 "End of P7" DoD. Lines for items 2 to 5 are not audit
 7. **LLM-egress PII redaction** is part of item 3 (plan section 3.3 step 4), not built yet.
 5. **Local environment only** (not code defects): `test_public_schema_grants_nothing_by_default` and `test_no_bypassrls_role_holds_privileges_on_a_public_table` fail on this machine's database (the image's `supabase_admin` default privileges, and `alembic_version_intelligence` created by `mytheus-intelligence` in the same database); six `test_crypto_file_custody.py` tests fail on Windows (no 0400 file modes); `test_relay_real_bus_roundtrip` fails because Redpanda ran with a 768M memory cap and refused new partitions.
 
+## 5a. Next session: start here
+
+Items 1 and 2 are done; items 3, 4 and 5 are next. Open items carried from items 1 and 2, in the order they should be picked up:
+
+1. **Real-model check: blocked on the Anthropic workspace.** The first real call (2026-11-08, one window, 2 participants, at most 4 capped calls) was refused with 400 before any tokens were used: "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header". `mytheus-intelligence` `6355e29` makes the router send that header when `ANTHROPIC_WORKSPACE_ID` is set. To unblock: add `ANTHROPIC_WORKSPACE_ID` (from the Anthropic console, Settings, Workspaces) to `mytheus-intelligence/.env`, or replace the key with a workspace-scoped one, then rerun the check. It has not been run successfully yet, so no real-model behavior is verified.
+2. **Item 3, `PersonalListenerAgent`** (plan section 3.3): the real pre-gate and extraction prompts (`prompts/personal_listener*@v1.md`, registered in `prompts/registry.json`); confidence gating (`>0.7` surfaced, `0.4-0.7` silent, `<0.4` dropped); registration in `agents/__init__.py`; the golden-set eval; and `core-api`'s `worklogs` migration, `agent-results` consumer and `GET /api/v1/meetings/:id/worklogs?user_id=me`.
+3. **Live streaming of the note's text** (`agent-stream`): wired (`Emitter.delta`, the router's `on_delta`, both tested) but unused, because no shipped agent streams yet. The real note-taker in item 3 should stream only after its confidence is known, so a note that ends up below 0.7 never reaches the screen. `realtime-gateway` has no `agent-stream` or `agent-results` consumer yet, and its Socket.io rooms are per meeting, not per user. Item 4 needs a per-user channel, or one participant's notes reach everyone in the room.
+4. **Hiding personal details before text goes to Anthropic** (plan section 3.3 step 4): not built. Reuse `services/ingestion_service/pii.py` (`redact_pii` plus `pii_enabled`, which reads `nexus:{org_id}:tenant_settings:pii_redaction_enabled` and defaults to redact), or the stronger `services/ner_service/regex_detector.py`, applied to the window text inside the router or the agent before any model call.
+5. **The "skip near-duplicate windows" (semantic) cache** (plan section 3.2 step 8): needs a Redis key that `_canon/02-data-model.md` does not define. Add it to canon first (plus an ADR line), then build it. Anthropic prompt caching is already on.
+6. **Items 4 and 5**, `mytheus-ui` (agent sidebar, My Notes, Usage page on `GET /usage`) and `mytheus-mobile` (My Notes, sample data removed), after item 3.
+
 ## 6. Verification
 
 All observed 2026-11-08 against the local stack (Postgres 5443, Redis 6390, Redpanda 9092 with Schema Registry 8085; Redpanda capped at 768M through a compose override kept outside the repo).
