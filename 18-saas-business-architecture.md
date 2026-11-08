@@ -157,8 +157,8 @@ The canonical columns are `code`, `name`, `seat_price_cents`, `included_meeting_
 |---|---|---|---|
 | `code` | `free` | `pro` | `enterprise` |
 | `seat_price_cents` | `0` | `2500` ($25/seat/mo) | negotiated (annual contract) |
-| `included_meeting_minutes` (per seat / mo) † | `300` | `3000` | pooled, custom |
-| `included_agent_tokens` (per seat / mo) † | `200000` | `4000000` | pooled, custom |
+| `included_meeting_minutes` (per tenant / mo) † | `300` | `3000` | pooled, custom |
+| `included_agent_tokens` (per tenant / mo) † | `200000` | `4000000` | pooled, custom |
 | Included storage | 1 GB / tenant | 50 GB / tenant | custom |
 | Max seats | 5 | 100 | unlimited |
 | Overage policy | hard cap (deny) | metered overage billed | metered overage, contractual |
@@ -168,7 +168,7 @@ The canonical columns are `code`, `name`, `seat_price_cents`, `included_meeting_
 | Data residency pin (`us`/`eu`/`ap`) | `us` only | region choice | region choice + cell |
 | Agent confidence overrides | defaults | defaults | per-tenant (`tenant_settings`) |
 
-† **Design decision, not canon.** The canon ([Data Model §2.2](_canon/02-data-model.md)) defines `included_meeting_minutes` and `included_agent_tokens` as `plans` columns without freezing per-seat vs per-tenant semantics. This document interprets them as **per seat / mo** to align with the sibling [Cost & FinOps](17-cost-and-finops.md) per-seat margin model; a tenant choosing per-tenant pooling instead would be an equally valid reading of the canon.
+† **Now canon.** [Data Model §2.2](_canon/02-data-model.md) freezes `included_meeting_minutes` and `included_agent_tokens` as **per-tenant monthly pools**, not per seat ([ADR-0029](adr/0029-plan-7-budget-scope-tier-mapping-and-metering-ownership.md) D1). `subscriptions.seats` drives the recurring seat charge only; it does not scale the allowances. An earlier version of this document read them per seat to match the per-seat margin model in [Cost & FinOps](17-cost-and-finops.md); that margin model is not re-derived for the pooled reading.
 
 > [SaaS-scale adjustment] The Pro seat price of **$25/seat/mo** is set against the frozen unit economics: variable infra cost is **C2 ≈ $9.73/MAU/mo** (→ **C4 ≈ $6.99** after the Phase-13 ~30% LLM optimization) ([Capacity §10.1](_canon/05-capacity-math.md)). A $25 Pro seat clears that cost with healthy gross margin while leaving room for fixed compute (K8s/GPU) not in C-total. LLM is **94% of variable cost (C3)**, so plan limits are denominated in **agent tokens** first — `included_agent_tokens` is the lever that protects margin, not seat count.
 

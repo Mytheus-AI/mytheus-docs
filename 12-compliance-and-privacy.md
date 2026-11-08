@@ -151,7 +151,7 @@ NEXUS sends C4/C3 data to three subprocessors. Each is bound by a DPA; each EU-d
 | Subprocessor | Data sent (class) | Purpose | Processing region (per tenant) | Transfer mechanism | Retention config |
 |---|---|---|---|---|---|
 | **Deepgram** | Live meeting **audio** → text; C4 derived | Streaming ASR + diarization (one stream/meeting) | US or EU endpoint chosen by `data_residency.region` | DPA + SCCs (Module 2/3) for `eu` tenants on US endpoint fallback | Zero-retention / no-model-training flag set |
-| **Anthropic** | Windowed transcript/doc **text**, redacted (C4/C3) | LLM extraction, triage, high-stakes reasoning (Haiku→Sonnet→Opus) | Regional API where available; else US under SCC | DPA + SCCs; zero-retention enterprise terms | No training on inputs; ephemeral processing |
+| **Anthropic** | Windowed transcript/doc **text**, redacted (C4/C3) | LLM extraction, triage, high-stakes reasoning (Haiku→Sonnet→Opus) | Regional API where available; else US under SCC | DPA + SCCs; zero-retention enterprise terms. Not a gate on egress while Mytheus is an academic build with no customers ([ADR-0029](adr/0029-plan-7-budget-scope-tier-mapping-and-metering-ownership.md) D5) | No training on inputs; ephemeral processing |
 | **LiveKit** | Real-time **media** (audio/video tracks) | SFU transport; server-side audio hook | Self-hostable SFU pinned to tenant region | First-party (self-hosted) or DPA+SCC if managed | Media not persisted by SFU; recordings land in tenant-region `mytheus-recordings` |
 
 Supporting (controller-side, C1 only): **Stripe** (billing under DPA), **Clerk** (identity under DPA), email/Slack delivery (`notification-service`).

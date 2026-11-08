@@ -746,7 +746,7 @@ The dominant overlay this band is **billing + budgets + the R4 enforcement arm**
 3. **LLM-egress PII redaction (P7).** Windows are redacted before they leave for Anthropic via LiteLLM, gated by `tenant_settings.pii_redaction_enabled` — the always-on egress node Plan 3-4 flagged as deferred to the agent/RAG band. Wire it now; do not skip.
 4. **Security shift-left.** Agent-to-agent authz (deny-by-default, org+role scope, audited) is built into the runtime contract (`AgentState.agent_id`, `org_id` fail-closed on spawn) even though `ContextGapAgent` ships in P10 — the boundary is established here so P10 inherits it. An authz check is reviewed in every PR.
 
-Compliance gate (subprocessor DPA/SCC) was green from Plan 3-4 (Deepgram); Anthropic subprocessor DPAs + SCCs must be on file before the first LLM egress in P7 — verify the subprocessor register lists them with the zero-retention/no-training flags.
+Compliance gate (subprocessor DPA/SCC) was green from Plan 3-4 (Deepgram). **Superseded 2026-11-08 by [ADR-0029](../adr/0029-plan-7-budget-scope-tier-mapping-and-metering-ownership.md) D5: no Anthropic DPA gate for this academic build.** Originally: Anthropic subprocessor DPAs + SCCs must be on file before the first LLM egress in P7 — verify the subprocessor register lists them with the zero-retention/no-training flags.
 
 ---
 
@@ -775,11 +775,15 @@ Compliance gate (subprocessor DPA/SCC) was green from Plan 3-4 (Deepgram); Anthr
 
 ## 8. DECISION-REQUIRED callouts
 
+> **RESOLVED 2026-11-08 ([ADR-0029](../adr/0029-plan-7-budget-scope-tier-mapping-and-metering-ownership.md) D1): per-tenant pooled, option (b).** `token_quota = included_agent_tokens`; `hard_cap = token_quota` on Free, `2 x token_quota` on Pro.
+>
 > ⚠️ **DECISION-REQUIRED #1 — PLAN LIMITS per-seat vs per-tenant (BLOCKS P7 metering go-live).**
 > `plans.included_meeting_minutes` and `plans.included_agent_tokens` are frozen as `plans` columns in [Data Model §2.2](../_canon/02-data-model.md), but the canon does **NOT** freeze **per-seat vs per-tenant** semantics. [SaaS Business §3.1](../18-saas-business-architecture.md) interprets them **per seat / mo** (to align with the per-seat margin model); [Cost & FinOps §5.1](../17-cost-and-finops.md) notes a per-tenant pooling read is equally valid. This directly changes the `agent_budgets` quota math: `token_quota`/`hard_cap` are either `included_agent_tokens × subscriptions.seats` (per-seat) or `included_agent_tokens` flat (per-tenant).
 > **Options:** (a) **Per-seat** — `token_quota = included_agent_tokens × seats`; aligns to the Pro $25/seat margin model; a tenant adding seats raises its budget. (b) **Per-tenant pooled** — flat `included_agent_tokens` per tenant regardless of seats; simpler, but seat growth does not raise the budget and the margin model must be re-derived. (c) Per-seat for Free/Pro, contracted-pool for Enterprise.
 > **Who decides:** Pricing/GTM lead + Canon owners (must amend [Data Model §2.2](../_canon/02-data-model.md) to freeze the semantics, with an ADR). **What it blocks:** the `agent_budgets` provisioning math (§3.1 step 9) and therefore metering go-live — you cannot set a quota you cannot compute. **Resolve before P7 enforcement flips on (W18).**
 
+> **RESOLVED 2026-11-08 ([ADR-0029](../adr/0029-plan-7-budget-scope-tier-mapping-and-metering-ownership.md) D3): option (a).** `billing-metering-service` derives all three internally; the topic stays `agent_token` only.
+>
 > ⚠️ **DECISION-REQUIRED #2 — `usage_events` derived-dimension producer ownership (BLOCKS P7 aggregation of three of four dimensions).**
 > [ADR-0011 §3.1](../adr/0011-billing-and-metering.md) reconciles topic vs table: **only `agent_token` traverses the `usage-events` topic** (sole producers `agent-runtime-service` + `rag-service`); `meeting_minute`, `transcription_second`, `storage_gb` are **derived inside `billing-metering-service`** and written directly as `usage_events` rows. But the Service Catalog does not assign named producers for those three derivations, and Plan 3-4 left this open (its DECISION-REQUIRED #3). The derivation source must be pinned: `meeting_minute`/`transcription_second` from `meetings` + `transcript_chunks` durations, `storage_gb` from a nightly sweep — but **which component owns each** and whether any needs a Service-Catalog producer edge is unresolved.
 > **Options:** (a) **`billing-metering-service` derives all three internally** (ADR-0011's reading) — no new topic producer; requires the derivation jobs (§3.1 step 5) + the `workflow-service` storage-sweep schedule. (b) **`meeting-service`/`transcription-service` emit onto the topic** — requires amending the Service Catalog §3/§5 producer map first (canon edit + ADR). (c) Hybrid: derive minutes/seconds in `billing-metering-service`, add a dedicated `storage_gb` sweep producer (catalog-amended).

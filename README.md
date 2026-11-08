@@ -118,6 +118,7 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0026](adr/0026-vps-file-kek-custody.md) | Production key custody on the VPS is a local KEK file (`FileKeyProvider`, mode 0400, mounted into `identity-tenant-service` only, backed up off-box separately from DB backups); the shared-host residual risk is accepted and KMS is the explicit upgrade trigger. Decides ADR-0024 open decision 1. |
 | [ADR-0027](adr/0027-anthropic-only-llm-provider.md) | Anthropic is the only LLM provider; OpenAI dropped; LiteLLM stays as the provider-agnostic router; fast-response tier is Haiku 5.5 (`claude-haiku-5-5`); other tiers: Anthropic models, mapping to be set. |
 | [ADR-0028](adr/0028-object-storage-buckets-use-the-mytheus-prefix.md) | Object storage buckets are named `mytheus-recordings`, `mytheus-documents`, `mytheus-attachments`, `mytheus-invoices`, `mytheus-exports`, `mytheus-audit-archive` (was `nexus-*`) |
+| [ADR-0029](adr/0029-plan-7-budget-scope-tier-mapping-and-metering-ownership.md) | Plan 7 entry decisions: plan allowances are per tenant, not per seat; extraction tier is Sonnet 5.5 (`claude-sonnet-5-5`); `billing-metering-service` derives minutes, transcription seconds and storage itself; `model_tier` added to `usage_events` and `UsageEvent`; no Anthropic DPA gate for this academic build. |
 
 ---
 
