@@ -1,6 +1,6 @@
 # Plan 7-9: Agents and Monetization
 
-**Status:** IN PROGRESS. Phase P7, work item 1 of 5 (`billing-metering-service`, plan section 3.1) is built and verified; items 2 to 5 (agent runtime, `PersonalListenerAgent` + `worklogs`, `mytheus-ui`, `mytheus-mobile`) are not started. Last verification 2026-11-08.
+**Status:** IN PROGRESS. Phase P7 work items 1 (`billing-metering-service`, plan section 3.1) and 2 (`agent-runtime-service`, section 3.2) are built and verified; items 3 to 5 (`PersonalListenerAgent` + `worklogs`, `mytheus-ui`, `mytheus-mobile`) are not started. Last verification 2026-11-08.
 
 Plan: [plan/plan-7-9-agents-and-monetization.md](../plan/plan-7-9-agents-and-monetization.md).
 
@@ -44,6 +44,25 @@ Recorded before any code, canon first, in [ADR-0029](../adr/0029-plan-7-budget-s
   - `services/workflow_service/workflows/usage_rollup.py`: `UsageRollupWorkflow` and the `usage-rollup-nightly` schedule (02:00 UTC, overlap SKIP), created once when the `workflow-service` worker starts. The workflow hands `billing.run_nightly` to the `billing-metering-service` task queue.
   - `services/billing_metering_service/temporal_worker.py`: the billing-owned worker for that activity (`python -m services.billing_metering_service.temporal_worker`), so only billing code writes billing tables.
 
+- `60fa6b7`, `meeting-service`: `meeting-room-events` `joined`/`left` now carry `participant_id` = the LiveKit identity (`users.id` for a human) instead of the per-connection participant SID. The runtime builds its roster from it; nothing consumed the old value. The SID still keys the webhook dedupe.
+- `5f26090`, `billing-metering-service` `internal.py`: `POST /billing/internal/budget`, the agent tier's budget read-through. It provisions the period's `agent_budgets` row, writes the mirror and returns the snapshot. Service-authenticated with the pii-vault header scheme (`X-Mytheus-Service`, `X-Mytheus-Service-Token`, `X-Mytheus-Org`); secrets in `MYTHEUS_BILLING_CALLER_TOKENS`, allowed callers `agent-runtime-service` and `rag-service`; unconfigured means every caller is refused. Two more tests.
+
+### mytheus-intelligence
+
+- `2649f21`, work item 2, `agent-runtime-service` (plan section 3.2):
+  - `libs/shared/state.py`: `TranscriptWindow`, `Turn`, `AgentState` (the plan's fields plus `result`), `AgentResult`.
+  - `libs/shared/base_agent.py`: `BaseAgent` on LangGraph, `spawn`/`process`/`terminate`; fails closed without `org_id`; `BudgetBlocked` makes `process` return None and marks the agent blocked.
+  - `libs/shared/prompts.py`: `PromptLoader`, `{prompt_key}@{version}.md` files plus `registry.json` (`defaults`, per-tenant `pins`); a `---user---` line splits the cacheable system prompt from the per-call user message.
+  - `libs/shared/budget.py`: `BudgetGate` (`check_budget`) and `BillingRefresher`.
+  - `libs/shared/router.py`: `LiteLLMRouter`. `triage` to `claude-haiku-5-5`, `extract` to `claude-sonnet-5-5`, `high_stakes` refused while unmapped; budget gate before every call (`block` calls nothing, `throttle` forces Haiku); system prompt sent with `cache_control: ephemeral`; optional streaming via `on_delta`; exactly one `usage-events` record per call with its tier, emitted before the caller parses the answer.
+  - `libs/shared/user_context.py` + `proto/identity.proto` (a copy of `mytheus-backend`'s): `get_user_context` over gRPC with `org-id` metadata, a descriptor mirror like `rag_proto.py`; a reply naming another tenant is dropped.
+  - `services/agent_runtime_service/windowing.py`: fixed 30 s buckets, window id `{meeting_id}:{start_ms}`, same-speaker turn merging, chunk-id dedupe, close on next bucket, idle (`WINDOW_IDLE_S`, 15 s) or meeting end.
+  - `runtime.py`: the spawner. Roster from `meeting-room-events` plus the window's speakers; one instance of each participant-scope agent per user, reused across windows; `left` terminates; one in-app notification per blocked participant per meeting.
+  - `emitter.py`: `usage-events`, `agent-stream`, `agent-results`, `notifications` with an idempotent producer.
+  - `consumer.py`: `python -m services.agent_runtime_service.consumer`. Commits an offset only once every window holding it is processed and the producer is flushed.
+  - `agents/__init__.py`: the registry, empty until item 3; `prompts/registry.json`, empty.
+  - `tests/test_agent_runtime.py`: 27 tests; `fakeredis` added as a dev dependency.
+
 ### mytheus-realtime
 
 - `34501d0`: fix to `transcription-service` migration `e4a7c91b3d28`. On a database built from empty in or after 2026-11, `be66698dbefb` (which premakes months from `date.today()`) and `e4a7c91b3d28` (fixed months from 2026-11) both created `transcript_chunks_2026_11`, and the upgrade failed with `DuplicateTableError`. The migration now skips a month that already exists. Found while bringing up a fresh local database for billing.
@@ -63,6 +82,16 @@ From the plan's section 10 "End of P7" DoD. Lines for items 2 to 5 are not audit
 | RLS isolation test | MET | `test_rls_isolates_usage_and_budgets`, including the no-tenant fail-closed read |
 | DECISION-REQUIRED #1 + #2 resolved | MET | ADR-0029 D1, D3 |
 | Usage console shipped | NOT MET yet | API is `GET /usage`; the screen is item 4 |
+| `agent-runtime-service` shipped: windowing | MET | `test_360_finals_over_45_minutes_make_90_windows` |
+| Haiku pre-gate | MET (mechanism) | `test_the_pre_gate_decides_whether_extraction_runs` with a two-step test agent; the real pre-gate prompt is item 3 |
+| LiteLLM tiered routing | MET | `test_throttle_forces_haiku_and_ok_routes_extract_to_sonnet`, `test_high_stakes_is_refused_while_unmapped` |
+| prompt caching | PARTIAL | Anthropic prompt caching on the system prompt; no semantic cache (deviation 11) |
+| inline `check_budget` | MET | `test_gate_decides_from_the_mirror`, `test_a_miss_reads_through_and_every_failure_blocks` |
+| budget deny-by-default test | MET | `test_block_calls_no_model_and_meters_nothing`, `test_a_blocked_budget_returns_nothing` |
+| `usage-events` emit | MET | router tests; runtime round trip in section 6 |
+| `agent-stream` bridge | PARTIAL | `Emitter.delta` and the router's `on_delta` are tested; no shipped agent streams yet (item 3) |
+| writes zero Postgres | MET | `test_the_runtime_imports_no_database_driver` |
+| pre-gate count test | NOT MET yet | Needs the real agent and its eval set (item 3) |
 
 ## 4. Deviations from the plan, and why
 
@@ -75,12 +104,23 @@ From the plan's section 10 "End of P7" DoD. Lines for items 2 to 5 are not audit
 7. **`quotas` records meeting minutes but does not enforce them.** Over quota sets `state = throttled`; nothing stops a meeting, because durable facts are never shed.
 8. **The first `GET /usage` provisions the month.** Step 9's lazy create runs on read as well as on the first charge, so the console is never empty on the 1st.
 
+9. **The runtime publishes straight to Redpanda, not through a transactional outbox** (plan section 3.2 step 10 says outbox). An outbox makes an emit atomic with a database write; the runtime makes none, and its acceptance check is zero Postgres rows. At-least-once comes from flushing the idempotent producer before committing input offsets; duplicates are absorbed by the idempotency keys (`agentresult:...` is deduped by `core-api`).
+10. **The budget read-through goes to billing, not to Postgres** (step 9 says "read through to Postgres"). The runtime writes no Postgres and cannot create the period's `agent_budgets` row, so a plain read would leave a new tenant (and every tenant on the 1st) without a budget, blocked forever. `POST /billing/internal/budget` provisions and republishes; anything else blocks.
+11. **No semantic cache.** Step 8 asks for one in front of the model. It needs a Redis key canon does not define, so it waits for a canon edit. Anthropic prompt caching, the bigger lever for repeated system prompts, is on.
+12. **No per-user priority queue.** `nexus:{org_id}:queue:agent:{user_id}` belongs to `notification-service` in the backend service map. Windows run one at a time per process, with users concurrent inside a window.
+13. **The runtime emits no `billing-events`.** The plan's `check_budget` sketch emits `quota_exceeded`; canon makes `billing-metering-service` the only producer, and it already does so on the crossing.
+14. **Meeting end is "last participant left".** `meeting-room-events` has no room-finished symbol (`joined`, `left`, `recording_ready`); idle close covers a meeting nobody leaves cleanly.
+15. **Window speakers join the roster.** A runtime restarted mid-meeting missed the `joined` events; anyone who talks is served anyway.
+16. **The budget can overshoot slightly.** The mirror advances when billing meters a call, which lags the call, so concurrent calls in that gap all see the older total. The overshoot is bounded by one window's calls for the tenant.
+
 ## 5. Open gaps
 
 1. ~~`storage_gb` is not derived.~~ Closed in `73348fc`. The local `.env` points `S3_*` at MinIO; production must point it at R2. Cost there is one Class A list call per bucket per tenant per night, inside R2's 1M free a month for any small deployment.
 2. ~~No Temporal schedule.~~ Closed in `73348fc`. Deploying it means running two more processes: the `workflow-service` worker (already planned) and `python -m services.billing_metering_service.temporal_worker`.
 3. **Mirror read-through for the agent tier.** Plan step 9 of section 3.2 says a mirror miss falls through to Postgres. How `agent-runtime-service` does that (its own read of `agent_budgets`, or an internal billing endpoint) is decided in item 2.
 4. **Stripe checkout, `/stripe/webhook`, dunning, invoices** are left to their own band, as the plan says.
+6. **Deploying item 2** means one more process (`python -m services.agent_runtime_service.consumer`) with `BILLING_URL`, `BILLING_SERVICE_TOKEN` (matching an entry in billing's `MYTHEUS_BILLING_CALLER_TOKENS`), `IDENTITY_GRPC_ADDR`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `REDPANDA_BROKERS`, `SCHEMA_REGISTRY_URL`.
+7. **LLM-egress PII redaction** is part of item 3 (plan section 3.3 step 4), not built yet.
 5. **Local environment only** (not code defects): `test_public_schema_grants_nothing_by_default` and `test_no_bypassrls_role_holds_privileges_on_a_public_table` fail on this machine's database (the image's `supabase_admin` default privileges, and `alembic_version_intelligence` created by `mytheus-intelligence` in the same database); six `test_crypto_file_custody.py` tests fail on Windows (no 0400 file modes); `test_relay_real_bus_roundtrip` fails because Redpanda ran with a 768M memory cap and refused new partitions.
 
 ## 6. Verification
@@ -91,4 +131,6 @@ All observed 2026-11-08 against the local stack (Postgres 5443, Redis 6390, Redp
 - `mytheus-backend`: `MYTHEUS_REQUIRE_DB=1 uv run pytest tests/test_billing_metering.py -q` 20 passed. Full suite (two environment tests deselected): 611 passed, 7 failed, all seven environmental (gap 5). `uv run ruff check`, `uv run black --check`, `uv run mypy services/billing_metering_service` clean.
 - `mytheus-realtime`: `uv run alembic upgrade head` on the local database now succeeds through `e4a7c91b3d28`.
 - `73348fc`: `tests/test_billing_metering.py` 23 passed. Real Temporal (`docker compose up -d temporal`) and MinIO: a throwaway script started both workers in-process, `ensure_schedule` returned True then False (idempotent), the schedule's next action was 2026-11-09 02:00 UTC, and one manual trigger ran `billing.run_nightly` to completion (`{'tenants': 4266, 'storage_rows': 4265, 'derived_rows': 0, 'failed': 0}`; the tenants are mostly test fixtures left in the local database).
+- `2649f21`: `uv run pytest tests/test_agent_runtime.py -q` 27 passed; `ruff check`, `black --check`, `mypy libs services` (80 files) clean.
+- **Runtime round trip, no LLM spend** (throwaway scripts, not committed): a tenant's budget provisioned through the real `POST /billing/internal/budget` (200, quota 200000); the real `Emitter`, `AvroCodec` and `BudgetGate` on real Redis, with the test suite's two-step agent and a fake model, ran one window for 3 participants. Produced to real Redpanda against the registered schemas: 3 `agent-results`, 6 `usage-events`. The offset tracker held back the third chunk (its window still open). The real billing consumer then metered 6 rows, 720 tokens, tiers haiku and sonnet; `agent_budgets` and the mirror both read 720.
 - **Real round trip** (throwaway scripts, not committed): two copies of one Avro `usage-events` message produced to Redpanda; `python -m services.billing_metering_service.consumer` run for 25 s; `python -m services.billing_metering_service.jobs` run once. Result: one `usage_events` row (1234 tokens, `haiku`); `agent_budgets` 1234 of 200000, `ok`; `usage_aggregates` `agent_token` 1234 with `{"haiku": 1234}`; the Redis mirror read back with `enforcement` `alert_only`. The first attempt sent every real message to the DLQ: the confluent deserializer returns `occurred_at` as a datetime, not an integer. Fixed in `734f80e` with a regression test; the unit tests had not caught it because they built the value by hand.
