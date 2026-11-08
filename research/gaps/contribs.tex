@@ -1,0 +1,275 @@
+\section{Candidate contributions and how they survive review}
+
+Six candidate contributions were derived from the themes above. Each was
+required to name an experiment, a baseline and a metric before it was allowed
+through. Each was then to be handed to two hostile reviewers instructed to
+default to refuted and to cite only prior work they could find live.
+
+That adversarial pass completed for two of the six before the run was cut
+short by a resource limit. Both of the two were refuted. This is reported
+exactly as it happened, because the pattern is informative: the two claims that
+were tested are the two that sound most like the product pitch, and both were
+already occupied. The four that remain untested carry the author's own risk
+assessment instead, which names the specific prior work a reviewer would reach
+for. Treat an untested claim as unproven rather than as surviving.
+
+\begin{center}
+{\footnotesize
+\begin{tabular}{@{}p{0.4cm}p{6.6cm}p{3.0cm}p{5.2cm}@{}}
+\toprule
+\textbf{\#} & \textbf{Candidate} & \textbf{Adversarial status} & \textbf{What to do with it} \\
+\midrule
+1 & Deadline-bounded peer querying with a degradation ladder ending in silence & Not yet tested & Lead claim; test it first \\
+2 & Citation validity over diarized speech decomposes into three components & \textbf{Refuted} & Narrow to the invariance result \\
+3 & Unqueried role-conditioned relevance on jointly authored input & \textbf{Refuted} & Drop mechanism, keep the controls \\
+4 & Confirmation-gated incremental organizational memory & Not yet tested & Strong second claim \\
+5 & Grounding verdicts on live speech have a measurable shelf life & Not yet tested & Cheapest experiment to run \\
+6 & Abstention priced across a heterogeneous tier cascade & Not yet tested & Measurement hygiene, not a headline \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+\subsection{Candidate 1: deadline-bounded peer querying}
+
+\textbf{The claim.} Correctness for an inter-agent query is a joint predicate
+over answer quality and a wall clock deadline. Mytheus instantiates it as an
+addressed request envelope carrying \texttt{requester\_agent\_id},
+\texttt{responder\_target}, \texttt{query}, \texttt{deadline} and
+\texttt{correlation\_id}, evaluated deny-by-default on tenant plus role at the
+receive path, with a fixed four tier fallback ordered by evidence authority:
+peer participant agents, then agents of related meetings, then retrieval, then
+silence. Two properties are unrepresentable in every framework in the corpus.
+Degradation runs \emph{downward} across evidence sources when the clock binds,
+rather than upward into more serial model calls. And silence is a scored
+terminal state rather than a defect.
+
+\textbf{The gap it exploits.} Themes 1 and 3. Papers 1, 2 and 5 terminate on a
+condition or a cap and never on a clock. Paper 3 finds no temporal failure mode
+across 1642 traces and classes withholding and early stopping as pure defects.
+Paper 6 states that agents coordinate poorly in real time and that its
+subagents never query one another.
+
+\textbf{Mechanism.} \texttt{ContextGapAgent} over the
+\texttt{agent-requests} and \texttt{agent-responses} protocol, with per round
+trip logging and the tenant plus role check on the receive path.
+
+\textbf{Evaluation.} Replay the AMI scenario series, four linked design
+meetings per team with four fixed roles, as real audio through the live capture
+path so that recognition and diarization error are present. Construct
+context-gap items by withholding meeting $k-1$ from one participant's scope, so
+the gold fill is a prior-meeting fact held by exactly one peer. Baselines over
+the identical window stream: an AutoGen GroupChat orchestrator terminated by
+max rounds; always-RAG with no peer tier; broadcast-and-first-reply; the
+Mytheus ladder; and an oracle with unbounded time. Report fill correctness,
+citation validity, p50 and p95 round trip, deadline miss rate, the fraction of
+fills served by each tier with per tier correctness, silence precision, and
+dollars per meeting. The falsifiable hypothesis is that the count-terminated
+baseline either exceeds the budget or terminates before the fill arrives.
+
+\textbf{Adversarial review: not yet run.} The author's own assessment names the
+attack. A reviewer will say the mechanism is ordinary distributed systems
+engineering, since deadline propagation, hedged requests and fallback chains
+are standard practice, and deadline-triggered quality degradation is formalised
+in the anytime algorithm and flexible computation literature that sits behind
+paper 23. LangGraph and AutoGen both permit a timeout as configuration, so
+``no framework can express it'' is attackable as a claim about defaults rather
+than expressiveness.
+
+\begin{takeaway}
+\textbf{Claim the clock, not the topology.} The defensible residue is narrower
+than the ladder itself: the measurement under a live speech deadline, the
+multi-principal authorization on the receive path, and silence as a scored
+outcome. State plainly that five of the six agents are workflows in paper 5's
+sense, and do not claim the topology as novel.
+\end{takeaway}
+
+\subsection{Candidate 2: utterance-level citation validity}
+
+\textbf{The claim.} When the cited unit is a speaker-attributed utterance,
+validity decomposes into three separable components: the span resolves, the
+span entails the statement, and the span is attributed to the correct speaker.
+These are empirically independent, so a system can hold near-constant
+entailment-based citation precision while misattributing a large fraction of
+commitments.
+
+\textbf{Adversarial review: refuted.} The reviewer found the core empirical
+claim already published, on the same corpora. Both sources below were
+independently verified against the arXiv API for this document.
+
+\begin{itemize}
+\item \textbf{M3-SLU: Evaluating Speaker-Attributed Reasoning in Multimodal
+Large Language Models}, arXiv 2510.19358, built from CHiME-6, MELD,
+MultiDialog and AMI. Its headline finding is that models capture what was said
+but often fail to identify who said it. That is the claimed independence
+result, stated as the paper's thesis.
+\item \textbf{MSU-Bench: Towards Speaker-Centric Understanding in
+Conversational Multi-Speaker Scenarios}, arXiv 2606.22868. It deliberately
+varies speaker referencing schemes in order to disentangle content
+understanding errors from speaker localization errors, and reports wrong
+speaker attribution as a measured fraction of errors.
+\end{itemize}
+
+The author had pre-emptively retreated to ``what survives is the empirical
+independence result''. That retreat is precisely what the search killed.
+
+\textbf{What survives.} A narrower measurement note, not a decomposition
+claim. On decision-typed and action-typed commitments extracted from diarized
+transcripts, entailment-based citation precision is near-invariant to speaker
+binding errors: holding the cited chunk fixed and permuting only the
+\texttt{speaker} field leaves the entailment verdict, and therefore the
+reported precision, essentially unchanged, while the fraction of commitments
+bound to the wrong committer moves over a wide range. M3-SLU and MSU-Bench
+measure speaker attribution through question answering accuracy, not through a
+citation metric, so neither demonstrates the invariance of the citation metric
+itself. Run it as the speaker-permutation ablation inside candidate 5 rather
+than as a standalone paper.
+
+\subsection{Candidate 3: unqueried role-conditioned relevance}
+
+\textbf{The claim.} Score a shared 30 second window for a participant who has
+issued no query and co-authored only part of the input, conditioned on
+structured organizational attributes rather than behavioural history, and test
+it against the null that per-participant divergence is annotation noise.
+
+\textbf{Adversarial review: refuted, and this is the most important finding in
+the document.} The reviewer reported that the mechanism is anticipated
+component for component by an issued patent, \textbf{US11271978B2, Personalized
+meeting summaries}, together with a second patent, US12272362B2, covering near
+real time per attendee content ranking. According to the reviewer's fetched
+claim text, the first determines role information of the participant built from
+job title, responsibilities and projects, computes a relevance value against a
+relevance threshold, and operates in real time as the meeting progresses.
+
+\textbf{An integrity caveat you must resolve before relying on this.} Every
+academic citation in these two documents was verified against a live API. These
+two patent numbers were \emph{not}: the patent databases returned 503 and
+Cloudflare challenges to automated access, and the search budget was exhausted
+before the check could be completed another way. The claim language above is
+reported as the reviewer stated it, not as verified fact. Confirm both patents
+by hand before designing around them, and treat a patent's existence as a
+novelty problem for the mechanism claim rather than for the measurement claim.
+
+\textbf{What survives.} Drop the mechanism claim and publish a measurement and
+falsification result instead. Profile-conditioned relevance over shared meeting
+input is deployed and, apparently, patented, but it has never been tested
+against the null that its per-participant differences are noise. The two
+missing controls are the contribution:
+
+\begin{enumerate}
+\item A chance-corrected inter-role agreement statistic over a role-conditioned
+relevance reference set on the same meeting windows, reported \emph{before} any
+quality number. If agreement is near unity, the product thesis is weakened, and
+that is a result worth publishing either way.
+\item A \textbf{swapped-profile control}, in which participant A's scorer is
+driven by participant B's profile, with the matched minus swapped gap as the
+personalization effect size. Targeted searching found no mismatched-profile or
+placebo-profile condition anywhere in personalized summarization or personalized
+meeting systems. This appears genuinely unpublished and it is cheap to run.
+\end{enumerate}
+
+\subsection{Candidate 4: confirmation-gated organizational memory}
+
+\textbf{The claim.} Every index in the corpus is built by an offline batch pass
+over a corpus complete before indexing begins, and the one system that revises
+its record does so automatically with no confidence and no reported precision.
+Mytheus evaluates the opposite contract: an agent emits only a candidate, and
+the row, the event and the graph edge are written on user confirmation, so the
+write path stays off the live budget and retraction is free. The claim is a
+measured tradeoff surface, not a claim of superiority. Confirmation gating
+should raise edge precision and lower write cost while lowering edge coverage,
+and the size of each effect is unknown in the published record.
+
+\textbf{Gap and mechanism.} Theme 6. Paper 14 makes automatic edge invalidation
+its core mechanism, decided by a model with no confidence and no human
+confirmation, and reports only downstream accuracy, never precision, recall or
+false-invalidation rate. The mechanism is the Apache AGE property graph written
+only on confirmation, over \texttt{PRODUCED}, \texttt{ASSIGNED\_TO},
+\texttt{RELATES\_TO} and \texttt{FOLLOWS\_FROM}, with conflict detection as a
+graph traversal.
+
+\textbf{Evaluation.} On the AMI scenario series, human-label decision pairs
+into five classes, with hard negatives as the point of the set: contradiction,
+refinement, scope restriction, reversal with stated rationale, and unrelated.
+Compare a GraphRAG-style extraction graph, a Zep-style automatic invalidation
+policy, the Mytheus confirmation-gated graph, and prompt-only contradiction
+detection as the ablation that tests whether traversal beats asking a model.
+Report model calls and wall clock per ingested window and per confirmed edge,
+edge precision against coverage, contradiction precision and recall at the
+stated true base rate, false-invalidation rate, and traversal p95 as a function
+of graph size.
+
+\textbf{Adversarial review: not yet run.} The author's assessment: a reviewer
+will say human curation trivially beats automatic extraction on precision, so
+the headline is a foregone conclusion, and that cost-per-edge comparisons are
+decided by whoever defines the unit. Human-in-the-loop knowledge graph
+construction is an established line of work outside this corpus. There is also
+a feasibility exposure, since AMI's staged decisions may be too clean to yield
+realistic refinement and scope-restriction negatives. Mitigate by declaring
+coverage loss up front as the price of the contract, and by making the hard
+negative taxonomy, rather than the win, the released artifact.
+
+\subsection{Candidate 5: the shelf life of a grounding verdict}
+
+\textbf{The claim.} On a live stream the evidence beneath a judgement is
+mutable, because interim recognition hypotheses are revised and only finals
+persist, so an extraction, a confidence value and a citation can all be
+computed against text that no longer exists by the time a user sees the
+candidate. Define \emph{candidate retraction rate}, the fraction of emitted
+candidates whose extraction, confidence band or citation does not survive the
+interim to final transition, and \emph{confidence churn}, the signed change in
+confidence between interim-derived and final-derived judgement, both as
+functions of firing offset inside the 30 second window.
+
+\textbf{Evaluation.} Fire \texttt{DecisionAgent}, \texttt{ActionAgent} and
+\texttt{QuestionAgent} at offsets of 5, 10, 15, 20, 25 and 30 seconds into each
+window and compare every candidate against a final-transcript oracle run on the
+same window. Per offset, report retraction rate, band-flip rate for candidates
+crossing the 0.7 or 0.4 cut, mean absolute confidence churn, citation
+invalidation rate when \texttt{chunk\_id} or \texttt{speaker} changes on
+finalization, extraction F1, and seconds of latency saved. The deliverable is
+one curve, seconds saved against retraction rate, so an operating point can be
+chosen rather than asserted.
+
+\textbf{Adversarial review: not yet run.} The author's assessment is that
+incremental natural language processing already formalised this shape, since
+incremental processing metrics define correctness over time and edit overhead
+for revised output, and streaming recognition has long reported instability of
+emitted prefixes. Paper 17 already scores partial output over time. The residue
+that survives both objections is that the revised object here is a
+confidence-scored, speaker-cited structured extraction rather than a token
+prefix, and that band-flip rate has no counterpart in that literature because
+those systems have no gate to flip across. Fold the surviving fragment of
+candidate 2 in here as the speaker-permutation ablation.
+
+\subsection{Candidate 6: abstention priced across a tier cascade}
+
+\textbf{The claim.} Every gate in this system is an abstention with a price,
+and none is currently fitted. The triage pre-gate discards roughly 65 percent
+of windows before any extraction call is paid for, which differs structurally
+from a cascade: the decision precedes generation, the false negative is silent
+and permanent rather than recoverable by escalation, volume is set by the clock
+and headcount rather than by a query distribution, and the loss is incident on
+the specific participants for whom the window mattered. The 0.7 and 0.4 bands
+then define a three action decision that a two action risk-coverage curve
+cannot express.
+
+\textbf{Evaluation.} Sweep the triage threshold and plot per-role recall of
+relevant windows against calls and dollars saved, reporting the silent
+false-drop rate per role at the shipped operating point. Sweep both cut points
+jointly and compare the asserted uniform 0.7 and 0.4 against per-agent, per-tier
+cuts fitted by Platt scaling on reported-confidence against correctness pairs,
+fitting on a tenant-level holdout rather than on the CI suite that gates
+prompts. Report reliability diagrams for a per-person relevance predicate and a
+shared checkable correctness predicate on the same scale, and report the
+calibration penalty of forcing one shared cut.
+
+\textbf{Adversarial review: not yet run.} This is the most crowded ground in
+the list and should be presented as measurement hygiene rather than as a
+headline. Selective prediction with a reject option is classical, the
+calibration machinery is paper 18 plus standard scaling, and cheap-model-first
+routing is paper 22 plus the router line. A reviewer can fairly say the only
+new element is applying known calibration and known routing to a new pipeline.
+Two pieces are genuinely unoccupied and should carry whatever novelty is
+claimed: the per-role incidence of a silent, unrecoverable pre-gate, and the
+demonstration that a relevance predicate and a correctness predicate cannot
+share a cut point no matter how well each is calibrated separately.

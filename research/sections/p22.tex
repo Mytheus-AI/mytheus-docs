@@ -1,0 +1,54 @@
+\section{FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance}
+\paperhead{FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance}{Lingjiao Chen, Matei Zaharia, James Zou}{Transactions on Machine Learning Research (TMLR), 2024; arXiv preprint 2023}{https://arxiv.org/abs/2305.05176}{arXiv API id\_list=2305.05176, title match 1.00}
+
+\subsection{What the paper does}
+
+Commercial LLM APIs are priced heterogeneously, and the paper's own survey of 12 APIs from 5 providers (OpenAI, AI21, CoHere, Textsynth, ForefrontAI) shows the spread reaching two orders of magnitude: processing 10M input tokens costs \$30 on GPT-4 but \$0.2 on GPT-J hosted by Textsynth. The paper works a customer-service example of 360{,}000 queries per month at roughly 1800 prompt tokens and 80 answer tokens each, which comes to about \$21.2K per month on GPT-4. High-throughput deployments therefore cannot afford to route every query to the strongest model.
+
+The authors reframe the problem as \emph{budget-aware LLM API usage}: maximize expected task performance subject to the average per-query cost staying under a user-specified budget $b$, where the cost of API $i$ on prompt $p$ is $c_i(p)=\tilde{c}_{i,2}\|f_i(p)\|+\tilde{c}_{i,1}\|p\|+\tilde{c}_{i,0}$ (generation length, prompt length, fixed per-request fee). They lay out three families of levers, then instantiate one of them. The three are \emph{prompt adaptation} (shrink what you send), \emph{LLM approximation} (avoid the API entirely), and \emph{LLM cascade} (adaptively pick which API answers which query). FrugalGPT is the cascade instantiation.
+
+\subsection{How the method works}
+
+Prompt adaptation covers \emph{prompt selection}, keeping only a subset of the in-context examples, and \emph{query concatenation}, packing several queries behind one shared prompt so the prompt is paid for once. LLM approximation covers the \emph{completion cache}, which stores responses and serves a new query from a sufficiently similar cached one, and \emph{model fine-tuning}, which uses an expensive model's outputs to train a cheap one.
+
+The cascade has two components: a generation scoring function $g:\mathcal{Q}\times\mathcal{A}\mapsto[0,1]$ that rates the reliability of a (query, answer) pair, and an LLM router that selects an ordered list $\bm{L}\in[K]^m$ of $m$ APIs. The router invokes $f_{L_1}(q)$, scores it, returns the answer if $g(q,f_{L_1}(q))\ge\tau_1$, and otherwise escalates to $f_{L_2}$, and so on. Learning $\bm{L}$ and the threshold vector $\bm{\tau}$ jointly is posed as a constrained mixed-integer program (maximize expected reward subject to expected cost $\le b$), which the authors make tractable with a specialized optimizer that prunes candidate lists whose members show little answer disagreement and interpolates the objective from a few samples. The scorer is a DistilBERT tailored to regression, chosen because it is far cheaper than any LLM in the pool. Cascade length is fixed at 3 to keep the search space small.
+
+\begin{center}
+\begin{tikzpicture}[
+  font=\footnotesize, >=Stealth, node distance=1.1cm,
+  llm/.style={draw, rounded corners=1pt, align=center, inner sep=3pt, minimum height=9mm, minimum width=18mm},
+  term/.style={draw, rounded corners=4pt, align=center, inner sep=3pt, minimum height=9mm}]
+\node[term] (q) {Query $q$};
+\node[llm, right=of q] (a1) {GPT-J\\$g\ge 0.96$?};
+\node[llm, right=of a1] (a2) {J1-L\\$g\ge 0.37$?};
+\node[llm, right=of a2] (a3) {GPT-4};
+\node[term, right=of a3] (out) {Answer};
+\draw[->] (q) -- (a1);
+\draw[->] (a1) -- node[above, font=\scriptsize] {no} (a2);
+\draw[->] (a2) -- node[above, font=\scriptsize] {no} (a3);
+\draw[->] (a3) -- (out);
+\draw[->] (a1.south) -- ++(0,-0.65) -| ([xshift=2mm]out.south);
+\draw[->] (a2.south) -- ++(0,-0.35) -| ([xshift=-2mm]out.south);
+\node[font=\scriptsize, below=0.95cm of a2] {accept: return $f_{L_i}(q)$};
+\end{tikzpicture}
+\end{center}
+
+\noindent The chain above is the cascade FrugalGPT actually learned on the HEADLINES dataset under a \$6.5 budget, one fifth of GPT-4's cost, with the thresholds reported in the paper.
+
+\subsection{What it reports}
+
+Evaluation covers three tasks: HEADLINES (finance, 10{,}000 items, 8 in-context examples), OVERRULING (law, 2{,}400 items, 5 examples), and COQA (passage reading, 7{,}982 items, 2 examples), each split into a set for learning the cascade and a test set. On HEADLINES, GPT-4 alone reaches accuracy 0.857 at \$33.1 while FrugalGPT reaches 0.872 at \$6.5, an 80\% cost reduction with accuracy 1.5\% higher. Matching the best single model's accuracy is cheaper still: Table~3 of the paper reports cost savings of 98.3\% on HEADLINES (\$33.1 to \$0.6 against GPT-4), 73.3\% on OVERRULING (\$9.7 to \$2.6 against GPT-4), and 59.2\% on COQA (\$72.5 to \$29.6 against GPT-3). The accuracy gain is attributed to generation diversity, quantified by a maximum performance improvement matrix: cheap models such as GPT-J, J1-L and GPT-C each fix roughly 6\% of the HEADLINES cases GPT-4 gets wrong, and GPT-3 fixes 13\% of GPT-4's COQA errors. The authors also note a failure mode: when the scorer is uncertain even though every model in the chain agrees, the cascade pays for all three.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+This is the mandatory citation for the cost-controlled LLM pipeline. Map the five levers onto FrugalGPT's taxonomy explicitly in the paper: 30-second speaker-turn windowing is query concatenation, semantic plus prompt caching is the completion cache, and LiteLLM tiered routing (Haiku triage, Sonnet extract, Opus for conflict and synthesis) is an LLM cascade. State the 1,206 versus 8,640 calls per meeting, an 86\% reduction, against this frame. The critical difference the student must defend, because a reviewer will ask why the cascade is hand-tiered rather than learned, is \textbf{latency}: FrugalGPT decides only \emph{after} paying for the cheap generation, so a hard query serially incurs three round trips, and the paper measures no latency at all. That is incompatible with the ContextGapAgent's p95 peer round-trip budget of 1.5 seconds and with the p95 agent-output budget of 4 seconds. Mytheus's Haiku triage is a \emph{pre-gate}, not a cascade stage: it decides before the extraction call and drops about 65\% of windows outright, an abstain path FrugalGPT does not have because every query must return an answer. BUILD: per-call telemetry (tier, prompt and completion tokens, latency, confidence) so a FrugalGPT-style cost versus accuracy Pareto curve can be plotted for the hand-tiered cascade against Sonnet-only and Opus-only baselines on the golden set; that figure is currently missing. MEASURE: whether DecisionAgent and ActionAgent per-field extraction confidence is a usable substitute for FrugalGPT's learned scorer $g$. The Brier calibration already in the CI harness makes this testable rather than assumed; if the 0.7 and 0.4 gates are poorly calibrated they are not a valid scorer and the hand-tier is the honest design. Note also that FrugalGPT's budget is an expectation over a query distribution, which cannot express Mytheus's hard per-tenant token quotas with deny-by-default; thresholds learned on one tenant's traffic must not be shared across org boundaries.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=2pt, topsep=2pt]
+  \item Latency is never measured. The cascade is strictly sequential, and the paper's own example shows the worst case querying every API in the chain, so average cost savings say nothing about tail latency; the authors list latency only as future work, and no streaming, interactive or real-time setting is evaluated.
+  \item The scorer and thresholds require an offline labeled training split drawn from the same or a similar distribution as the test queries. Distribution shift, online adaptation and per-tenant scorers are untested, and the learned chain is bound to the March 2023 price table, which the paper itself observes does not preserve a fixed cost ranking across models.
+  \item All three tasks are single-turn query answering with one verifiable answer (news label, binary legal judgement, short reading-comprehension span). Structured multi-field extraction with per-field confidence, multi-turn or streaming context, and any abstain or discard decision are outside the evaluated scope.
+  \item Only the cascade lever is measured. Prompt selection, query concatenation, completion cache and fine-tuning are described and illustrated but never quantified, and compositions of levers are discussed only in the abstract, so the paper cannot say how caching interacts with a cascade or whether their savings compound.
+  \item Cascade length is fixed at 3 for tractability, and there is no baseline that routes a query to a single model up front without first paying for a cheap generation; the budget is an average over the query distribution, with no per-request deadline, no hard quota and no multi-tenant isolation.
+\end{itemize}

@@ -1,0 +1,43 @@
+\section{Why Do Multi-Agent LLM Systems Fail?}
+\paperhead{Why Do Multi-Agent LLM Systems Fail?}{Mert Cemri, Melissa Z. Pan, Shuyi Yang, Lakshya A. Agrawal, Bhavya Chopra et al.}{NeurIPS 2025 Datasets and Benchmarks Track}{https://arxiv.org/abs/2503.13657}{arXiv API id\_list=2503.13657, title match 1.00}
+
+\subsection{What the paper does}
+
+Multi-agent LLM systems (MAS) are built widely and understood poorly. The authors note that reported gains over single-agent frameworks or simple baselines such as best-of-N sampling are often minimal, and their own measurement finds a 41\% to 86.7\% failure rate across seven state-of-the-art open-source MAS. The field had no shared vocabulary for \emph{why} these systems break, so fixes stayed anecdotal and non-transferable.
+
+The core idea is to treat MAS failure as an empirical object. Grounded Theory, a qualitative social-science method, is applied to hand-annotated execution traces to distil a taxonomy of 14 failure modes in 3 categories (MAST); an LLM-as-a-Judge annotator is then calibrated against the human labels and used to build MAST-Data, 1642 annotated traces. The thesis defended is that most MAS failures are organizational, that is defects of system design, coordination and verification, rather than deficits of the underlying model.
+
+\subsection{How the method works}
+
+150 traces are collected from five frameworks (HyperAgent, AppWorld, AG2, ChatDev, MetaGPT) by theoretical sampling over programming and math, and six human experts apply open coding, iterating until theoretical saturation at over 20 hours of annotation each. Three annotators then independently and iteratively label 15 traces until inter-annotator agreement reaches $\kappa = 0.88$, which freezes the taxonomy.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm, >=Stealth,
+  bx/.style={draw, rounded corners=2pt, align=center, inner sep=3pt, minimum height=8mm, text width=2.4cm, font=\scriptsize}]
+\node[bx] (a) {150 traces\\5 frameworks};
+\node[bx, right=of a] (b) {Grounded Theory\\open coding};
+\node[bx, right=of b] (c) {IAA loop\\$\kappa=0.88$, 14 modes};
+\node[bx, right=of c] (d) {o1 annotator\\1642 traces};
+\draw[->] (a) to (b); \draw[->] (b) to (c); \draw[->] (c) to (d);
+\end{tikzpicture}
+\end{center}
+
+FC1 system design: FM-1.1 disobey task specification, 1.2 disobey role specification, 1.3 step repetition, 1.4 loss of conversation history, 1.5 unaware of termination conditions. FC2 inter-agent misalignment: 2.1 conversation reset, 2.2 fail to ask for clarification, 2.3 task derailment, 2.4 information withholding, 2.5 ignored other agent's input, 2.6 reasoning-action mismatch. FC3 task verification: 3.1 premature termination, 3.2 no or incomplete verification, 3.3 incorrect verification. Annotation is then scaled by an o1-based judge, few-shot prompted with these definitions and validated on a held-out slice of the agreement study; it transfers unmodified to two unseen systems (OpenManus, Magentic-One) and benchmarks (MMLU, GAIA) at $\kappa = 0.79$, and labels 1642 traces over seven frameworks. Two case studies then use MAST as a debugger: AG2 MathChat on 200 GSM-Plus exercises comparing a baseline, an improved prompt carrying an explicit verification section, and a new agent topology, across two LLMs with six repetitions; plus ChatDev on ProgramDev.
+
+\subsection{What it reports}
+
+Prevalence is long-tailed and design-flavoured: step repetition 15.7\%, reasoning-action mismatch 13.2\%, unaware of termination conditions 12.4\%, disobey task specification 11.8\%, incorrect verification 9.10\%, no or incomplete verification 8.20\%, down to information withholding at 0.85\%. The few-shot o1 annotator reaches 0.94 accuracy and $\kappa = 0.77$ against human experts. Failure profiles track architecture: AppWorld's star topology skews to premature termination, HyperAgent to step repetition plus incorrect verification. Interventions help but do not rescue. Improving ChatDev role specifications alone gives $+9.4\%$ success on the same model, and adding a high-level task objective verification step gives $+15.6\%$ on ProgramDev, the largest gain reported. Gains are model-contingent: the new AG2 topology is not significant under GPT-4 (Wilcoxon $p = 0.4$) but is under GPT-4o ($p = 0.03$), and completion rates remain low even after intervention.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+Use MAST as the defence vocabulary for Mytheus's invariants and as the honest threat to its headline claim. Map it explicitly: the uniform 0.7 and 0.4 confidence gates plus the no-silent-commit rule answer FC3 (FM-3.2 at 8.20\% and FM-3.3 at 9.10\%), and the citation contract that drops any passage lacking resolvable provenance is exactly the multi-level verification MAST argues for rather than one final-stage check; \texttt{deadline} and \texttt{correlation\_id} in the \texttt{agent-requests} protocol target FM-2.1 and FM-3.1, and the fixed fallback chain targets FM-2.5. Build: run the released o1 annotator offline over \texttt{ContextGapAgent} round-trip logs and report per-mode MAST counts in CI beside the golden-set F1 and Brier scores. Measure: the paper's motivating finding obliges a single-agent ablation, one monolithic LangGraph agent doing all six roles per 30-second window on the same golden set, or the six-agent architecture is undefended. Critically, MAST's own remedies are latency-unbounded. Verifier agents, cross-verification and resample-until-verified cannot fit inside the p95 1.5 s peer round trip or the p95 4 s agent output ceiling, so in-band verification must stay cheap (Haiku triage pre-gate, confidence gate, deadline abort to silence) and o1-grade MAST auditing must live offline in CI.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*,itemsep=1pt,topsep=2pt]
+  \item No trace in MAST-Data carries a wall-clock deadline: all seven frameworks are turn-based text pipelines over offline coding, math and tool-use benchmarks, so deadline miss, stale context under latency and partial-result-on-timeout appear nowhere among the 14 modes.
+  \item Every trace is a fully autonomous run to completion with no human confirmation gate, so MAST cannot separate a wrong candidate that was suppressed from a wrong action that was committed, and confidence-threshold gating is only recommended in discussion, never measured.
+  \item FM-2.4 information withholding is defined as a pure defect, which assumes a single trust domain; there is no category for a refusal that is correct under authorization policy, so deny-by-default tenant and role scoping and a silent-on-empty rule would be labelled failures.
+  \item The paper runs no single-agent control of its own: the minimal-gains claim is cited from prior work, and both interventions compare MAS to MAS on two frameworks with effects that flip on backbone, so MAST diagnoses without prescribing a transferable fix.
+  \item Annotator reliability is reported only in aggregate with no per-mode breakdown, so modes near 1\% sit inside its error band; no cost weight is attached either, so a step repetition and a premature termination count equally despite very different token bills.
+\end{itemize}

@@ -1,0 +1,36 @@
+\section{On Calibration of Modern Neural Networks}
+\paperhead{On Calibration of Modern Neural Networks}{Chuan Guo, Geoff Pleiss, Yu Sun, Kilian Q. Weinberger}{ICML 2017}{https://arxiv.org/abs/1706.04599}{arXiv API id\_list=1706.04599, title match 1.00}
+
+\subsection{What the paper does}
+
+A model reporting 0.8 should be correct 80\% of the time: $\Pr(\hat{Y}=Y \mid \hat{P}=p)=p$. The paper shows modern networks violate this badly and always in one direction, overconfidence. Its opening comparison sets a 5-layer LeNet against a 110-layer ResNet on CIFAR-100: the ResNet is the better classifier (error 30.6 against 44.9) yet its average confidence sits far above its accuracy, while the older, weaker model tracks the diagonal.
+
+Two contributions follow. One is diagnostic: the training choices driving the drift are greater depth, greater width, Batch Normalization and reduced weight decay. The other is a remedy: among post-hoc recalibration methods fitted with weights frozen, temperature scaling, a single scalar, suffices on most datasets and beats strictly more general methods.
+
+\subsection{How the method works}
+
+Calibration is measured empirically: predictions are bucketed into $M$ equally spaced confidence bins $B_m$, expected calibration error is the sample-weighted mean gap $\mathrm{ECE}=\sum_{m}\frac{|B_m|}{n}\bigl|\mathrm{acc}(B_m)-\mathrm{conf}(B_m)\bigr|$, maximum calibration error is the largest single gap, and a reliability diagram plots per-bin accuracy against per-bin confidence. Negative log likelihood is an indirect probe.
+
+Sweeps on CIFAR-100 show ECE growing with depth and with filters per layer, growing when Batch Normalization is added even as error falls, and shrinking as weight decay rises, still improving past the point of best accuracy. The proposed mechanism is a disconnect between NLL and 0/1 loss: once training samples are nearly all correct, NLL falls further only by sharpening confidences, so the network overfits NLL without overfitting error, and in that window test error still improves from 29\% to 27\%.
+
+All remedies are post-hoc, fitted on a held-out validation set with the network frozen. Non-parametric: histogram binning, isotonic regression, Bayesian Binning into Quantiles. Parametric: Platt scaling and its multiclass forms, matrix scaling ($\mathbf{Wz}+\mathbf{b}$ on the logits), vector scaling ($\mathbf{W}$ diagonal), and temperature scaling, one $T>0$ shared across classes giving $\hat{q}=\max_k \sigma_{\mathrm{SM}}(\mathbf{z}/T)^{(k)}$, optimised for NLL. Since $T$ never moves the argmax, accuracy is provably unchanged.
+
+\subsection{What it reports}
+
+Table 1 gives ECE at $M=15$ bins over image sets (Birds, Cars, CIFAR-10/100, ImageNet, SVHN) and document sets (20 News, Reuters, SST), covering ResNets, DenseNets, LeNet, deep averaging networks and TreeLSTMs. Miscalibration is not architecture specific, with ECE typically between 4\% and 10\%. Temperature scaling closes most of it: CIFAR-100 ResNet-110 from 16.53\% to 1.26\%, ImageNet DenseNet-161 from 6.28\% to 1.99\%, ImageNet ResNet-152 from 5.48\% to 1.86\%. On a 110-layer ResNet with stochastic depth, ECE of 12.67 falls to 0.96, against 2.46 for histogram binning and 4.16 for isotonic regression.
+
+Richer methods do worse: matrix scaling reaches 25.49\% on CIFAR-100 ResNet-110 and fails to converge on 1000-class ImageNet, its parameters growing quadratically in $K$, while vector scaling converges to a nearly constant vector, evidence that miscalibration is intrinsically low dimensional. SVHN and Reuters sit under 1\% ECE already with low error (1.98\% and 2.97\%), and Reuters is the one case temperature scaling does not improve. Fitting $T$ takes 10 iterations of a conjugate gradient solver, a fraction of a second; binning is an order of magnitude slower and BBQ roughly three orders.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+This paper aims squarely at the uniform 0.7 surface / 0.4 log / below 0.4 discard gates. Those gates are a decision rule over a confidence scalar, and Guo et al.\ show that scalar's meaning is a property of one model on one distribution. Mytheus runs six agents over three tiers (Haiku triage, Sonnet extraction, Opus synthesis), so one cut cannot be calibrated across all of them at once. Build per-agent, per-tier reliability diagrams and ECE at $M=15$ bins into the golden-set CI harness, reported beside the existing Brier score, which conflates calibration with refinement where ECE isolates it, then fit one recalibration parameter per (agent, tier). Caveat: temperature scaling needs logits, and Mytheus agents emit confidence as a self-reported JSON field behind an API, so the honest substitute is a one-parameter monotone map fitted on (reported confidence, correctness) pairs, which is Platt scaling on the reported score, not temperature scaling. Latency is a non-issue, one scalar operation against the 1.5\,s ContextGapAgent round-trip budget, but the offline cost collides with per-tenant isolation, since a per-tenant temperature needs labels most tenants will never produce. Use a global parameter per (agent, tier) with per-tenant ECE as a drift monitor in the 48-hour canary, and if 0.7 and 0.4 stay fixed, cite this paper and defend them as a product-side operating point on a calibrated score, not as calibrated values.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+  \item Every model tested is a closed-set softmax classifier with accessible logits; autoregressive generation and confidence written out as text, the form every Mytheus agent produces, are never touched.
+  \item It explicitly assumes training, validation and test sets come from one distribution and reports nothing under shift, so a parameter fitted on one tenant's corpus carries no guarantee on another's, with no refit trigger given.
+  \item Calibration is scored only on top-label confidence over 15 equal-width bins, and the authors concede the dataset split or binning scheme may affect measurements; per-class and per-subgroup calibration go unreported.
+  \item No selective-prediction experiment appears: no fixed operating threshold is evaluated and no risk-coverage curve given, so nothing is said about where to cut a calibrated score for a surface, log or discard decision.
+  \item Temperature scaling is monotone and cannot reorder predictions, repairing a score's scale but not its ranking quality; calibration failure is never separated from ranking failure, nor tested under labels as subjective as ``relevant to this participant''.
+\end{itemize}

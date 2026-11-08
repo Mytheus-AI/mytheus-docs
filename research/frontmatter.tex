@@ -1,0 +1,173 @@
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+
+{\LARGE\bfseries Mytheus\par}
+\vspace{0.5em}
+{\large Personalized Multi-Agent Meeting Orchestration\par}
+
+\vspace{1.6cm}
+{\color{rulegrey}\hrule}
+\vspace{1.1cm}
+
+{\Large\bfseries A Literature Foundation\par}
+\vspace{0.5em}
+{\large Twenty five verified papers, what each contributes,\\ and where the field leaves room\par}
+
+\vspace{1.1cm}
+{\color{rulegrey}\hrule}
+\vspace{2.0cm}
+
+\begin{minipage}{0.82\textwidth}
+\small
+This document exists to give the Mytheus project a defensible research
+footing. Each of the twenty five entries is a real, independently verified
+publication. For every one there is a one page treatment covering what the
+paper does, how its method actually works, what it reports, the specific
+Mytheus component it informs, and the limitations it leaves open.
+
+\vspace{0.7em}
+A companion document, \textbf{Research Gaps and Novel Contributions},
+aggregates the limitations collected here into the case for what Mytheus can
+claim as new.
+\end{minipage}
+
+\vfill
+{\footnotesize\color{rulegrey}
+Companion to the Mytheus architecture documentation set.\par
+Every citation in this document was verified against a live API before it was
+written up. The protocol is described overleaf.\par}
+\vspace{1cm}
+\end{titlepage}
+
+\section*{How to read this document}
+\addcontentsline{toc}{section}{How to read this document}
+
+The twenty five entries are grouped into eight themes, ordered so that the
+document moves from how agents are organised, through what they retrieve, to
+how their output is gated before a human sees it. That ordering mirrors the
+path a single utterance takes through Mytheus.
+
+Each entry is self contained and roughly one page. If you are looking for
+support for a specific design decision rather than reading straight through,
+Table \ref{tab:map} routes you from a Mytheus component to the papers that
+bear on it.
+
+Two conventions are worth stating. First, the grey block in each entry is the
+part written for this project rather than about the paper: it says what to
+build, measure or cite, and it is deliberately critical where a published
+method would not survive the constraints Mytheus operates under. Second, the
+limitations at the foot of each entry are not filler. They are the raw
+material for the companion gap analysis, and they were collected with the
+question ``what does this paper never test'' rather than ``what did the
+authors admit''.
+
+\section*{The verification protocol}
+
+\addcontentsline{toc}{section}{The verification protocol}
+
+Fabricated citations are the characteristic failure of machine assisted
+literature work, and a single invented reference is enough to discredit a
+dissertation. Every paper in this document was therefore confirmed against a
+live authoritative API before it was written up. No citation here rests on
+recall.
+
+The protocol ran in three passes:
+
+\begin{enumerate}
+\item \textbf{Identifier resolution.} Every candidate carrying an arXiv
+identifier was resolved through the arXiv Atom API by identifier list. The
+title returned by the API was compared against the claimed title using a
+normalised sequence similarity. A candidate was accepted only above a 0.85
+match. This pass simultaneously recovered the authoritative title, author
+list, publication date and abstract, and those authoritative values, not the
+claimed ones, are what appear in this document.
+
+\item \textbf{Bibliographic resolution.} Candidates without an arXiv identifier
+were resolved through OpenAlex by title search and through Crossref by DOI,
+which also supplied venue and citation counts. Papers published at ACM and
+AAAI venues, including the two foundational human computer interaction
+references, were confirmed this way.
+
+\item \textbf{Direct retrieval.} Engineering research published outside the
+academic system was confirmed by fetching the page and locating the title in
+the returned body.
+\end{enumerate}
+
+The protocol was validated before use by running it against deliberately
+corrupted input. It correctly rejected an invented arXiv identifier, and
+correctly rejected a real identifier paired with a wrong title, reporting the
+genuine title instead. Of one hundred and thirty candidates gathered, one
+hundred and twenty nine resolved. The verification evidence for each paper,
+naming the API and the match score, is printed in the header of its entry so
+that any reader can repeat the check.
+
+One caveat is stated plainly. Verification establishes that a paper exists,
+that its title and authors are correct, and that the link resolves. It does
+not certify that every claim summarised in an entry is a faithful reading of
+the full paper. Entries were written against the authoritative abstract and
+the retrieved paper, and no experimental figure was recorded unless it was
+read from the source, but a reader building directly on a specific numerical
+result should confirm it in the original.
+
+\newpage
+\section*{The map: from research theme to Mytheus component}
+\addcontentsline{toc}{section}{The map}
+
+\begin{center}
+\begin{tikzpicture}[
+  font=\footnotesize,
+  stage/.style={draw,rounded corners=2pt,fill=boxgrey,minimum height=0.85cm,
+                text width=2.05cm,align=center,inner sep=3pt},
+  lbl/.style={text width=2.25cm,align=center,font=\scriptsize\itshape,
+              text=accent},
+  >={Stealth[round]}
+]
+\node[stage] (cap) {Capture and window};
+\node[stage,right=0.45cm of cap] (agent) {Six agent tier};
+\node[stage,right=0.45cm of agent] (peer) {Peer context fill};
+\node[stage,right=0.45cm of peer] (ret) {Hybrid retrieval};
+\node[stage,right=0.45cm of ret] (gate) {Confidence gate};
+\node[stage,right=0.45cm of gate] (conf) {Human confirm};
+
+\draw[->] (cap)--(agent); \draw[->] (agent)--(peer);
+\draw[->] (peer)--(ret);  \draw[->] (ret)--(gate);
+\draw[->] (gate)--(conf);
+
+\node[lbl,below=0.3cm of cap]   {Streaming and meeting NLP};
+\node[lbl,below=0.3cm of agent] {Agent architecture};
+\node[lbl,below=0.3cm of peer]  {Multi-agent collaboration};
+\node[lbl,below=0.3cm of ret]   {Retrieval and graph memory};
+\node[lbl,below=0.3cm of gate]  {Calibration and abstention};
+\node[lbl,below=0.3cm of conf]  {Human-AI interaction};
+
+\node[lbl,above=0.3cm of agent, text width=3.2cm] {Personalization};
+\node[lbl,above=0.3cm of ret,   text width=3.2cm] {Attribution};
+\node[lbl,above=0.3cm of cap,   text width=2.4cm] {Cost control};
+\end{tikzpicture}
+\end{center}
+
+The vertical labels name the research theme that governs each stage. A paper
+placed under a stage is not merely topically adjacent to it: it either
+supplies the mechanism Mytheus uses there, or it is the baseline that stage
+must be measured against.
+
+{\footnotesize
+\begin{longtable}{@{}p{0.5cm}p{6.6cm}p{2.6cm}p{5.4cm}@{}}
+\caption{Routing table from Mytheus component to supporting paper.}
+\label{tab:map}\\
+\toprule
+\textbf{\#} & \textbf{Paper} & \textbf{Theme} & \textbf{Mytheus component it bears on} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{\#} & \textbf{Paper} & \textbf{Theme} & \textbf{Mytheus component it bears on} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\input{maprows}
+\end{longtable}
+}
+
+\newpage
