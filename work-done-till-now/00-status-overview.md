@@ -32,6 +32,8 @@ Also settled: **`web-app` = `mytheus-ui`**, canon unchanged. `mytheus-web` is a 
 | Plan 10-13 Collab, Integrations, GA | [plan-10-13-collab-integrations-ga.md](../plan/plan-10-13-collab-integrations-ga.md) | NOT STARTED | |
 | Plan 14 Scale-Out | [plan-14-scale-out.md](../plan/plan-14-scale-out.md) | NOT STARTED (post-GA, demand-driven) | |
 
+End-to-end run 2026-11-08: every repo's suite was run on `main`, and the REST, live meeting and search paths were run against the local stack with a real Clerk sign-in. See "End-to-end run 2026-11-08 (Plans 0 to 6)" below.
+
 ## Repo inventory
 
 Eight repos in the program, plus one reference-only repo.
@@ -254,4 +256,64 @@ Observed in the local `.env` files by key presence only; no value was read, and 
 - `CLERK_WEBHOOK_SECRET`: set in `mytheus-backend`.
 
 This supersedes "LiveKit, Deepgram and S3 or R2 credentials are unset" above for local development. Still open: the same values in the VPS deploy environment; the Deepgram DPA, so `COMPLIANCE_GATE_GREEN` stays `False`; and a Clerk webhook endpoint Clerk can reach.
+
+## End-to-end run 2026-11-08 (Plans 0 to 6)
+
+Every repo on `main` after the 2026-11-06 completion branches and the 2026-11-07 and 2026-11-08 `mytheus-ui` and `mytheus-backend` PRs merged. Local stack: Postgres 5443, Redis 6390, Redpanda 9092 with Schema Registry 8085, Temporal 7233, Qdrant 6333, MinIO 9002, AGE 5434. Everything below was observed by running it in this session. The scripts are throwaway checks, not committed.
+
+### Test suites
+
+| Repo | Command | Result |
+|---|---|---|
+| `mytheus-backend` | `make ci` | 600 passed; lint, types and OpenAPI check clean |
+| `mytheus-realtime` | `make ci` | `realtime-gateway` 47 passed, `transcription-service` 112 passed |
+| `mytheus-events` | `make ci` then `make check-registered` | pass; all 21 subjects match the live registry |
+| `mytheus-platform` | `make ci` | pass |
+| `mytheus-intelligence` | `MYTHEUS_REQUIRE_AGE=1 make ci` | 236 passed, 1 failed: `test_qdrant_api_key_isolation.py::test_a_read_only_client_can_still_search`. The failure is a race inside `httpcore`'s connection pool (`list.remove(x): x not in list`); the file passed 3 of 3 reruns. Recorded as a flaky test, not fixed. |
+
+### REST path through `api-gateway` (real Clerk session token)
+
+14 of 14 checks passed:
+- **Auth:** no token and a bad token both return `401`.
+- **Reads:** `GET /bff/dashboard` returns `200`, with the meetings panel `ok` and the other three panels `empty`. `GET /api/v1/meetings` and `GET /api/v1/meetings/{id}` return `200`, and the creator holds the `host` role.
+- **Meeting ids:** an unknown meeting id returns `404`; a non-UUID id returns `422`.
+- **Transcript and speakers:** both reads return `200`.
+- **Chat:** `POST /api/v1/chat` returns `201`.
+- **Idempotency:** `POST /api/v1/meetings` returns `201`, a replay with the same `Idempotency-Key` returns the same meeting, and reusing the key with a different body returns `409`.
+- **Join:** `POST /api/meetings/{id}/token` returns `200`.
+
+### Live meeting path
+
+A bot joined the real LiveKit room under the host's `users.id` and published a 440 Hz tone. LiveKit Cloud cannot reach `localhost`, so the `room_started` and `room_finished` webhooks were posted to `meeting-service` locally, signed with the project's LiveKit key the way LiveKit signs them; both returned `200`.
+
+From there everything was real:
+1. The in-process audio tap joined the room and streamed the track to `transcription-service` `/internal/audio`.
+2. Each run persisted one final to `transcript_chunks`.
+3. A Socket.io client connected exactly as `mytheus-ui` does (namespace `/v1`, Clerk token in `auth`, `join`). The join was acknowledged with presence, and the client received the caption stream: two interims, then the final.
+
+The one stand-in is the transcription provider. `transcription-service` ran with `TRANSCRIPTION_ALLOW_FAKE_PROVIDER=1` and no Deepgram key, because `COMPLIANCE_GATE_GREEN` is `False` until the Deepgram DPA is signed, and a real provider connection is closed 4451 by design.
+
+### Search path
+
+1. The `transcript-chunks` finals reached the topic through the shared `outbox` and the `mytheus-backend` relay (`python -m services.relay.main`).
+2. `search_service.worker` indexed them.
+3. `GET /search?q=hello&meeting_id=...` returned `401` without a token and `200` with three hits ("hello there, how are you") with a real Clerk session token.
+
+### Found in this run
+
+- **Redpanda was OOM-killed (exit 137)** twice. The Docker VM (7.7 GB) is shared with other projects' containers. It was restarted with `--memory 768M --reserve-memory 0M` and `mem_limit: 1g` through a compose override kept outside the repo. `mytheus-backend/docker-compose.yml` sets no memory cap; adding one is an open item.
+- **`CLERK_ISSUER` was missing from `mytheus-intelligence/.env`.** Every authenticated search returned `500` with `KeyError: 'CLERK_ISSUER'`. Added locally. Open: the service should fail at boot, not on the first request, and the VPS environment needs the same key.
+- **`mytheus-ui/.env` had neither `NEXT_PUBLIC_LIVEKIT_URL` nor `NEXT_PUBLIC_REALTIME_WS_URL`.** Without them the call never connects and captions never reach the browser. Both added locally.
+- **The `mytheus-backend` test suite writes to the shared local database.** It left two `meeting-events` outbox rows with empty payloads for test orgs. The relay dead-lettered them to `meeting-events.dlq` ("no value and no default for header"). Product rows were unaffected. Open: test isolation.
+- **`realtime-gateway` must be started from `dist/services/realtime-gateway/src/server.js`** (`npm start`). A stale `dist/server.js` from an older build layout still exists and serves no `/v1` namespace.
+- **`kafkajs` logs a `TimeoutNegativeWarning`** on this Node version. It is third-party and harmless here.
+
+### Still not verified
+
+- Real Deepgram transcription (DPA unsigned).
+- A webhook delivered by LiveKit Cloud itself, which needs a public URL.
+- Captions rendered in a signed-in browser: the socket path was checked with a Node client.
+- Agents (Plan 7-9, not started).
+- GPU SLOs.
+- Anything on the VPS.
 
