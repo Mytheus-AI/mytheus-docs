@@ -244,6 +244,7 @@ Redis (Upstash) keys are **all** prefixed `nexus:{org_id}:…` ([Data Model §5]
 | `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` | At-least-once consumer dedupe (inbox) | 24h |
 | `nexus:{org_id}:budget:{period}` | Hot mirror of `agent_budgets.tokens_consumed` for fast quota checks | period-end |
 | `nexus:{org_id}:ratelimit:{user_id}` | Per-user LiteLLM rate-limit counters | sliding window |
+| `nexus:{org_id}:llmcache:{prompt_ref}:{input_hash}` | Completion cache for an LLM call whose tier, prompt version and normalized input match exactly ([ADR-0030](adr/0030-plan-7-llm-response-cache-and-personal-listener-gating.md)) | 1h |
 
 > [SaaS-scale adjustment] The PDF used unscoped Redis keys (e.g. the `get_user_context` cache, the RAG cache). All keys are now `org_id`-prefixed. A single key-builder utility is the only sanctioned path to construct a Redis key; it raises if `org_id` is absent, so an unprefixed key cannot be written. The pub/sub channel `nexus:{org_id}:pubsub:meeting:{meeting_id}` keeps one tenant's Socket.io fan-out off another tenant's subscribers even though instances are shared.
 

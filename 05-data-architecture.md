@@ -568,6 +568,7 @@ Cache/pub-sub is **Redis (Upstash)**. Every key is tenant-namespaced `nexus:{org
 | `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` | At-least-once consumer dedupe (inbox cache) | 24h |
 | `nexus:{org_id}:budget:{period}` | Hot mirror of `agent_budgets.tokens_consumed` for fast quota checks | period-end |
 | `nexus:{org_id}:ratelimit:{user_id}` | Per-user LiteLLM rate-limit counters | sliding window |
+| `nexus:{org_id}:llmcache:{prompt_ref}:{input_hash}` | Completion cache for an LLM call whose tier, prompt version and normalized input match exactly ([ADR-0030](adr/0030-plan-7-llm-response-cache-and-personal-listener-gating.md)) | 1h |
 
 ### 6.1 Clustering: separate cache and pub/sub responsibilities
 
