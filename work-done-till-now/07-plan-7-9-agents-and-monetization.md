@@ -1,6 +1,6 @@
 # Plan 7-9: Agents and Monetization
 
-**Status:** IN PROGRESS. Phase P7 work items 1 (`billing-metering-service`, plan section 3.1) and 2 (`agent-runtime-service`, section 3.2) are built and verified; items 3 to 5 (`PersonalListenerAgent` + `worklogs`, `mytheus-ui`, `mytheus-mobile`) are not started. Last verification 2026-11-08.
+**Status:** IN PROGRESS. Phase P7 work items 1 to 4 are built and verified against the local stack with a faked model: `billing-metering-service` (section 3.1), `agent-runtime-service` (3.2), `PersonalListenerAgent` with `worklogs` and LLM-egress PII redaction (3.3), and the `mytheus-ui` agent sidebar, My Notes and Usage page (3.4), plus the `realtime-gateway` agent-output bridge they need. Item 5 (`mytheus-mobile`, section 7) is deliberately not started (excluded by the maintainer for this session). No real-model call has succeeded yet (Anthropic workspace, section 5a). P8 and P9 are not started. Last verification 2026-11-08. What is left in P7 is listed in section 5a.
 
 Plan: [plan/plan-7-9-agents-and-monetization.md](../plan/plan-7-9-agents-and-monetization.md).
 
@@ -25,6 +25,8 @@ Recorded before any code, canon first, in [ADR-0029](../adr/0029-plan-7-budget-s
 
 - `7fdbc0b`: ADR-0029 D1 to D5; canon `_canon/02-data-model.md` (`plans`, `usage_events`, `agent_budgets`), `_canon/03-event-taxonomy.md` (`usage-events`), `_canon/06-tech-decisions.md` (LLM routing, Compliance); reader docs 12 and 18, the Glossary, the traceability matrix, the plan's DECISION-REQUIRED #1 and #2, the status row.
 - `edd09fd`: ADR-0029 D6 and the matching `_canon/02-data-model.md` edit.
+- `eec51e9`: [ADR-0030](../adr/0030-plan-7-llm-response-cache-and-personal-listener-gating.md), the Plan 7 build decisions for items 3 and 4 (D1 the exact-match LLM response cache, D2 the relevance threshold, D3 `core-api` decides `surfaced` and the `agent_confidence_overrides` shape, D4 only surfaced notes stream, D5 per-user live delivery). Canon first: `_canon/02-data-model.md` gains `nexus:{org_id}:llmcache:{prompt_ref}:{input_hash}`; propagated to docs 05, 06, 08, the Glossary, the traceability matrix and the README index.
+- `c2bac53`: `_canon/02-data-model.md` `worklogs` row carries `window_id`, `confidence`, `surfaced`, `created_at`, `deleted_at` and the monthly partitioning.
 
 ### mytheus-events
 
@@ -46,6 +48,13 @@ Recorded before any code, canon first, in [ADR-0029](../adr/0029-plan-7-budget-s
 
 - `60fa6b7`, `meeting-service`: `meeting-room-events` `joined`/`left` now carry `participant_id` = the LiveKit identity (`users.id` for a human) instead of the per-connection participant SID. The runtime builds its roster from it; nothing consumed the old value. The SID still keys the webhook dedupe.
 - `5f26090`, `billing-metering-service` `internal.py`: `POST /billing/internal/budget`, the agent tier's budget read-through. It provisions the period's `agent_budgets` row, writes the mirror and returns the snapshot. Service-authenticated with the pii-vault header scheme (`X-Mytheus-Service`, `X-Mytheus-Service-Token`, `X-Mytheus-Org`); secrets in `MYTHEUS_BILLING_CALLER_TOKENS`, allowed callers `agent-runtime-service` and `rag-service`; unconfigured means every caller is refused. Two more tests.
+- `4fffbc6`, work item 3, the `core-api` half (section 3.3 step 3):
+  - Migration `d5e2f1a8c370`: `worklogs` (plan DDL plus `window_id`), monthly partitions 2026-11 to 2027-12 plus `worklogs_default`, index `(org_id, meeting_id, user_id, created_at)`, RLS ENABLE + FORCE with `tenant_isolation`, explicit grants, partitions owner-only; registered in `scripts/ensure_partitions.py`.
+  - `services/core_api/consumer.py` consumes `agent-results` beside `presence-events`. `handle_agent_result` claims the inbox row FIRST in the same transaction (see deviation 17), checks under RLS that the meeting and user belong to the tenant (an FK alone would accept another tenant's ids, gap 31 in the overview), reads `tenant_settings.agent_confidence_overrides` and decides `surfaced` itself; below the silent threshold nothing is written. Other agent kinds are consumed without a row until P8. A failed apply deletes the Redis dedupe key so the redelivery is applied.
+  - `GET /api/v1/meetings/{id}/worklogs?user_id=me` (`services/core_api/routes/worklogs.py`): the caller's own surfaced notes, oldest first, at most 500. `user_id` accepts only `me` (anything else is 422); another tenant's meeting is 404. `api-gateway` already routed `/api/v1/meetings` to `core-api`.
+  - OpenAPI re-emitted (ADR-0022). The run also wrote `design/openapi/billing-metering-service.yaml`, which the item 1 session had emitted but never committed; it is committed now.
+  - `tests/test_worklogs.py`: 9 tests (now 10).
+- `97f2709`: an `agent-results` record for a tenant with no `organizations` row raised `IntegrityError` from the inbox foreign key, which the loop does not catch, so the consumer died and every restart hit the same record. It is now `PoisonMessage` and dead-lettered. Found by the end-to-end run (section 6), against records left in the local broker by the item 2 session's throwaway test.
 
 ### mytheus-intelligence
 
@@ -62,36 +71,71 @@ Recorded before any code, canon first, in [ADR-0029](../adr/0029-plan-7-budget-s
   - `consumer.py`: `python -m services.agent_runtime_service.consumer`. Commits an offset only once every window holding it is processed and the producer is flushed.
   - `agents/__init__.py`: the registry, empty until item 3; `prompts/registry.json`, empty.
   - `tests/test_agent_runtime.py`: 27 tests; `fakeredis` added as a dev dependency.
+- `0533c14`, LLM-egress PII redaction (section 3.3 step 4). The regex redactor moved from `services/ingestion_service/pii.py` to `libs/shared/pii.py` (ingestion keeps a re-export). `EgressRedactor` reads `nexus:{org_id}:tenant_settings:pii_redaction_enabled` and redacts unless the tenant explicitly turned it off; a Redis failure redacts. `LiteLLMRouter` redacts every user message before the budget check and the call; with no redactor wired it redacts unconditionally, so a missed wiring can only over-redact. The system prompt is a reviewed template and is not redacted (it stays cacheable).
+- `bac5c85`, the LLM response cache (ADR-0030 D1, plan section 3.2 step 8): `libs/shared/llm_cache.py`, `nexus:{org_id}:llmcache:{prompt_ref}:{input_hash}`, 1 hour. Callers opt in with `prompt_ref`. A hit calls no model, emits no `usage-events` record and charges no budget; the budget check still runs first. Redis errors are misses.
+- `a0c51b3`, work item 3, `PersonalListenerAgent` (`services/agent_runtime_service/agents/personal_listener_agent.py`):
+  - `prompts/personal_listener_gate@v1.md` (triage, Haiku) scores the window 0-1 against role, skills and bio, answering `{"relevance": x}`. Below `PERSONAL_LISTENER_RELEVANCE_THRESHOLD` (default 0.5) the graph ends with no extraction call. An unparseable score is 0.
+  - `prompts/personal_listener@v1.md` (extract, Sonnet; Haiku when throttled) writes `CONFIDENCE: x` on its first line, then one to four bullets, or `NONE`.
+  - Confidence bands: `< 0.4` or `NONE` emits nothing; `0.4-0.7` emits with `payload_json.surfaced = false`; `> 0.7` with `surfaced = true`. `core-api` re-derives `surfaced` (ADR-0030 D3).
+  - Streaming (ADR-0030 D4): deltas are held until the confidence line is parsed; only a surfaced note goes to `agent-stream`, and the confidence line itself never does. `AgentState` gains a `stream` hook that the runtime binds to `Emitter.delta` per window and participant.
+  - The model sees the participant as `You` and everyone else as `Participant N`; no user id, name or email is put in the request.
+  - Registered per participant in `agents/__init__.py`; both prompts in `prompts/registry.json`.
+  - Golden-set eval: `tests/eval/personal_listener_golden.json` (14 labelled windows across five roles, labels written before any model ran), `tests/eval/personal_listener_baseline.json` (targets 0.75 precision and recall, marked `measured: false`), `tests/test_personal_listener_eval.py` (`pytest -m eval`, live only with `EVAL_LIVE=1`; writes `tests/eval/personal_listener_last_run.json`, gitignored). The `eval` marker is registered in `pyproject.toml`.
+  - `tests/test_personal_listener.py`: 15 tests (now 16, below). The zero-Postgres test now also scans `pii.py` and `llm_cache.py`.
+- `46cdf9c`: `PromptLoader` normalizes CRLF to LF. On a Windows checkout with `core.autocrlf` the `---user---` line became `---user---\r` and no prompt would load.
 
 ### mytheus-realtime
 
 - `34501d0`: fix to `transcription-service` migration `e4a7c91b3d28`. On a database built from empty in or after 2026-11, `be66698dbefb` (which premakes months from `date.today()`) and `e4a7c91b3d28` (fixed months from 2026-11) both created `transcript_chunks_2026_11`, and the upgrade failed with `DuplicateTableError`. The migration now skips a month that already exists. Found while bringing up a fresh local database for billing.
+- `d8a6600`, `src/agentOutput.ts` (plan section 3.4 steps 2 and 4, ADR-0030 D5): one consumer group, `realtime-gateway-agent-output`, over `agent-stream` and `agent-results`, so each record is handled by one pod. That pod publishes it on the meeting's existing `nexus:{org_id}:pubsub:meeting:{meeting_id}` channel tagged with the owner's `user_id`, and every pod emits it only to local sockets whose core-api-resolved internal user id matches. New socket events `agent-delta` (volatile emit, shed first) and `agent-note` (reliable). Forwarded: stream deltas and `PersonalListenerAgent` notes with `payload_json.surfaced = true`. Skipped: silent notes, other agents and kinds, records without UUID ids. Nothing is buffered or replayed. On by default (`AGENT_OUTPUT_ENABLED=0` turns it off); off for in-process tests.
+- `test/agent-output.test.ts`: mapping rules, and real Redis + Socket.io delivery to the owner but not to another participant, nor to another org whose meeting has the literal same id and whose user has the same id.
+- `d38a120`: restores `package-lock.json`, which `d8a6600` had committed after a local Windows `npm install` rewrote it. No dependency changed.
+- `9744bf9`, `test/agent-output-kafka.test.ts`: real Avro `agent-stream` and `agent-results` records on the local Redpanda reach only the owner's socket through the gateway's real consumer.
 
-## 3. Definition of Done audit (P7, billing items only)
+### mytheus-ui
 
-From the plan's section 10 "End of P7" DoD. Lines for items 2 to 5 are not audited yet.
+- `6d7d0bf`, work item 4 (plan section 3.4):
+  - `src/lib/realtime/notes.ts`: a pure reducer. Deltas build a draft per agent window, the final replaces it, a stale or late delta never overwrites a final, re-hydrate merges by window, order is by window start.
+  - `useMeetingSocket` subscribes to `agent-delta` and `agent-note` and re-hydrates notes from `/api/meeting-worklogs` on every (re)connect, the same rule as captions.
+  - `src/app/api/meeting-worklogs/route.ts` over `core-api`'s worklogs route through the server-only client; `src/lib/api/worklogs.ts`.
+  - `AgentSidebar` renders the live notes in "My notes" (a draft shows "Writing..."), and no longer shows the empty state once a note exists. `MeetingRoom` passes them in.
+  - `tenant/usage` reads `GET /usage` (`src/lib/api/usage.ts`): the token meter from the live budget, meeting minutes against the plan, transcription and storage without a plan limit, the Haiku/Sonnet/Opus split from `usage_aggregates`, and the throttled and blocked states. Sample figures only when no gateway is configured; a non-admin is told usage is admin-only.
+  - Generated API types refreshed (`worklogs`, `billing-metering-service`).
+  - `npm test`: `node --test` with type stripping over `tests/notes.test.ts` (4 tests). The repo had no test runner; `tests/` is excluded from `tsconfig.json` because it imports `.ts` paths.
+- `a82dfbb`: a gateway that answers 404 for `/usage` (a deployed backend older than Plan 7) or 502/503 renders "not available right now" instead of crashing the page.
+
+## 3. Definition of Done audit (End of P7)
+
+The plan's section 10 "End of P7" DoD and its demo, line by line, as of 2026-11-08. "Faked model" means the real code path ran with the model call replaced by a scripted answer; no real-model behavior is verified (section 5a item 1).
 
 | DoD line | Status | Evidence |
 |---|---|---|
 | `billing-metering-service` shipped: plans/subscriptions/invoices/usage_events/usage_aggregates/agent_budgets/quotas migrated with RLS FORCE | MET | Migration `4c1d8e2a9b70`; `test_rls_isolates_usage_and_budgets`; `tests/test_roles_and_policies.py` grant and partition tests |
-| `usage-events` consumer with idempotent dedupe | MET | `test_a_message_is_metered_once_and_mirrored` (redelivery and cache eviction); real Redpanda run below |
-| Redis budget mirror | MET | Same test asserts the hash and TTL; real run read it back |
+| `usage-events` consumer with idempotent dedupe | MET | `test_a_message_is_metered_once_and_mirrored`; real Redpanda runs in section 6 |
+| Redis budget mirror | MET | Same test; the end-to-end run read it back at 1,536 tokens |
 | `ok -> throttled -> blocked` state machine | MET | `test_free_goes_straight_to_blocked_at_its_cap`, `test_pro_throttles_at_quota_and_blocks_at_twice_quota` |
-| alert-only -> enforce flag | MET (the flag) | `BUDGET_ENFORCEMENT_MODE`, carried in the mirror; the agent tier honouring it is item 2 |
-| budget deny-by-default test | NOT MET yet | Belongs to `check_budget` in `agent-runtime-service` (item 2) |
-| RLS isolation test | MET | `test_rls_isolates_usage_and_budgets`, including the no-tenant fail-closed read |
-| DECISION-REQUIRED #1 + #2 resolved | MET | ADR-0029 D1, D3 |
-| Usage console shipped | NOT MET yet | API is `GET /usage`; the screen is item 4 |
+| alert-only -> enforce flag | MET | `BUDGET_ENFORCEMENT_MODE` in the mirror; `test_alert_only_never_degrades` on the agent side |
 | `agent-runtime-service` shipped: windowing | MET | `test_360_finals_over_45_minutes_make_90_windows` |
-| Haiku pre-gate | MET (mechanism) | `test_the_pre_gate_decides_whether_extraction_runs` with a two-step test agent; the real pre-gate prompt is item 3 |
-| LiteLLM tiered routing | MET | `test_throttle_forces_haiku_and_ok_routes_extract_to_sonnet`, `test_high_stakes_is_refused_while_unmapped` |
-| prompt caching | PARTIAL | Anthropic prompt caching on the system prompt; no semantic cache (deviation 11) |
-| inline `check_budget` | MET | `test_gate_decides_from_the_mirror`, `test_a_miss_reads_through_and_every_failure_blocks` |
+| Haiku pre-gate | MET | `personal_listener_gate@v1`; `test_a_window_below_the_relevance_threshold_makes_no_extraction_call` |
+| LiteLLM tiered routing | MET | `test_throttle_forces_haiku_and_ok_routes_extract_to_sonnet`, `test_high_stakes_is_refused_while_unmapped`; end-to-end run routed 2 Haiku + 2 Sonnet |
+| prompt caching | MET | Anthropic prompt caching on the system prompt, plus the exact-match response cache (ADR-0030 D1, `test_an_identical_call_is_answered_from_the_cache_and_meters_nothing`; the end-to-end replay made zero model calls). Embedding-similarity caching is deferred by ADR-0030 |
+| inline `check_budget` | MET | `test_gate_decides_from_the_mirror`, `test_a_miss_reads_through_and_every_failure_blocks`; end-to-end run read through the real billing endpoint |
+| `usage-events` emit | MET | Router tests; end-to-end run: 4 calls, 4 `usage_events` rows |
+| `agent-stream` bridge | MET | Agent: `test_only_a_surfaced_note_streams_and_never_its_confidence_line`; gateway: `test/agent-output-kafka.test.ts` (real broker to socket) |
+| writes zero Postgres | MET | `test_the_runtime_imports_no_database_driver` (now also scans `pii.py`, `llm_cache.py`) |
+| `PersonalListenerAgent` per-participant | MET | `test_one_personal_listener_per_participant_per_meeting` (3 participants, 2 windows, 3 instances reused) |
+| confidence gating | MET | Agent: `test_emitted_notes_carry_their_band`, `test_low_confidence_or_empty_notes_produce_nothing`; `core-api`: `test_the_confidence_band_decides_what_is_written`, `test_tenant_overrides_decide_the_band`; end-to-end: 0.92 stored surfaced, 0.55 stored silent |
+| LLM-egress PII redaction | MET (regex scope) | `test_pii_is_redacted_before_egress_unless_the_tenant_turned_it_off`, `test_pii_is_redacted_and_no_user_id_reaches_the_model`; end-to-end: `alice@acme.com` never reached the model. Names and other free-text PII are not detected (gap 9) |
+| `worklogs` migrated in `core-api` | MET | Migration `d5e2f1a8c370`; `test_rls_hides_another_tenants_worklogs`; partition coverage test |
+| My Notes + agent sidebar shell + Usage console shipped | PARTIAL | Built, typechecked, linted and `next build` green; reducer tests pass. NOT exercised in a browser: every page needs a Clerk sign-in, which this session could not do (gap 8) |
+| mobile My Notes wired | NOT MET | Item 5, excluded by the maintainer for this session |
+| pre-gate count test | PARTIAL | The mechanism is tested (no extraction below the threshold). The live eval that measures precision and recall on the golden set has not run (section 5a item 1) |
+| zero-Postgres test | MET | As above |
 | budget deny-by-default test | MET | `test_block_calls_no_model_and_meters_nothing`, `test_a_blocked_budget_returns_nothing` |
-| `usage-events` emit | MET | router tests; runtime round trip in section 6 |
-| `agent-stream` bridge | PARTIAL | `Emitter.delta` and the router's `on_delta` are tested; no shipped agent streams yet (item 3) |
-| writes zero Postgres | MET | `test_the_runtime_imports_no_database_driver` |
-| pre-gate count test | NOT MET yet | Needs the real agent and its eval set (item 3) |
+| RLS isolation test | MET | `test_rls_isolates_usage_and_budgets`, `test_rls_hides_another_tenants_worklogs` |
+| DECISION-REQUIRED #1 + #2 resolved | MET | ADR-0029 D1, D3 |
+
+Demo, against the local stack: a meeting's finals on `transcript-chunks` produced one note per participant, metered on `usage-events`, persisted to `worklogs` with the right band, and the gateway delivered a real-broker note to its owner only. Not shown: the browser rendering it, a real model, an 80/95% alert firing in the same run (the alert path is covered by item 1's tests), and a Free tenant hitting `blocked` mid-meeting (covered by tests, not demonstrated).
 
 ## 4. Deviations from the plan, and why
 
@@ -103,36 +147,52 @@ From the plan's section 10 "End of P7" DoD. Lines for items 2 to 5 are not audit
 6. **`meeting_minute` measures the spoken span.** `meetings` carries scheduled times, not actual start and end, so minutes come from the first final's `start_ms` to the last final's `end_ms`, rounded up. `transcription_second` sums per-participant final durations, matching per-stream provider billing.
 7. **`quotas` records meeting minutes but does not enforce them.** Over quota sets `state = throttled`; nothing stops a meeting, because durable facts are never shed.
 8. **The first `GET /usage` provisions the month.** Step 9's lazy create runs on read as well as on the first charge, so the console is never empty on the 1st.
-
 9. **The runtime publishes straight to Redpanda, not through a transactional outbox** (plan section 3.2 step 10 says outbox). An outbox makes an emit atomic with a database write; the runtime makes none, and its acceptance check is zero Postgres rows. At-least-once comes from flushing the idempotent producer before committing input offsets; duplicates are absorbed by the idempotency keys (`agentresult:...` is deduped by `core-api`).
 10. **The budget read-through goes to billing, not to Postgres** (step 9 says "read through to Postgres"). The runtime writes no Postgres and cannot create the period's `agent_budgets` row, so a plain read would leave a new tenant (and every tenant on the 1st) without a budget, blocked forever. `POST /billing/internal/budget` provisions and republishes; anything else blocks.
-11. **No semantic cache.** Step 8 asks for one in front of the model. It needs a Redis key canon does not define, so it waits for a canon edit. Anthropic prompt caching, the bigger lever for repeated system prompts, is on.
+11. **The semantic cache is an exact-match cache on normalized input** (superseding the item 2 entry "no semantic cache"). ADR-0030 D1: an embedding-similarity lookup would add an `embedding-service` round trip per window per participant for a hit rate nobody has measured; the concrete P7 win is that a replayed window costs nothing. Same Redis namespace if similarity is added later.
 12. **No per-user priority queue.** `nexus:{org_id}:queue:agent:{user_id}` belongs to `notification-service` in the backend service map. Windows run one at a time per process, with users concurrent inside a window.
 13. **The runtime emits no `billing-events`.** The plan's `check_budget` sketch emits `quota_exceeded`; canon makes `billing-metering-service` the only producer, and it already does so on the crossing.
 14. **Meeting end is "last participant left".** `meeting-room-events` has no room-finished symbol (`joined`, `left`, `recording_ready`); idle close covers a meeting nobody leaves cleanly.
 15. **Window speakers join the roster.** A runtime restarted mid-meeting missed the `joined` events; anyone who talks is served anyway.
 16. **The budget can overshoot slightly.** The mirror advances when billing meters a call, which lags the call, so concurrent calls in that gap all see the older total. The overshoot is bounded by one window's calls for the tenant.
+17. **`core-api` claims the inbox row before the effect, not after.** The backend recipe (and `libs/shared/inbox.py`) records the inbox row after the effect with `ON CONFLICT DO NOTHING`. That only dedupes the inbox row: once the 24h Redis key has expired, a redelivery would write a second note. Claiming first, in the same transaction, makes the inbox the authority; a rollback releases both. Found by `test_a_redelivered_result_writes_nothing_more` failing on the first run.
+18. **`core-api` decides `surfaced`, not the agent** (plan step 2 puts confidence gating on emit). ADR-0030 D3: only `core-api` can read `tenant_settings.agent_confidence_overrides`. The agent still drops `< 0.4`, so a tenant override can only tighten.
+19. **`worklogs` carries `window_id`.** Not in the plan DDL. It traces a note to its agent window, and it is the key the UI merges live and re-hydrated notes on. Canon updated first (`c2bac53`).
+20. **The relevance threshold is 0.5, from an environment variable, not per tenant.** Doc 08 says "per-tenant relevance threshold" with no number; the AI tier cannot read `tenant_settings`. ADR-0030 D2. The eval harness is where the number gets tuned.
+21. **The window is anonymized for the model.** Not asked for by the plan. The participant is "You" and others are "Participant N", so no user id, name or email ever reaches the provider; the PII redactor still runs on top.
+22. **The extraction prompt puts confidence on the first line.** The plan sketch has the model return `note.text` and `note.confidence` as fields. A first-line header lets the agent decide whether to stream before any note text is shown (ADR-0030 D4); a JSON object would have to complete before its confidence could be read.
+23. **Live notes go over the meeting's pub/sub channel with a per-user filter, not a per-user room.** ADR-0030 D5: no new Redis key and no second authz path on join.
+24. **Usage page: no daily chart on live data.** `GET /usage` serves period totals; the daily burn chart is shown only for the sample figures, and a budget-state card takes its place on live data.
+25. **The UI tests run on `node --test`, not Vitest.** `mytheus-ui` has no test runner installed (its CLAUDE.md describes Vitest, which was never added). Node's built-in runner with type stripping needed no new dependency.
 
 ## 5. Open gaps
 
-1. ~~`storage_gb` is not derived.~~ Closed in `73348fc`. The local `.env` points `S3_*` at MinIO; production must point it at R2. Cost there is one Class A list call per bucket per tenant per night, inside R2's 1M free a month for any small deployment.
-2. ~~No Temporal schedule.~~ Closed in `73348fc`. Deploying it means running two more processes: the `workflow-service` worker (already planned) and `python -m services.billing_metering_service.temporal_worker`.
-3. **Mirror read-through for the agent tier.** Plan step 9 of section 3.2 says a mirror miss falls through to Postgres. How `agent-runtime-service` does that (its own read of `agent_budgets`, or an internal billing endpoint) is decided in item 2.
+1. ~~`storage_gb` is not derived.~~ Closed in `73348fc`.
+2. ~~No Temporal schedule.~~ Closed in `73348fc`.
+3. ~~Mirror read-through for the agent tier.~~ Closed in `5f26090` (`POST /billing/internal/budget`).
 4. **Stripe checkout, `/stripe/webhook`, dunning, invoices** are left to their own band, as the plan says.
-6. **Deploying item 2** means one more process (`python -m services.agent_runtime_service.consumer`) with `BILLING_URL`, `BILLING_SERVICE_TOKEN` (matching an entry in billing's `MYTHEUS_BILLING_CALLER_TOKENS`), `IDENTITY_GRPC_ADDR`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `REDPANDA_BROKERS`, `SCHEMA_REGISTRY_URL`.
-7. **LLM-egress PII redaction** is part of item 3 (plan section 3.3 step 4), not built yet.
-5. **Local environment only** (not code defects): `test_public_schema_grants_nothing_by_default` and `test_no_bypassrls_role_holds_privileges_on_a_public_table` fail on this machine's database (the image's `supabase_admin` default privileges, and `alembic_version_intelligence` created by `mytheus-intelligence` in the same database); six `test_crypto_file_custody.py` tests fail on Windows (no 0400 file modes); `test_relay_real_bus_roundtrip` fails because Redpanda ran with a 768M memory cap and refused new partitions.
+5. **Local environment only** (not code defects): `test_public_schema_grants_nothing_by_default` and `test_no_bypassrls_role_holds_privileges_on_a_public_table` fail on this machine's database; six `test_crypto_file_custody.py` tests fail on Windows (no 0400 file modes); `test_relay_real_bus_roundtrip` fails under the 768M Redpanda cap; `mypy` reports `os.geteuid` in `libs/shared/crypto/providers.py` on Windows; three `realtime-gateway` multi-process tests (`cross-pod-captions`, `cross-pod-fanout`, `presence-pod-death`) fail on Windows with `spawnSync npx ENOENT`; `prettier --check` fails on 17 `realtime-gateway` files on `main` because of CRLF checkouts.
+6. ~~LLM-egress PII redaction.~~ Closed in `0533c14`.
+7. **Deploying P7** means three more processes and new settings, none of which exist in `mytheus-platform` yet: `python -m services.agent_runtime_service.consumer` (`BILLING_URL`, `BILLING_SERVICE_TOKEN`, `IDENTITY_GRPC_ADDR`, `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID`, `REDIS_URL`, `REDPANDA_BROKERS`, `SCHEMA_REGISTRY_URL`, optionally `PERSONAL_LISTENER_RELEVANCE_THRESHOLD`); the `core-api` consumer, which now also reads `agent-results`; billing's consumer and Temporal worker; `MYTHEUS_BILLING_CALLER_TOKENS` on billing; `realtime-gateway` needs nothing new (`AGENT_OUTPUT_ENABLED` defaults on). Migration `d5e2f1a8c370` must run.
+8. **The UI is not verified in a browser.** The sidebar's live notes and the Usage page were built and `next build` passes, but every page needs a Clerk sign-in, and the dev preview points at the deployed `api.mytheus.cloud`, which does not have this work. To verify: run the local stack, point `API_GATEWAY_URL` and `NEXT_PUBLIC_REALTIME_WS_URL` at it, sign in, open a meeting room and `/tenant/usage`.
+9. **PII redaction is regex-only.** Emails, phone numbers, SSN- and card-shaped numbers are caught; names, addresses and other free text are not. The stronger path is `ner-service` (ADR-0020), which is built but not called from the egress gate.
+10. **Per-tenant relevance threshold not built.** Needs `tenant_settings` mirrored to Redis for the AI tier (ADR-0030 D2).
+11. **A tenant override can hide a note the live sidebar already showed.** The gateway forwards on the default bands; `core-api` applies the override. The note disappears on the next re-hydrate (ADR-0030 consequences).
+12. **The `presence-events` handler has the same latent unknown-tenant crash** that `97f2709` fixed for `agent-results`: `record_consumed` hits the inbox foreign key for a tenant with no `organizations` row and raises `IntegrityError`, which the loop does not catch. Not changed this session (out of P7 scope); the fix is the same `PoisonMessage` wrap.
+13. **The worklogs route has no `bff` path and the dashboard's `worklogs` arm is still `empty`.** The UI calls `core-api` through `api-gateway` directly, as it does for the transcript. Plan 3.4 says "through `bff`"; the `bff` dashboard arm can now read real notes and was not wired.
+14. **Agent notes in the meeting room are the only live agent output.** The sidebar's decision, question and conflict cards still render nothing until P8 and P9 emit them.
 
-## 5a. Next session: start here
+## 5a. What is left in P7, and the next session's start list
 
-Items 1 and 2 are done; items 3, 4 and 5 are next. Open items carried from items 1 and 2, in the order they should be picked up:
+In the order it should be picked up:
 
-1. **Real-model check: blocked on the Anthropic workspace.** The first real call (2026-11-08, one window, 2 participants, at most 4 capped calls) was refused with 400 before any tokens were used: "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header". `mytheus-intelligence` `6355e29` makes the router send that header when `ANTHROPIC_WORKSPACE_ID` is set. To unblock: add `ANTHROPIC_WORKSPACE_ID` (from the Anthropic console, Settings, Workspaces) to `mytheus-intelligence/.env`, or replace the key with a workspace-scoped one, then rerun the check. It has not been run successfully yet, so no real-model behavior is verified.
-2. **Item 3, `PersonalListenerAgent`** (plan section 3.3): the real pre-gate and extraction prompts (`prompts/personal_listener*@v1.md`, registered in `prompts/registry.json`); confidence gating (`>0.7` surfaced, `0.4-0.7` silent, `<0.4` dropped); registration in `agents/__init__.py`; the golden-set eval; and `core-api`'s `worklogs` migration, `agent-results` consumer and `GET /api/v1/meetings/:id/worklogs?user_id=me`.
-3. **Live streaming of the note's text** (`agent-stream`): wired (`Emitter.delta`, the router's `on_delta`, both tested) but unused, because no shipped agent streams yet. The real note-taker in item 3 should stream only after its confidence is known, so a note that ends up below 0.7 never reaches the screen. `realtime-gateway` has no `agent-stream` or `agent-results` consumer yet, and its Socket.io rooms are per meeting, not per user. Item 4 needs a per-user channel, or one participant's notes reach everyone in the room.
-4. **Hiding personal details before text goes to Anthropic** (plan section 3.3 step 4): not built. Reuse `services/ingestion_service/pii.py` (`redact_pii` plus `pii_enabled`, which reads `nexus:{org_id}:tenant_settings:pii_redaction_enabled` and defaults to redact), or the stronger `services/ner_service/regex_detector.py`, applied to the window text inside the router or the agent before any model call.
-5. **The "skip near-duplicate windows" (semantic) cache** (plan section 3.2 step 8): needs a Redis key that `_canon/02-data-model.md` does not define. Add it to canon first (plus an ADR line), then build it. Anthropic prompt caching is already on.
-6. **Items 4 and 5**, `mytheus-ui` (agent sidebar, My Notes, Usage page on `GET /usage`) and `mytheus-mobile` (My Notes, sample data removed), after item 3.
+1. **Real-model check: blocked on the Anthropic workspace.** `mytheus-intelligence/.env` has `ANTHROPIC_API_KEY` but no `ANTHROPIC_WORKSPACE_ID`, and the key is not workspace-scoped, so Anthropic refuses every call with 400 before any tokens are used. Add `ANTHROPIC_WORKSPACE_ID` (Anthropic console, Settings, Workspaces) or swap in a workspace-scoped key. Then run, in order: the capped one-window check from the item 2 session, and `EVAL_LIVE=1 uv run pytest -m eval` (14 Haiku calls). Record the measured precision and recall in `tests/eval/personal_listener_baseline.json` and set `measured: true`. Until then no real-model behavior, prompt quality or streaming from a real provider is verified.
+2. **Browser check of the UI** (gap 8): the meeting room's My Notes with the local stack and a signed-in user, and `/tenant/usage` as an admin and as a member.
+3. **Item 5, `mytheus-mobile`** (plan section 7, steps 2 and 7): My Notes in the live-session screen over the same REST route and socket events, the recap and insights screens off `src/data/mock.ts`, and the budget-state messaging. Excluded from this session by the maintainer.
+4. **Deployment** (gap 7): add the new processes and settings to `mytheus-platform`, run migration `d5e2f1a8c370` on the VPS, deploy. Outward-facing; needs an explicit go.
+5. **Smaller follow-ups:** the presence-events unknown-tenant fix (gap 12), the `bff` dashboard `worklogs` arm (gap 13), NER on the egress path (gap 9).
+
+After that, P7 is done and P8 (`DecisionAgent`, `ActionAgent`, confirm endpoints, `knowledge-graph-service`) is next, starting with DECISION-REQUIRED #3 (AGE).
 
 ## 6. Verification
 
@@ -145,3 +205,11 @@ All observed 2026-11-08 against the local stack (Postgres 5443, Redis 6390, Redp
 - `2649f21`: `uv run pytest tests/test_agent_runtime.py -q` 27 passed; `ruff check`, `black --check`, `mypy libs services` (80 files) clean.
 - **Runtime round trip, no LLM spend** (throwaway scripts, not committed): a tenant's budget provisioned through the real `POST /billing/internal/budget` (200, quota 200000); the real `Emitter`, `AvroCodec` and `BudgetGate` on real Redis, with the test suite's two-step agent and a fake model, ran one window for 3 participants. Produced to real Redpanda against the registered schemas: 3 `agent-results`, 6 `usage-events`. The offset tracker held back the third chunk (its window still open). The real billing consumer then metered 6 rows, 720 tokens, tiers haiku and sonnet; `agent_budgets` and the mirror both read 720.
 - **Real round trip** (throwaway scripts, not committed): two copies of one Avro `usage-events` message produced to Redpanda; `python -m services.billing_metering_service.consumer` run for 25 s; `python -m services.billing_metering_service.jobs` run once. Result: one `usage_events` row (1234 tokens, `haiku`); `agent_budgets` 1234 of 200000, `ok`; `usage_aggregates` `agent_token` 1234 with `{"haiku": 1234}`; the Redis mirror read back with `enforcement` `alert_only`. The first attempt sent every real message to the DLQ: the confluent deserializer returns `occurred_at` as a datetime, not an integer. Fixed in `734f80e` with a regression test; the unit tests had not caught it because they built the value by hand.
+
+Items 3 and 4, observed 2026-11-08 on the same local stack:
+
+- `mytheus-intelligence`: `uv run pytest tests/test_agent_runtime.py tests/test_personal_listener.py tests/test_personal_listener_eval.py tests/test_pii.py -q`: 66 passed, 1 skipped (the live eval, by design). `ruff check`, `black --check`, `mypy libs services` (83 files) clean.
+- `mytheus-backend`: `MYTHEUS_REQUIRE_DB=1 uv run pytest tests/test_worklogs.py tests/test_partition_coverage.py tests/test_roles_and_policies.py tests/test_openapi_contract.py tests/test_presence_events_consumer.py -q`: all passed except the two known local-database tests (gap 5); `test_worklogs.py` 10 passed. `uv run alembic -c migrations/alembic.ini upgrade head` applied `d5e2f1a8c370` (15 `worklogs` partitions). `python -m scripts.emit_openapi --check`: specs match. `ruff`, `black --check` clean; `mypy` clean apart from the Windows-only `os.geteuid` (gap 5).
+- `mytheus-realtime`: `npx vitest run test/agent-output.test.ts test/agent-output-kafka.test.ts test/captions.test.ts test/gateway.test.ts`: all passed, the Kafka test against the real Redpanda and Schema Registry. Full suite: 48 passed, 3 skipped; 3 files fail only on `spawnSync npx ENOENT` (gap 5). `tsc --noEmit` and `eslint` clean.
+- `mytheus-ui`: `npx tsc --noEmit`, `next lint`, `npm run generate:api:check`, `npm test` (4 passed) and `npx next build` all green. Not opened in a browser (gap 8).
+- **End-to-end, faked model, everything else real** (throwaway scripts in the session scratchpad, not committed): one tenant, two users (roles "Backend engineer" and "Product designer") and one meeting seeded; `billing-metering-service` run on 8006 with a throwaway caller token; three finals produced as real Avro to `transcript-chunks`, one carrying `alice@acme.com`. The real `Loop`, `AgentRuntime`, `PersonalListenerAgent`, prompts, router, redactor, response cache, budget gate (read through the real billing endpoint) and emitter processed them: 2 Haiku gate calls and 2 Sonnet extractions, no request contained the email or any user id. `python -m services.core_api.consumer` then wrote two `worklogs` rows: the engineer's at confidence 0.92 `surfaced = true` with the email shown as `[REDACTED_EMAIL]`, the designer's at 0.55 `surfaced = false`, each with 3 source chunk ids. `python -m services.billing_metering_service.consumer` metered 4 rows (haiku 616, sonnet 920 tokens); `agent_budgets` and the Redis mirror both read 1,536. Replaying the same three finals made zero model calls (4 `llmcache` keys, one per prompt per participant) and `core-api` still held exactly 2 notes. The first `core-api` run crashed on a stale record for a deleted tenant, which is how `97f2709` was found.
