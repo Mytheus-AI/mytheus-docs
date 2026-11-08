@@ -45,6 +45,8 @@ Mytheus is a final-year engineering project. It has no paying customers and is n
 
 **D5. No Anthropic DPA or SCC gate before LLM egress.** Subprocessor paperwork exists to serve a customer's procurement review, and this project has none. No engineering gate is built for Anthropic egress. The always-on PII redaction before egress (gated by `tenant_settings.pii_redaction_enabled`) is a technical control, not paperwork, and stays. This ADR does not change the Deepgram gate (`COMPLIANCE_GATE_GREEN`). If the project is ever offered to customers, D5 reverses and the DPA becomes a release blocker again.
 
+**D6. `usage_events` is partitioned by month, not by day.** Canon said day partitions. Every other partitioned table here (`chat_messages`, `audit_logs`) uses monthly partitions plus a DEFAULT catch-all, kept ahead of the calendar by `scripts/ensure_partitions.py` and checked by `tests/test_partition_coverage.py`. Daily partitions would mean about 365 tables a year and a second maintenance job, for a project whose usage volume is small. The dedupe constraint is UNIQUE `(org_id, idempotency_key, occurred_at)`, because Postgres requires the partition key in a unique index on a partitioned table. Since `occurred_at` is already part of the idempotency key, this is equivalent to UNIQUE `(org_id, idempotency_key)`.
+
 ## Consequences
 
 - **Positive.** The quota is computable, so `billing-metering-service` can provision `agent_budgets` rows and ship in alert-only mode.
