@@ -153,8 +153,10 @@ erDiagram
     uuid org_id FK
     uuid user_id FK
     uuid meeting_id FK
+    text question
     int priority
     text status
+    float confidence
   }
   document_chunks {
     uuid id PK
@@ -338,6 +340,7 @@ Indexes are sized to the read patterns in the [Service Catalog](_canon/01-servic
 | `decisions` | `(org_id, meeting_id)`, `(org_id, status)` | decision history, conflict scans |
 | `action_items` | `(org_id, assignee_id, status)`, `(org_id, due_date)` | My Tasks, workload sums, follow-up workflow |
 | `agent_suggestions` | `(org_id, user_id, status)` | Save-for-later queue into next meeting |
+| `agent_suggestions` | `(org_id, user_id, meeting_id, status)` | The user's open suggestions for one meeting ([ADR-0034](adr/0034-plan-9-question-agent-suggestions.md)) |
 | `worklogs` | `(org_id, user_id, meeting_id)` | My Notes panel |
 | `usage_events` | `(org_id, occurred_at)`, UNIQUE `(org_id, idempotency_key)` | metering aggregation + dedupe |
 | `audit_logs` | `(org_id, occurred_at)`, `(org_id, target_type, target_id)` | SOC2 audit queries |

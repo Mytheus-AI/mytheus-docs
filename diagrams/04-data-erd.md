@@ -222,6 +222,7 @@ erDiagram
     text question
     int priority
     text status
+    float confidence
   }
   agent_collaborations {
     uuid id PK

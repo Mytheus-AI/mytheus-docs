@@ -338,11 +338,11 @@ The PDF's directive is explicit: **calm, not flashy.** This is a behavioral cont
 
 ### 5.5 Save-for-later queue (cross-meeting persistence)
 
-The Save action on a suggestion sets `agent_suggestions.status = 'Save-for-later'` (PDF). Because that status is durable in Postgres ([Data Model §2.1](_canon/02-data-model.md)), the queue is **not** client-local — it is re-hydrated when the user opens their **next** meeting room. On mount, the sidebar fetches saved suggestions for the user (scoped to `org_id` by the gateway) and renders them in a dedicated "Saved" sub-section, so a question parked in Monday's standup reappears in Wednesday's planning.
+The Save action on a suggestion sets `agent_suggestions.status = 'saved'` (the PDF's Save-for-later, stored as the lowercase code of [ADR-0032](adr/0032-plan-8-decision-and-action-candidates.md) D7). Because that status is durable in Postgres ([Data Model §2.1](_canon/02-data-model.md)), the queue is **not** client-local — it is re-hydrated when the user opens their **next** meeting room. On mount, the sidebar fetches saved suggestions for the user (scoped to `org_id` by the gateway) and renders them in a dedicated "Saved" sub-section, so a question parked in Monday's standup reappears in Wednesday's planning. Suggestions are private: only their owner reads or acts on them, and they reach only that user's sockets ([ADR-0034](adr/0034-plan-9-question-agent-suggestions.md) D6, D8).
 
 ```mermaid
 flowchart LR
-  S1["Meeting A sidebar"] -->|"Save → status=Save-for-later"| PG["agent_suggestions (Postgres)"]
+  S1["Meeting A sidebar"] -->|"Save → status=saved"| PG["agent_suggestions (Postgres)"]
   PG -->|"on next room mount, scoped by org_id"| S2["Meeting B sidebar — Saved section"]
 ```
 
