@@ -270,3 +270,56 @@ The first real meetings on `dashboard.mytheus.cloud` (three people) surfaced the
 - The live eval ran: `personal_listener_gate@v1` on `claude-haiku-5-5`, threshold 0.5, over the 14-window golden set, precision 1.0 and recall 1.0 for 6,034 tokens. Recorded in `mytheus-intelligence` `tests/eval/personal_listener_baseline.json` (`measured: true`, `d2dc3b8`). Section 5a item 1 is closed.
 - Production's key is valid: a `GET /v1/models` made from inside `mytheus-agent-runtime-1` with its own environment answered 200 (status only; no key value was read or printed).
 - Production runs the fixes: `transcription-service`, `realtime-gateway` and `agent-runtime` restarted at 06:45 UTC on 2026-11-09, after `mytheus-realtime` PR #4 merged at 06:43 UTC, and the running transcription image contains the `nova-3` request; the `agent-runtime` has 0 restarts since. `worklogs` is still empty only because no meeting has run since; the next real call is the first end-to-end check of My Notes against a real model in production.
+
+## 9. Phase P8 part A: decision and action candidates (2026-11-09)
+
+P8 is split between two developers working in parallel. Part A (this section) is `DecisionAgent` and `ActionAgent`, the `core-api` confirm path and the meeting-room confirm cards (plan sections 3.5, 3.6 and 3.8 step 1). Part B is `knowledge-graph-service`, the `decisions__{org_id}` embedding, My Tasks (`GET /api/v1/actions` and mark done) and the lineage view, and is recorded by its owner. The seam between them is the `decisions` and `actions` topics, whose schemas Part B consumes.
+
+Canon first: `_canon/02-data-model.md` gains the `decisions`, `action_items` and `agent_suggestions` columns the plan DDL has, and [ADR-0031](../adr/0031-plan-8-decision-and-action-candidates.md) records the build decisions (D1 to D7).
+
+### What landed, per repo
+
+- **mytheus-docs** `42566cf`: the canon rows, ADR-0031, the README index, the Glossary row for `agent_suggestions`.
+- **mytheus-events** `aee3060`: `Decision` gains `supersedes: ["null", uuid]`, default null (ADR-0031 D1). BACKWARD-compatible; clients and the golden fixture regenerated; registered on the local Schema Registry. Part B's developer chose the same option independently.
+- **mytheus-intelligence**:
+  - `55aba99`: `agents/candidates.py` (the shared `CandidateAgent` graph: a Haiku gate, then Sonnet extraction to strict JSON, defensive parsing, the 0.7 / 0.4 bands per candidate, deterministic ids `uuid5(ns, "{agent}:{window_id}:{index}")`, "Participant N" labels mapped back to speaker ids, only UUIDs passed through); `agents/decision_agent.py` and `agents/action_agent.py`, both `scope = "meeting"`; four prompts (`decision_gate@v1`, `decision_agent@v1`, `action_gate@v1`, `action_agent@v1`); `tests/test_decision_action_agents.py`. The action prompt carries today's UTC date so "by Friday" becomes an ISO date.
+  - `8e3477b`: the eval harness for both agents (doc 08 section 6.3): `tests/eval/{decision,action}_golden.json` (14 windows each: 7 with no item, 5 with one, 2 with two), greedy keyword matching to precision, recall and F1, and the Brier score of emitted confidence against matched.
+  - `33486b2`: measured baselines from the first live run (below).
+- **mytheus-backend**:
+  - `fc12466`, migration `e7a3c9d14b52`: `decisions`, `action_items` (plain tables) and `agent_suggestions` (monthly partitions plus default, registered in `scripts/ensure_partitions.py`), RLS ENABLE + FORCE with `tenant_isolation`, `grant_tenant_table` on each.
+  - `822b52a`: the `agent-results` consumer persists `decision_candidate` / `action_candidate` as `status = 'proposed'` under the candidate's id (`ON CONFLICT DO NOTHING`), re-deriving the band from `agent_confidence_overrides`; a foreign or invalid assignee is nulled. No outbox row, ever.
+  - `1b6fe1b`, `services/core_api/routes/candidates.py`: `GET /api/v1/meetings/{id}/candidates` (proposed, surfaced band only); `PATCH`, `POST .../confirm` and `POST .../dismiss` for `/api/v1/decisions/{id}` and `/api/v1/actions/{id}`. Rows are read `FOR UPDATE`. Confirm enqueues exactly one outbox row (`decision:{id}:confirmed` / `action:{id}:confirmed`) and an audit row in the same transaction; a second confirm returns the row and enqueues nothing; dismiss enqueues nothing; confirm after dismiss and edit or dismiss after confirm are 409. Participants only (403 `NOT_A_PARTICIPANT`), another tenant 404. OpenAPI re-emitted.
+  - `bf87161`: a record the consumer cannot decode (for example a non-UUID string in a `uuid` field) is now `PoisonMessage` and goes to the DLQ. Before, the `ValueError` escaped the loop, the consumer died, and every restart re-read the same offset. Found by the end-to-end run below, on records left in the local broker by earlier test runs.
+- **mytheus-realtime**:
+  - `16d5cb7`: `agentOutput.ts` forwards surfaced decision and action candidates as a new pub/sub message `agent-candidate`; `server.ts` emits it to every socket of the meeting (ADR-0031 D4), on the org-scoped channel. PersonalListener notes stay per user.
+  - `202f919`: the three spawned-process tests set `AGENT_OUTPUT_ENABLED=0`; their gateways had joined the shared agent-output consumer group, and the pod-death test left a dead member holding partitions.
+- **mytheus-ui** `94f014a`: `src/lib/realtime/candidates.ts` (a pure reducer merging live and re-hydrated candidates by id; a confirmed or dismissed one never comes back), `useMeetingSocket` subscribes to `agent-candidate` and re-hydrates from `/api/meeting-candidates` on every (re)connect, `CandidateCard` in the agent sidebar with Confirm, Edit (inline) and Dismiss as server actions in `src/app/actions/candidates.ts`. Confirm retries a 404 briefly, because a card can arrive a moment before `core-api` has stored its row. Generated API types refreshed.
+
+### Deviations, and why
+
+1. **Candidates are a list in `payload_json`** (ADR-0031 D2). The canon idempotency key allows one `agent-results` record per agent per window.
+2. **The agent assigns the row id** (D3), so the live card and the stored row agree without a round trip.
+3. **Candidates go to the whole meeting** (D4), not to the user the runtime ran the meeting-scope agent as.
+4. **The silent band is a `proposed` row** (D6), not a worklog: there is no per-user note for a meeting's decision.
+5. **`agent_suggestions` uses canon's `question` column**, not the plan DDL's `content`, and lowercase status codes (D7). Created now, unused until P9.
+6. **Confirming with `supersedes` does not mark the older decision `superseded`.** That would change a confirmed row without an event; the graph learns the lineage from `supersedes`.
+7. **A realtime-gateway change was needed** that the Part A brief did not list: the gateway forwarded only PersonalListener notes, so no card could reach a live call without it.
+
+### Verification (2026-11-09, local stack)
+
+- `mytheus-backend`: `MYTHEUS_REQUIRE_DB=1 uv run pytest tests/test_candidates.py tests/test_worklogs.py -q` all passed (24 candidate tests, including RLS isolation for the three tables, the consumer writing zero outbox rows, exactly one outbox row per confirm, rollback of row and outbox together, and `test_only_the_confirm_routes_enqueue_decisions_or_actions`). Full suite: 685 passed, 1 failed (`test_relay_real_bus_roundtrip`, the known Redpanda memory cap, gap 5). `ruff`, `black --check`, `mypy` clean; `python -m scripts.emit_openapi --check` matches.
+- `mytheus-intelligence`: `uv run pytest -q` 287 passed, 39 skipped; `ruff`, `black --check`, `mypy libs services` clean.
+- **Live eval**, `EVAL_LIVE=1 uv run pytest -m eval tests/test_decision_action_eval.py`, real models: `DecisionAgent` F1 1.0 (9 of 9, no false positive), Brier 0.012, 21 calls, 13,254 tokens; `ActionAgent` F1 1.0, Brier 0.007, 21 calls, 13,095 tokens. The Haiku gate stopped 7 of 14 windows before Sonnet. Recorded as baselines (`min_f1` 1.0, `max_brier` measured plus 0.02); a second run asserting them passed. The first attempt failed with 401 because the shell exported an older `ANTHROPIC_API_KEY` that overrode the valid key in `.env` (the harness uses `setdefault`).
+- `mytheus-realtime`: `npx vitest run` 57 passed (18 files), including real Redis plus Socket.io delivery to every participant but not another meeting or another org with the same meeting id, and a real Avro `decision_candidate` through the real Redpanda consumer; `tsc --noEmit` and `eslint` clean.
+- `mytheus-ui`: `npx tsc --noEmit`, `next lint`, `npm test` (25 passed, 5 of them the candidates reducer) green. Not opened in a browser (no Clerk sign-in, gap 8).
+- `mytheus-events`: `make validate`, `make codegen`, `make test-py`, `make check-compatibility` (21 subjects BACKWARD) green.
+- **Producer grep** across the four code repos: the only producers of topic `decisions` / `actions` are `services/core_api/routes/candidates.py` lines 261 and 401.
+- **End to end, scripted model, everything else real** (throwaway scripts, not committed): one tenant, two participants, one meeting. The real `DecisionAgent` and `ActionAgent` graphs (gate on Haiku, extraction on Sonnet, both answered by a script) emitted real Avro to `agent-results`; the real `core-api` consumer stored a 0.86 decision and a 0.5 decision as `proposed`, and a 0.82 action with its assignee and due date; zero outbox rows. `GET .../candidates` returned only the two surfaced ones. Confirm (twice) on the decision and once on the action, dismiss on the silent decision: exactly two outbox rows, one `decisions` and one `actions`, both relayed and read back from Redpanda as valid Avro with the right ids, content, assignee and due date.
+
+### Open items
+
+1. **Deploy order for `supersedes`:** register the new `decisions-value` schema on the production Schema Registry, then restart the relay. The end-to-end run's decision event had no `supersedes` because a long-running relay had cached the older schema.
+2. **Browser check** of the cards in a live call with a signed-in user (gap 8).
+3. **A meeting-scope agent runs only when the lowest-sorted roster user's context fetch succeeds** (`runtime.py` `_run_user`); if that one fetch fails, the window gets no decision or action pass. A budget block notifies only that user, in wording about notes.
+4. **Another participant's confirm or dismiss is not pushed to the room**; the other cards settle on their next action (200 or 409) or on re-hydrate (ADR-0031 consequences).
+5. **Mobile** confirm cards (plan section 7) are not started.
