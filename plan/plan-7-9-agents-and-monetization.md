@@ -671,6 +671,25 @@ Ordering is a precondition chain. **Within P7: billing before runtime before the
 - A throttled tenant's query skips expansion and still returns cited answers (degrade-not-fail test).
 - The `org_id` payload filter is applied on Qdrant even though the collection is per-tenant (belt-and-suspenders test); no cross-tenant passage is ever returned.
 
+**Amended at the P9 entry gate by [ADR-0033](../adr/0033-plan-9-rag-retrieval-upgrades.md) (2026-11-09).** The five-stage shape is unchanged; these are added inside it.
+
+> [SaaS-scale adjustment] The PDF pipeline isolated retrieval by tenant only, could not cite graph results, and returned passages without an answer. ADR-0033 closes the first two as defects and adds five measured upgrades.
+
+12. **Participant-scoped retrieval (D1).** Resolve the asker's meeting set from `meeting_participants` once per query; apply it in all three arms (Qdrant `meeting_id` match-any on top of `org_id`, FTS `meeting_id` restriction, graph filtered to meetings the asker `ATTENDED`). Documents stay org-wide. `rag_client` callers pass the asking `user_id`.
+13. **Filters from expansion (D2).** The Haiku expansion prompt returns strict JSON: variants plus `date_from`, `date_to`, `person` (resolved to `users.id`), `source`. Start raw-query retrieval in parallel with the expansion call. Skip expansion for queries of three words or fewer.
+14. **Decisions as a source (D3).** The vector arm also searches `decisions__{org_id}` (`status = confirmed`); citation kinds `decision` (`decision_id`, `meeting_id`) and `action` (`action_id`, `meeting_id`), so graph results bind a citation.
+15. **Small-to-big (D4).** At assembly, widen each transcript hit to one chunk before and after in the same meeting, inside the 3,000-token budget; the citation stays on the hit chunk.
+16. **Contextual header (D5).** `embedding-service` embeds `"{meeting title} | {date} | {speaker}: {text}"` (documents: `"{title} | {text}"`); stored text and payload unchanged; re-embed existing points once.
+17. **Grounded answer (D6).** With `generate: true`, stream a Sonnet answer whose every sentence carries `[n]` markers into the returned passages; strip sentences without a valid marker; below the rerank-score threshold, retry once without date/person filters, then abstain with the fixed not-found answer and no model call. Throttled/blocked tenants get passages only. The `< 500 ms` SLO applies to the passage path.
+18. **Eval and ablation (D7).** Golden set with gold `chunk_id`s, permission-trap and no-answer questions, a few non-English ones. Report Recall@10, MRR, nDCG@10, citation precision, faithfulness (offline judge), abstain accuracy and passage-path p95, as an ablation table in the band file. Each upgrade sits behind a flag; one that lowers Recall@10 or nDCG@10 stays off.
+
+**Additional acceptance checks (ADR-0033):**
+- Permission trap: a user asks about a meeting in their own org that they did not attend and gets no passage from it, in any arm, cached or not.
+- A question with "last week" or a person's name applies the filter in all three arms (trace test).
+- A graph-arm decision reaches the response with a `decision` citation.
+- Every sentence of a generated answer cites a returned passage; a no-answer question abstains without a model call.
+- The ablation table is recorded and every shipped upgrade is non-negative on Recall@10 and nDCG@10.
+
 ---
 
 #### 3.10 `QuestionAgent` — real-time suggestion cards, `agent_suggestions` priority 1-3
