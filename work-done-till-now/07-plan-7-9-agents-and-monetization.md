@@ -559,7 +559,7 @@ Live answer metrics: answered 95% of answerable questions, abstained on 100% of 
 
 ## 12. Phase P9 QuestionAgent: role-tuned suggested questions, end to end (2026-11-09)
 
-**Status:** P9 `QuestionAgent` track DONE WITH GAPS. Verified 2026-11-09 on the local stack, with every CI gate mirrored locally before the push, pushed to `main` in all five repos, CI re-run green after the Actions outage, and live in production since the `mytheus-backend` deploy at 18:46 UTC (12.6). Mobile is out of scope for this phase. RAG grounding is built and tested against `libs/shared/rag_client.py` and is OFF in production until `rag-service` is configured (12.5 item 1).
+**Status:** P9 `QuestionAgent` track DONE WITH GAPS. Verified 2026-11-09 on the local stack, with every CI gate mirrored locally before the push, pushed to `main` in all five repos, CI re-run green after the Actions outage, and live in production since the `mytheus-backend` deploy at 18:46 UTC (12.6). Mobile is out of scope for this phase. RAG grounding is built and tested against `libs/shared/rag_client.py` and has been ON in production since 2026-11-10 (12.5 item 1).
 
 This is the `QuestionAgent` track of P9 (plan section 3.10): agent, `agent-results`, `core-api`, `realtime-gateway`, the sidebar card. The RAG track is section 11. The seam is `libs/shared/rag_client.py`, which this track calls and does not edit.
 
@@ -618,7 +618,7 @@ Entry decisions: [ADR-0034](../adr/0034-plan-9-question-agent-suggestions.md) (D
 
 ### 12.5 Open gaps and handover
 
-1. **Grounding is off in production.** Turning it on needs `rag-service` configured first (section 11.5 item 1: `enable-tiers.sh` on the server, which also writes `RAG_URL` and `RAG_CALLER_TOKEN` into `prod.agents.env`), then `QUESTION_RAG_GROUNDING=1` on `agent-runtime`. Set `QUESTION_RAG_TIMEOUT_S` to about 3 at the same time: the 0.8 s default is below `rag-service`'s measured CPU passage path (about 0.9 s p95, section 11.5 item 8), so most grounding calls would time out. Until then the agent proposes without context, which is the tested fallback.
+1. **Grounding: ON in production since 2026-11-10.** `scripts/enable-tiers.sh` ran on the server (dry run first, then the real run): it wrote `prod.rag.env` (`RAG_SERVICE_TOKEN`, the read-only Qdrant key, the Anthropic key and workspace), `RAG_URL` and `RAG_CALLER_TOKEN` into `prod.agents.env`, added `rag-service` to every callee's allowlist and `agent-runtime-service` to `rag-service`'s, ran both tier migrations and brought the stack up with `workers,realtime,agents,intelligence`; every service came back up, `rag-service`, `search-grpc`, `reranker-service`, `embedding-service`, `api-gateway` and `web` healthy. It also staged the AGE credentials (`prod.age.env`, `prod.kg.env`), which stay unused until the `kg` profile is switched on. Then `QUESTION_RAG_GROUNDING=1` and `QUESTION_RAG_TIMEOUT_S=3` went into `prod.agents.env` (3 s, not the 0.8 s default, because `rag-service`'s measured CPU passage path is about 0.9 s p95, section 11.5 item 8) and `agent-runtime` was recreated: running, both values set in the container, no errors in either service's log. Not yet observed: a grounded suggestion with citations in a live call (12.5 item 2).
 2. **Browser check** of the cards in a live call with a signed-in user.
 3. **The owner's other tabs are not told about a status change**: an Ask in one tab settles the card there; another tab drops it on its next action (404 or 409) or on re-hydrate.
 4. **Mobile** suggestion cards are not started.
