@@ -444,3 +444,103 @@ Canon first: `_canon/02-data-model.md` gains the `decisions`, `action_items` and
 3. **A meeting-scope agent runs only when the lowest-sorted roster user's context fetch succeeds** (`runtime.py` `_run_user`); if that one fetch fails, the window gets no decision or action pass. A budget block notifies only that user, in wording about notes.
 4. **Another participant's confirm or dismiss is not pushed to the room**; the other cards settle on their next action (200 or 409) or on re-hydrate (ADR-0032 consequences).
 5. **Mobile** confirm cards (plan section 7) are not started.
+
+## 11. Phase P9 RAG: `rag-service`, participant-scoped hybrid retrieval and the Ask page (2026-11-09)
+
+**Status:** P9 RAG track DONE WITH GAPS, verified 2026-11-09 on the local stack (Postgres 5443, Redis 6390, Redpanda 9092, Qdrant 6333) with real BGE-small-en and BGE-reranker-base and, for the live rows, real Haiku and Sonnet. Not deployed, not opened in a signed-in browser.
+
+P9 is split between two developers working in parallel. This section is the RAG track (plan section 3.9 and the Ask panel). The `QuestionAgent` track (plan section 3.10) is recorded by its owner in section 12. The seam between them is `libs/shared/rag_client.py` in `mytheus-intelligence`. Mobile is out of scope for this phase.
+
+Entry decisions: [ADR-0033](../adr/0033-plan-9-rag-retrieval-upgrades.md) (D1 to D7), written before the build after a review of the locked design found two defects (retrieval isolated by tenant only; graph results could not be cited). The ADR's "Amendments from the build" records every decision the measurements changed. Canon: `_canon/06-tech-decisions.md` section 2.9, the Citations, Retrieval access and RAG API rows.
+
+### 11.1 What landed, per repo
+
+- **mytheus-docs**
+  - `31dc0b0`: ADR-0033, the canon rows, plan section 3.9 steps 12 to 18 with their acceptance checks, doc 09 sections 3.5 and 7, the README index, the traceability matrix.
+  - This commit: the build amendments in ADR-0033, the RAG API canon row (answer returned after its check, not streamed), plan step 17 and doc 09 to match, this section.
+- **mytheus-backend** `c89de7b`
+  - `services/core_api/routes/internal_retrieval.py`: `GET /internal/retrieval/scope` (the asker's `users.id` by `user_id` or `clerk_user_id`, the meetings they are a participant of with title and start, the org's people by email) and `POST /internal/retrieval/records` (confirmed or superseded decisions and confirmed or done actions by id, restricted again to the asker's meetings). Both RLS-scoped; an unknown or foreign user is 404.
+  - `internal_meetings.py`: the caller check is per route (`authenticate_caller(request, allowed)`). `MYTHEUS_CORE_CALLER_TOKENS` may now hold `rag-service`, which is allowed on the retrieval routes only, not on room-state.
+  - `api_gateway/edge.py`: `/api/rag` routes to `rag-service`. `design/openapi/core-api.yaml` re-emitted.
+  - `tests/test_internal_retrieval.py` (7 tests).
+- **mytheus-intelligence**
+  - `b4f43ce`, search and auth:
+    - `proto/rag.proto` and its runtime mirror `libs/shared/rag_proto.py`: `FtsSearchRequest` gains `meeting_ids`, `speaker_ids`, `scoped` (an allowlist; empty means nothing, never "unfiltered"); new `GetPassages` RPC returning transcript text with neighbouring chunks (`before`, `after`, same meeting, by `start_ms`) and document element text.
+    - `services/search_service/fts.py` and `grpc_server.py`: the scoped query, `get_passages`, and a second auth path for `rag-service`'s service credentials (`MYTHEUS_SEARCH_CALLER_TOKENS`). `GetPassages` accepts the service path only.
+    - `libs/shared/auth.py` `verified_or_service_org_id`: `/internal/embed` and `/internal/rerank` accept `rag-service` (`MYTHEUS_EMBED_CALLER_TOKENS`, `MYTHEUS_RERANK_CALLER_TOKENS`) beside a user token. A present but bad service header never falls back to the bearer path.
+  - `4a70a84`, `services/rag_service/`:
+    - `main.py`: `POST /api/rag/query`. Callers are a user (Clerk token, re-verified) or `agent-runtime-service` (service credentials in `MYTHEUS_RAG_CALLER_TOKENS` plus `X-Mytheus-User`, the participant it asks for).
+    - `pipeline.py` `RAGService`: scope, cache (`nexus:{org_id}:rag:{user_id}:{query_hash}`, 10 minutes), expansion in parallel with raw-query retrieval, the vector, FTS and graph arms in parallel, the scope rule re-applied after the arms whatever they returned, RRF k=60 to 50, hydration, rerank, assembly (3,000 tokens, halved past 80% of quota; near-duplicates dropped; at most 4 passages per meeting), four citation kinds, the checked answer. Every addition sits behind a `RagConfig` flag.
+    - `clients.py`: core-api scope and records, `/internal/embed`, `/internal/rerank` (rebinding echoed passage text to indexes), Qdrant reads with the read-only key over `transcript_chunks__{org_id}`, `document_chunks__{org_id}` and `decisions__{org_id}` (status confirmed or superseded), the gRPC FTS and passage client, the graph arm (`decisions_by_person`, `related_decisions_for_topic`; empty when the `kg` profile is off).
+    - `expand.py` (Haiku, `rag_expand@v1`: variants, date range, person resolved by email local part, source, taxonomy topics), `answer.py` (Sonnet, `rag_answer@v1`, sentence-level marker check, NOT_FOUND abstention), `metering.py` (`usage-events` `agent_token` with producer `rag-service`; a budget probe on the Redis mirror).
+    - `libs/shared/rag_client.py`: `RagClient`, `HttpRagClient` (asks as a participant, passages only, never raises), `FakeRagClient`. This is the contract the `QuestionAgent` track builds against.
+  - `d22fcb4`, the eval harness and the fixes it drove: `tests/test_rag_eval.py`, `tests/eval/rag_corpus.json` (six meetings, one private to two other people, a document, five confirmed decisions), `rag_golden.json` (20 answerable questions, 3 permission traps, 2 no-answer), `rag_baseline.json`, `rag_ablation.json`. FTS any-term mode (`match_any`), context-aware rerank, heading skip, rerank fusion, the source filter made advisory, larger output caps, the `/internal` mount in the default URLs.
+- **mytheus-platform** `9c48e31`: `deploy/compose.prod.yml` adds `rag-service` (8107, profile `intelligence`) and `search-grpc` (50103, the gRPC server that had never been deployed), the gateway's `UPSTREAM_RAG_SERVICE`, and `prod.reranker.env` for the reranker. `scripts/enable-tiers.sh` generates `RAG_SERVICE_TOKEN` and upserts `rag-service` into every callee's allowlist (core-api, billing, graph, search, embed, rerank) with an `add_caller` helper that replaces a stale entry and leaves other callers alone; it admits `agent-runtime-service` to rag-service (`RAG_CALLER_TOKEN`, `RAG_URL` in `prod.agents.env`) and copies the Anthropic and Qdrant read-only keys into `prod.rag.env`. `env/prod.rag.env.example`, `env/prod.reranker.env.example`.
+- **mytheus-ui** `1b3cc17`: `/search` is now Ask. `src/app/actions/ask.ts` calls `POST /api/rag/query` with the user's session; `src/lib/rag/answer.ts` holds the contract types and the pure helpers (answer segmentation, citation links, provenance); `AskPanel` renders the checked answer with clickable `[n]` markers and a source list (transcript opens `/meetings/{id}/transcript#t={seconds}`, decision opens its lineage page, action opens My Tasks, document shows its text); `AskView` holds the input, `/` focus and the command palette's `?q=`. The mock search view, its records and `mockSearchIndex` are removed. The nav entry reads "Ask". `tests/rag-answer.test.ts`. Generated core-api types refreshed.
+
+### 11.2 Definition of Done audit (End of P9, RAG lines)
+
+| DoD line | State | Evidence |
+|---|---|---|
+| `rag-service` shipped: five-stage `RAGService` | MET (not deployed) | `services/rag_service/pipeline.py`; `tests/test_rag_pipeline.py` |
+| `org_id` in metadata + mandatory Qdrant payload filter | MET | `clients.py` `QdrantVectorSearch` (collection plus `org_id` plus `meeting_id` filters); gRPC org in metadata |
+| RRF k=60 | MET | `fusion.py`; `test_rrf_rewards_agreement_across_lists` |
+| Citations with uncited dropped | MET | `_citation` binding; `test_a_candidate_that_cannot_be_hydrated_is_dropped`; answer sentence check |
+| Answer cache | MET | `test_cache_hit_is_per_user` |
+| Expansion skipped on throttle | MET | `test_short_queries_and_degraded_tenants_skip_expansion` |
+| `usage-events` emit | PARTIAL | `metering.UsageEmitter` through `LiteLLMRouter`; not observed on a broker in this session |
+| Ask panel | MET (not browser-checked) | `mytheus-ui` `1b3cc17`; `npm test`, `tsc`, `next lint`, `next build` green |
+| Five-stage/citation, parallel-arms, cache-hit, degrade-not-fail, cross-tenant isolation tests green | MET | `tests/test_rag_pipeline.py` (22), `tests/test_search_scope_live.py` (3, real Postgres), `tests/test_search_grpc.py` |
+| Eval gates: citation validity and retrieval quality | MET | `tests/test_rag_eval.py`, offline and live rows, baseline asserted |
+| Mobile Ask screen | NOT MET (out of scope) | Mobile excluded from this phase by the maintainer |
+| ADR-0033 additional checks: permission trap; filters in every arm; decision citation; cited answer; ablation non-negative | MET | trap leaks 0 in every row; `test_expansion_filters_reach_every_arm`; `test_a_decision_is_cited_as_a_decision`; `test_answer_keeps_only_cited_sentences`; final row above vector-only on all three metrics |
+
+### 11.3 The ablation (D7)
+
+`tests/eval/rag_ablation.json`, one run, 25 questions. Offline rows: real embeddings, reranker and Postgres FTS. The last row adds real Haiku expansion and Sonnet answers.
+
+| Row | Recall@10 | MRR | nDCG@10 | Trap leaks |
+|---|---|---|---|---|
+| vector only | 0.729 | 0.775 | 0.733 | 0 |
+| + FTS and RRF | 0.729 | 0.775 | 0.733 | 0 |
+| + rerank (plain) | 0.779 | 0.696 | 0.693 | 0 |
+| + rerank with context | 0.842 | 0.600 | 0.622 | 0 |
+| + skip headings | 0.842 | 0.608 | 0.628 | 0 |
+| + fuse rerank with first stage | 0.842 | 0.778 | 0.758 | 0 |
+| + decisions source | 0.896 | 0.794 | 0.797 | 0 |
+| + small-to-big | 0.896 | 0.794 | 0.797 | 0 |
+| + expansion, filters, graph (live) | 0.929 | 0.846 | 0.845 | 0 |
+
+Live answer metrics: answered 95% of answerable questions, abstained on 100% of no-answer questions, every answer cited a gold passage. Small-to-big changes the answer context, not the ranking, so its row matching the one above is expected. Passage-path p95 on this CPU-only machine: about 0.9 s offline (the cross-encoder dominates; the `< 500 ms` SLO assumes the GPU reranker), about 5 s live with two real LLM calls.
+
+### 11.4 Deviations from the plan, and why
+
+1. **rag-service has no gRPC surface.** Plan 3.9 step 1 lists `proto/rag.proto` with a RAG service. Users reach it through `api-gateway` over REST, and agents call the same REST route with service credentials; a second transport would be a second auth surface for no caller. `proto/rag.proto` now holds search-service's two RPCs only.
+2. **Embed, rerank, graph and core-api are called over REST, not gRPC.** They already serve REST; only search-service had a gRPC surface. Recorded in ADR-0033's amendments.
+3. **Scope comes from core-api, not the graph.** `meeting_participants` is relational truth, the `kg` profile is optional in production, and the AI tier may not read core-api's tables, hence the internal scope route.
+4. **D5 contextual header deferred**, **D6 score gate off**, **D6 answer not streamed**, **`source` advisory**, **rerank context and fusion**, **FTS any-term**: each with its measurement in ADR-0033's amendments and section 11.3.
+5. **Expansion is not role-tuned.** Plan 3.9 step 3 says variants are role-tuned through `get_user_context`. The expansion prompt carries the taxonomy topics and today's date but not the asker's role: one more gRPC hop on the critical path for a gain the eval could not measure (the corpus has one asker). Left for when a multi-role golden set exists.
+6. **A person is matched by email local part.** `users` has no display-name column; "Priya" matches `priya.nair@...`. More than three matches is treated as ambiguous and not filtered on.
+7. **Documents are excluded when a date, person or single meeting narrows the question.** They carry none of the three, so including them would break the filter's meaning.
+
+### 11.5 Open gaps and handover
+
+1. **Not deployed.** Order: register nothing new on the Schema Registry (no schema changed); deploy `mytheus-intelligence` (image), run `scripts/enable-tiers.sh` with the `intelligence` profile so `prod.rag.env` and the allowlists are written, then deploy `mytheus-backend` (the core-api routes and the gateway route) and `mytheus-ui`. Re-run `enable-tiers.sh` after any `push-secrets.sh agents`, which rewrites the billing allowlist.
+2. **Browser check** of the Ask page with a signed-in user: the page sits behind Clerk sign-in and was not opened signed in.
+3. **No end-to-end run through the gateway**: the pieces were verified separately (core-api routes on real Postgres, the gRPC client against a real `search-grpc` over real Postgres, the pipeline with real models in the eval). A run with every service up is still to do.
+4. **`usage-events` from rag-service** not observed on a broker.
+5. **D5** needs the meeting title and speaker name on `transcript-chunks` (a `mytheus-events` change) before `embedding-service` can build the header.
+6. **Multilingual risk (ADR-0033 consequences)**: not measured; the golden set has no non-English question yet.
+7. **For the `QuestionAgent` track:** call `HttpRagClient.retrieve(org_id=..., user_id=<the participant>, query=...)`; `RAG_URL` and `RAG_CALLER_TOKEN` are written to `prod.agents.env` by `enable-tiers.sh`. Citations have four kinds.
+
+### 11.6 Verification (2026-11-09, local stack)
+
+- `mytheus-backend`: `MYTHEUS_REQUIRE_DB=1 uv run pytest tests/test_internal_retrieval.py tests/test_meeting_room_state.py -q` 12 passed; `tests/test_gateway_edge.py tests/test_openapi_contract.py` 42 passed; `python -m scripts.emit_openapi --check` matches; `ruff`, `black --check`, `mypy` on the changed modules clean.
+- `mytheus-intelligence`:
+  - `uv run pytest tests/test_rag_pipeline.py tests/test_rag_api.py tests/test_search_grpc.py tests/test_service_caller_auth.py -q` 59 passed; `tests/test_query_embed.py tests/test_reranker.py tests/test_auth.py` 26 passed.
+  - `MYTHEUS_REQUIRE_DB=1 uv run pytest tests/test_search_scope_live.py tests/test_search_routes.py -q` 14 passed.
+  - `MYTHEUS_REQUIRE_DB=1 uv run pytest -m eval tests/test_rag_eval.py` passed (offline gate); with `EVAL_LIVE=1` and the `.env` key (shell `ANTHROPIC_API_KEY` unset so `.env` wins), passed with the live gate, producing the table in 11.3.
+  - A wire smoke with throwaway scripts: rag-service's `GrpcLexicalSearch` against a real in-process `search-grpc` over real Postgres. Any-term FTS found the PLAT-4412 line for "what is the SSO ticket about", an allowlist of another meeting returned nothing, `GetPassages` returned the neighbouring lines, a wrong service token was refused (UNAUTHENTICATED).
+  - `ruff check`, `black --check --target-version py312`, `mypy libs services` (106 files) clean.
+- `mytheus-platform`: `docker compose -f deploy/compose.prod.yml config` valid; with `COMPOSE_PROFILES=intelligence` the services list includes `rag-service` and `search-grpc`; `bash -n scripts/enable-tiers.sh` OK; `add_caller` exercised in isolation (add, no-op, replace a stale entry, new key; other callers untouched).
+- `mytheus-ui`: `npx tsc --noEmit`, `npx next lint`, `npm test` (32 passed, 4 of them the answer helpers), `npm run generate:api:check`, `npx next build` green. `/search` redirected to sign-in in the dev server, as expected unauthenticated.

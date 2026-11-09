@@ -256,7 +256,7 @@ flowchart LR
 | Citations | Every passage carries `meeting_id`, `chunk_id`, speaker (transcripts) or `document_id`, `element_id` (documents); confirmed decisions and actions cite as `decision_id` or `action_id` plus `meeting_id` (ADR-0033 D3) | locked | PDF, amended SaaS-add | Traceable, clickable provenance in the context panel; lets the graph arm and `decisions__{org_id}` contribute citable passages. |
 | Retrieval access | A transcript, chat or decision passage is retrievable only by a participant of its meeting (`meeting_participants`); documents are org-wide; applied in every arm (ADR-0033 D1) | locked | SaaS-add | Same rule as every other read of meeting content; tenant isolation alone would let any org member read any meeting. |
 | RAG cache | Redis keyed `(user_id, query_hash)`, 10-min TTL | locked | PDF | Cuts repeat-query cost and latency. |
-| RAG API | `POST /api/rag/query` → passages + citations; with `generate: true`, also a streamed answer whose every sentence cites a returned passage, or a fixed abstention (ADR-0033 D6) | locked | PDF, amended SaaS-add | One contract for retrieval; the answer is additive, so a passages-only client is unaffected. |
+| RAG API | `POST /api/rag/query` → passages + citations; with `generate: true`, also an answer, returned after its citation check, whose every sentence cites a returned passage, or a fixed abstention (ADR-0033 D6 as amended) | locked | PDF, amended SaaS-add | One contract for retrieval; the answer is additive, so a passages-only client is unaffected. |
 
 ### 2.10 Knowledge graph schema
 
