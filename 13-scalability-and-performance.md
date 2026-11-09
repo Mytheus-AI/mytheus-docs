@@ -240,7 +240,7 @@ Caching is the cheapest scalability lever NEXUS has: every cache hit is a Postgr
 | User context | `get_user_context()` (role/skills/team/recent meetings/topics) | `nexus:{org_id}:user_ctx:{user_id}` | **5 min** (PDF) | Called per chunk-window by agents; the 5-min TTL keeps it nearly free |
 | RAG answers | Passages + citations | `nexus:{org_id}:rag:{user_id}:{query_hash}` | **10 min** (PDF) | Skips the entire expand→retrieve→rerank pipeline on repeat queries |
 | Query embeddings | BGE-small query vectors | (query-embed cache, namespaced) | short | Avoids re-embedding repeated query text on the embedding GPU |
-| Consumer dedupe (inbox) | At-least-once delivery guard | `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` | **24h** | Idempotent consume; the dedupe backstop for the bus |
+| Consumer dedupe (inbox) | At-least-once delivery guard | `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}` | **24h** | Idempotent consume; the dedupe backstop for the bus |
 | Budget hot mirror | `agent_budgets.tokens_consumed` | `nexus:{org_id}:budget:{period}` | period-end | Fast per-tenant quota check without a Postgres round-trip |
 | LLM rate limit | Per-user LiteLLM counters | `nexus:{org_id}:ratelimit:{user_id}` | sliding window | Per-user throttling at the LLM router |
 | Prompt cache | Anthropic prompt caching + semantic cache | (LLM tier) | provider-managed | The dominant LLM-cost lever; cached input tokens are billed at a fraction (see §6) |

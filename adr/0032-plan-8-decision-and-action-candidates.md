@@ -1,4 +1,4 @@
-# ADR-0031: Plan 8 build decisions: decision and action candidates, `supersedes` on `Decision`, and room-wide candidate delivery
+# ADR-0032: Plan 8 part A build decisions: decision and action candidates, filling `supersedes`, and room-wide candidate delivery
 
 Plan 7-9 phase P8 part A (`DecisionAgent`, `ActionAgent`, the `core-api` confirm path and the meeting-room confirm cards) left questions the plan text does not settle. They were decided while building it on 2026-11-09. This ADR records them.
 
@@ -7,6 +7,7 @@ Plan 7-9 phase P8 part A (`DecisionAgent`, `ActionAgent`, the `core-api` confirm
 - [_canon/02-data-model.md](../_canon/02-data-model.md) - the `decisions`, `action_items` and `agent_suggestions` rows gain the columns below in the same change.
 - [_canon/03-event-taxonomy.md](../_canon/03-event-taxonomy.md) - `decisions` and `actions` keep `core-api` (outbox, on confirm) as their only producer.
 - [08-ai-agent-architecture.md](../08-ai-agent-architecture.md) sections 2.2 and 6 - no silent commits; the confidence policy.
+- [ADR-0031](0031-plan-8-graph-store-decision-supersedes-and-mark-done.md) - Plan 8 part B's entry decisions; its D2 adds `supersedes` to `Decision`, which D1 here fills.
 - [ADR-0030](0030-plan-7-llm-response-cache-and-personal-listener-gating.md) - D3 (`core-api` decides the band) and D5 (per-user delivery), which D4 here narrows for candidates.
 - [plan/plan-7-9-agents-and-monetization.md](../plan/plan-7-9-agents-and-monetization.md) sections 3.5, 3.6 and 3.8.
 
@@ -27,7 +28,7 @@ Plan 7-9 phase P8 part A (`DecisionAgent`, `ActionAgent`, the `core-api` confirm
 
 ## Decision
 
-**D1. `Decision` gains `supersedes: ["null", uuid]`, default null.** A BACKWARD-compatible addition in `mytheus-events`; consumers on the old schema ignore it. `core-api` fills it on confirm (the caller may name a confirmed decision of the same tenant the new one replaces), and `knowledge-graph-service` writes `FOLLOWS_FROM` from it. Agreed with the developer of P8 part B.
+**D1. `core-api` fills `Decision.supersedes` on confirm.** The field itself is [ADR-0031](0031-plan-8-graph-store-decision-supersedes-and-mark-done.md) D2 (agreed between the two P8 developers). The caller of `POST /api/v1/decisions/{id}/confirm` may name a confirmed decision of the same tenant that the new one replaces; `core-api` stores it in `decisions.supersedes` and puts it on the event, and `knowledge-graph-service` writes `FOLLOWS_FROM` from it.
 
 **D2. Several candidates per window travel as a list in `payload_json`.** `{"candidates": [{id, content, confidence, surfaced, ...}]}`; the record's `content` and `confidence` are the strongest candidate's. No key or schema change.
 

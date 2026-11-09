@@ -1,6 +1,6 @@
 # Plan 7-9: Agents and Monetization
 
-**Status:** IN PROGRESS. Phase P7 work items 1 to 4 are built, deployed and verified; the PersonalListener pre-gate has a measured live baseline (section 8): `billing-metering-service` (section 3.1), `agent-runtime-service` (3.2), `PersonalListenerAgent` with `worklogs` and LLM-egress PII redaction (3.3), and the `mytheus-ui` agent sidebar, My Notes and Usage page (3.4), plus the `realtime-gateway` agent-output bridge they need. Item 5 (`mytheus-mobile`, section 7) is deliberately not started (excluded by the maintainer for this session). P8 and P9 are not started. Last verification 2026-11-08. What is left in P7 is listed in section 5a.
+**Status:** IN PROGRESS. Phase P7 work items 1 to 4 are built, deployed and verified; the PersonalListener pre-gate has a measured live baseline (section 8): `billing-metering-service` (section 3.1), `agent-runtime-service` (3.2), `PersonalListenerAgent` with `worklogs` and LLM-egress PII redaction (3.3), and the `mytheus-ui` agent sidebar, My Notes and Usage page (3.4), plus the `realtime-gateway` agent-output bridge they need. Item 5 (`mytheus-mobile`, section 7) is deliberately not started (excluded by the maintainer for this session). P8 Part B (knowledge graph, decision embeddings, My Tasks, decision lineage) is built and tested but not pushed (section 9); P8 Part A and P9 are not started. Last verification 2026-11-09. What is left in P7 is listed in section 5a.
 
 Plan: [plan/plan-7-9-agents-and-monetization.md](../plan/plan-7-9-agents-and-monetization.md).
 
@@ -271,16 +271,137 @@ The first real meetings on `dashboard.mytheus.cloud` (three people) surfaced the
 - Production's key is valid: a `GET /v1/models` made from inside `mytheus-agent-runtime-1` with its own environment answered 200 (status only; no key value was read or printed).
 - Production runs the fixes: `transcription-service`, `realtime-gateway` and `agent-runtime` restarted at 06:45 UTC on 2026-11-09, after `mytheus-realtime` PR #4 merged at 06:43 UTC, and the running transcription image contains the `nova-3` request; the `agent-runtime` has 0 restarts since. `worklogs` is still empty only because no meeting has run since; the next real call is the first end-to-end check of My Notes against a real model in production.
 
-## 9. Phase P8 part A: decision and action candidates (2026-11-09)
+## 9. P8 Part B: the knowledge graph, decision embeddings, My Tasks and lineage (2026-11-09)
+
+Phase 8 is split between two people working in parallel. Part A owns `DecisionAgent` / `ActionAgent`, the `decisions` / `action_items` / `agent_suggestions` migrations, the confirm, edit and dismiss endpoints that produce the `decisions` / `actions` events, and the sidebar confirm cards. Part B, recorded here, owns everything downstream of a confirmed event: `knowledge-graph-service`, the `decisions__{org_id}` embeddings, the My Tasks read path and the decision-lineage read path, and their two UI pages. Part A had landed nothing when this was built, so every Part B piece was developed and tested against fixture events encoded with the registered Avro schemas and, in `core-api`, against a stand-in `action_items` table with the plan's DDL.
+
+Status of Part B: built, tested against real infrastructure, committed to each repo's `main`, **not pushed and not deployed**.
+
+### 9.1 Entry decisions
+
+Recorded canon first in [ADR-0031](../adr/0031-plan-8-graph-store-decision-supersedes-and-mark-done.md), decided by the maintainer 2026-11-09:
+
+| | Decision | Why |
+|---|---|---|
+| D1 | Production runs `nexus_knowledge` in a dedicated self-hosted `apache/age` Postgres, addressed by `AGE_DATABASE_URL`. Closes DECISION-REQUIRED #3 (R1), owner the maintainer. | The production image `supabase/postgres:15.8.1.060` ships no `age.control`. The AGE client, its `$org_id` guards and a live test already existed (Plan 5-6 gap 16 work) against exactly this shape locally. Chosen over the relational fallback (it would discard working code) and over Neo4j Aura (tenant data would leave the VPS). |
+| D2 | `Decision` gains an optional `supersedes` (`["null", uuid]`, default null). `decisions` gains `supersedes`. | The frozen `Decision` schema had no lineage field, so `FOLLOWS_FROM` had no source on the bus and the graph could not be rebuilt from rows for lineage. BACKWARD-safe, same shape as ADR-0029 D4. |
+| D3 | `POST /api/v1/actions/{id}/done`, confirmed to done, emits nothing. | My Tasks needs mark-done and the plan names no route. The `actions` topic carries confirmations only (`status` enum `{confirmed}`). |
+| D4 | The `Decision` graph node carries `meeting_id`, `content`, `confirmed_at`. | The lineage view can be answered from one template call. Rebuildable like every other property. |
+| D5 | `embedding-service` is a `decisions` consumer. | Canon already said `decisions__{org_id}` is embedded on confirm; the taxonomy row did not list the consumer. |
+| D6 | The Redis dedupe key is `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}`. | Found while adding the second `decisions` consumer: see deviation 1 below. |
+| D7 | `knowledge-graph-service` consumes `meeting-room-events` and writes `ATTENDED` on `joined`. | Canon creates `ATTENDED` "when a participant joins" and names no source. |
+
+### 9.2 What landed, per repo
+
+**mytheus-docs**
+
+- `c95c019`: ADR-0031 D1 to D5; `_canon/02-data-model.md` (`decisions.supersedes`, the `action_items` done transition, the graph's physical home, the `Decision` node properties), `_canon/03-event-taxonomy.md` (`decisions` consumers and `supersedes`), `_canon/06-tech-decisions.md` (Graph store row), the Glossary, the ADR index, the R1 status note in the Risk Register, and the RESOLVED marker on the plan's DECISION-REQUIRED #3.
+- `74da45e`: ADR-0031 D6 and D7; the canon Redis row and the `meeting-room-events` consumers; the new dedupe key propagated to the reader docs, the Glossary and diagrams 05 and 12 (plans and audits left as written).
+
+**mytheus-events**
+
+- `783bf4f`: `schemas/decisions/v1.avsc` gains `supersedes`; Python and TypeScript clients and the golden fixture regenerated; checked BACKWARD against the local Schema Registry and re-registered (all 21 subjects in sync).
+
+**mytheus-intelligence**
+
+- `5cb000b`, `libs/shared/inbox.py` + `consumer.py`: the dedupe cache key now carries the consumer group (D6). `tests/test_inbox_dedupe.py` is the regression; the two existing consumer tests use `dedupe_key()`.
+- `3d75236`, `knowledge-graph-service` (plan section 3.7):
+  - `confirmed.py`: the edge writers. `apply_decision` MERGEs `Meeting`, `Decision` (status, confidence, content, meeting_id, confirmed_at) and `PRODUCED`; with `supersedes` it MERGEs the prior decision, marks it `superseded` and writes `FOLLOWS_FROM`. `apply_action` writes `Action`, `PRODUCED` and, with an assignee, `Person` and `ASSIGNED_TO`. `apply_attended` writes `Person -ATTENDED-> Meeting`. Every node and edge carries `org_id` in its MERGE pattern; one transaction per fact under the existing per-org advisory lock; a node already `superseded` stays so if its own confirmation arrives later. Plus `soft_delete` (sets `deleted_at`) and `purge_org` (the RTBF step).
+  - `facts_consumer.py`: `ConfirmedFactsConsumer`, group `knowledge-graph-service.confirmed-facts`, topics `decisions`, `actions`, `meeting-room-events`. Refuses any non-`confirmed` status, takes `org_id` from the header only, skips non-UUID room identities (the audio tap), logs and skips an unusable payload instead of blocking the partition, and enqueues one `graph-events` record per edge (`graph:{edge_label}:{from}:{to}`) in the same transaction as the inbox row.
+  - `templates.py`: `decision_lineage` (ancestors deepest first, the decision, descendants), `decisions_by_person` (via `ATTENDED` and `PRODUCED`), `actions_blocked_on_decision`, `related_decisions_for_topic`. `$org_id` on every node and every relationship pattern, `FOLLOWS_FROM*1..10`, at most 100 rows, soft-deleted nodes filtered, each run in a `READ ONLY` transaction with a 2 s statement timeout. `run_adhoc` backs `POST /graph/cypher`: refused without `$org_id`, refused on any write clause, and read-only by transaction anyway.
+  - `routes.py` + `main.py`: `POST /graph/query/{template}` and `POST /graph/cypher`. `libs/shared/service_auth.py`: the backend's service-token scheme (`X-Mytheus-Service`, `X-Mytheus-Service-Token`, tenant in `X-Mytheus-Org`), secrets in `MYTHEUS_KG_CALLER_TOKENS`, allowed callers `bff`, `rag-service`, `agent-runtime-service`, constant-time compare, unconfigured refuses everyone.
+  - `proto/knowledge_graph.proto` (`KnowledgeGraphService.QueryTemplate`), its runtime mirror `libs/shared/kg_proto.py` (no protoc in the toolchain, same approach as `rag_proto.py`), `grpc_server.py`, `grpc_main.py` (`KG_GRPC_BIND`, default `0.0.0.0:50104`). Same auth, read from metadata.
+  - `worker.py` runs the existing Topic seeder and the new consumer on two threads with separate clients (`KG_CONSUMERS` selects). `rebuild.py` re-applies confirmed rows exported from `core-api` as JSON lines through the same writers, with `--purge`.
+- `ad2c144`, `embedding-service`: `decision_consumer.py`, `DecisionEmbeddingConsumer` (group `embedding-service.embed-decisions`). One point per decision (`uuid5` of `decision:{id}`, so a redelivery overwrites), vector of content plus rationale, payload exactly canon's (`org_id`, `decision_id`, `meeting_id`, `status`, `confidence`); a superseding decision re-labels the prior point `superseded` by payload filter. The worker runs embed-on-ingest and embed-decisions on two threads.
+
+**mytheus-backend**
+
+- `84a8ead`:
+  - `services/core_api/routes/my_tasks.py`, in its own module so it cannot collide with Part A's routes: `GET /api/v1/actions?assignee_id=me&status=confirmed|done` (the caller's own, with the meeting title, soonest due first, undated last; `assignee_id` accepts only `me`) and `POST /api/v1/actions/{id}/done` (assignee or admin; idempotent; `confirmed` only, else 409; audit `action.completed`; no outbox row). `libs/shared/audit.py` gains `ACTION_ACTION_COMPLETED`.
+  - `services/bff/lineage.py`: `GET /bff/meetings/{meeting_id}/decisions/{decision_id}/lineage`. RLS check on the meeting first, then the graph's `decision_lineage` template with `bff`'s token and the caller's org; 404 for an unknown decision or one from another meeting; 503 `DEPENDENCY_UNAVAILABLE` when the graph is down or unconfigured (`KNOWLEDGE_GRAPH_URL`, `MYTHEUS_KG_SERVICE_TOKEN`).
+  - OpenAPI re-emitted (`bff.yaml`, `core-api.yaml`). `api-gateway` already routed `/api/v1/actions` and `/bff`.
+
+**mytheus-ui**
+
+- `573b1d2`: `/tasks` reads `GET /api/v1/actions` (open and done) and completes through the `markTaskDone` Server Action, optimistic with rollback and the server's reason; done is final when live. Real items may have no due date and no priority, so the tasks view model (`src/lib/tasks.ts`) makes both nullable; undated tasks group as Later and sort last; the dates run on the real clock (the mock's fixed `TASKS_NOW` is gone); the High priority filter hides when no task has a priority. The lineage page `(app)/meetings/[meetingId]/decisions/[decisionId]` reads the `bff` route and renders the `FOLLOWS_FROM` chain oldest first, each earlier or later decision linking to its own page. Both pages keep sample data when no gateway is configured. Generated API types refreshed (this also picked up `identity-tenant-service` changes from the 2026-11-08 self-serve work that had not been regenerated). `tests/tasks-dates.test.ts`: 3 tests.
+
+**mytheus-platform**
+
+- `03f8442`: profile `kg` now runs `age` (`apache/age:release_PG16_1.6.0`, volume `agedata`, no published port), `knowledge-graph-service` (read API; `prod.kg.env` only, no Qdrant or relational credential, which the old scaffold had) and `knowledge-graph-worker` (adds `prod.db.ai.env` for its inbox and outbox). `bff` gets `KNOWLEDGE_GRAPH_URL`. `scripts/enable-tiers.sh` generates, only when absent, `prod.age.env`, `prod.kg.env` (`AGE_DATABASE_URL`, `MYTHEUS_KG_CALLER_TOKENS=bff=...`) and `MYTHEUS_KG_SERVICE_TOKEN` in `prod.env`. The default service set is unchanged.
+
+### 9.3 Definition of Done audit (End of P8, Part B lines)
+
+| DoD line | Status | Evidence |
+|---|---|---|
+| `knowledge-graph-service` shipped: AGE `nexus_knowledge` | MET | `ensure_graph` (Plan 5-6); live tests on `apache/age:release_PG16_1.6.0` |
+| per-label `org_id` index | MET | `ensure_graph` creates `{label}_org_idx` on all ten label tables (Plan 5-6 work, re-run here) |
+| `$org_id` on every template | MET | Every template binds it on every node and edge pattern; `test_a_cross_tenant_traversal_returns_nothing`, `test_bad_requests` (no `$org_id` is a 422) |
+| edge-on-confirmation consumer | MET | `test_confirmed_decision_creates_nodes_edges_and_graph_events`, `test_confirmed_action_writes_produced_and_assigned_to`, `test_a_join_writes_attended_only_for_a_user_identity` |
+| four named templates | MET | All four exercised in `test_a_cross_tenant_traversal_returns_nothing`; lineage in `test_the_lineage_template_walks_a_supersession_chain_in_any_order` |
+| graph-events | MET (enqueued) | One outbox row per edge asserted in the tests above. Publishing is `embedding-relay`'s existing drain of `intelligence.outbox`, not re-run here |
+| `decisions__{org_id}` embedded on confirm | MET | `test_a_confirmed_decision_is_embedded_once_and_supersession_relabels` (real BGE, real Qdrant) |
+| My Tasks + lineage UI shipped | PARTIAL | Built, typechecked, linted, unit-tested and `next build` green. Not opened in a browser (Clerk sign-in, same as Plan 7 gap 8), and no real confirmed rows exist until Part A lands |
+| cross-tenant graph isolation test | MET | `test_a_cross_tenant_traversal_returns_nothing`, `test_lineage_over_http_is_scoped_to_the_header_org` |
+| edge-on-confirmation test | MET | As above, plus the consumer refuses a non-`confirmed` status |
+| R1 go/no-go recorded with owner | MET | ADR-0031 D1, Risk Register R1 note, plan DECISION-REQUIRED #3 marked RESOLVED |
+| mobile My Tasks + lineage wired | NOT MET | Out of Part B's scope (mobile is Sushan's lane) |
+| Part A lines (agents, migrations, confirm endpoints, confirm cards, no-silent-commits test) | NOT MINE | Part A |
+
+The brief's own "done when" list: a confirmed decision/action fixture event creates the right nodes and edges (MET); a redelivered event is a no-op, through both the Redis and the inbox path and even past both (MET); a cross-tenant traversal returns nothing (MET); the lineage template walks a supersession chain, delivered out of order (MET); My Tasks and the lineage page render real data (PARTIAL: the full path is tested in pieces, but rendering real data needs Part A's tables and a browser session); tests cover each (MET).
+
+### 9.4 Deviations from the plan, and why
+
+1. **The dedupe cache key changed** (ADR-0031 D6). A real, pre-existing bug: the Redis key had no consumer group while the inbox did, so the second of two groups on one topic silently skipped every message the first had handled within 24 hours. `embedding-service` and `search-service` on `transcript-chunks` were already exposed. Fixed in the shared consumer, so every group in the repo benefits.
+2. **The graph is a separate database from the inbox, so the two are not one transaction.** Graph MERGE commits first, then the inbox and `graph-events` rows. A crash between redelivers and re-MERGEs nothing new. ADR-0005's "edge in the same transaction as the confirmed row" cannot hold with D1; rebuildability replaces it.
+3. **`actions_blocked_on_decision` means "still-open actions PRODUCED by the decision's meeting".** Canon has no Action-to-Decision edge label, and adding one would break the frozen label set. A real blocking relation needs a source field (`action_items.blocked_on_decision_id`, worksplit E1 decision 2).
+4. **`decisions_by_person` walks `ATTENDED`.** "By a person" has no edge of its own; meetings the person attended that produced a decision is the graph-native reading.
+5. **The graph never learns `done`.** Mark-done emits nothing by design (D3), so an `Action` node stays `confirmed`, and `actions_blocked_on_decision` can list an action already done. Acceptable until a progress event exists.
+6. **Read surfaces use service tokens, not the user's Clerk JWT.** `search-service`'s gRPC arm verifies a Clerk JWT with an internal-org claim that production tokens may not carry. `bff` has already resolved the tenant, so the backend's own service-token scheme is the reliable fit.
+7. **`/graph/cypher` is read-only.** ADR-0005 only requires `$org_id`; a write clause is also refused, and the statement runs in a READ ONLY transaction. There is no legitimate ad-hoc writer.
+8. **`RELATES_TO` is not written.** The brief lists `PRODUCED`, `ASSIGNED_TO`, `FOLLOWS_FROM`, `ATTENDED`; topic extraction is not built, so `related_decisions_for_topic` returns nothing until it is.
+9. **The Tasks page keeps the existing design** and swaps in real data, rather than a new page. Priority is not a column, so it is hidden instead of invented.
+10. **No gRPC process in production yet.** `grpc_main.py` exists and is tested; nothing calls it until `rag-service` (P9), so no container was added.
+
+### 9.5 Open gaps and handover
+
+For **Part A** (no Part B code needs to change if these hold):
+
+1. Populate `supersedes` on the `Decision` event when the user says a decision replaces an earlier one, and store it in `decisions.supersedes` (ADR-0031 D2). Without it the graph has no lineage.
+2. Keep the event exactly as frozen: `status = confirmed`, idempotency key `decision:{id}:confirmed` / `action:{id}:confirmed`, header `org_id`, `meeting_id` set, `assignee_id` a `users.id` UUID or null, `due_date` an Avro `date` or null.
+3. Create `action_items` with at least the plan DDL columns `my_tasks.py` reads (`id`, `org_id`, `meeting_id`, `content`, `assignee_id`, `due_date`, `status`, `confidence`, `created_at`, `deleted_at`) and the `(org_id, assignee_id, status)` index. The status domain must include `confirmed` and `done`. `tests/test_my_tasks.py` then uses the real table automatically and drops its stand-in.
+4. Your list route for `/api/v1/actions` must not register a second `GET /api/v1/actions`; extend `my_tasks.py` or use a different query shape, and tell Part B.
+
+Other gaps:
+
+5. **Not pushed, not deployed.** Seven commits across six repos sit on local `main`.
+6. **Browser check** of `/tasks` and the lineage page with a signed-in user and the local stack.
+7. **Enabling `kg` in production**: run `enable-tiers.sh` with `kg` in `MYTHEUS_PROFILES` (it generates the credentials), then the next `bff` deploy picks up the token. Until then the lineage page answers "history is unavailable".
+8. **Pre-existing, not touched:** `tests/test_bff_dashboard.py::test_a_slow_arm_degrades_and_does_not_500` fails on `main` without these changes.
+9. **Local AGE port.** `mytheus-intelligence/docker-compose.yml` maps AGE to 5434; on this machine another project held 5434, so the tests ran against a container on 5436 (`AGE_DATABASE_URL` override). No repo change.
+
+### 9.6 Verification
+
+All observed 2026-11-09 on the local stack: Postgres 5443, Redis 6390, Redpanda 9092 with Schema Registry 8085, Qdrant 6333, and `apache/age:release_PG16_1.6.0` on 5436.
+
+- `mytheus-events`: `codegen/validate.py schemas` OK; codegen regenerated; `uv run pytest tests -q` passed except the known `test_create_topics_is_idempotent` (Windows path); `check_compat.py` 21 subjects BACKWARD; `register.py` and `register.py --check` all 21 in sync.
+- `mytheus-intelligence`, with `AGE_DATABASE_URL=postgresql://nexus_graph:nexus-graph-dev@localhost:5436/nexus_graph MYTHEUS_REQUIRE_AGE=1`:
+  - `uv run pytest tests/test_knowledge_graph_facts_live.py` 9 passed; `tests/test_knowledge_graph_api.py tests/test_knowledge_graph_writer.py tests/test_knowledge_graph_age_live.py tests/test_knowledge_graph_topics.py` 31 passed, 1 skipped (the backend taxonomy copy check).
+  - `tests/test_embedding_decisions.py` 2 passed; `tests/test_search_consumer.py tests/test_embedding_consumer.py` 8 passed after the dedupe change; `tests/test_inbox_dedupe.py` 2 passed.
+  - `ruff check .`, `black --check --target-version py312 .`, `mypy libs services` (93 files) clean.
+- `mytheus-backend`: `MYTHEUS_REQUIRE_DB=1 uv run pytest tests/test_my_tasks.py` 5 passed; `tests/test_bff_lineage.py` 4 passed; `tests/test_openapi_contract.py tests/test_gateway_edge.py tests/test_bff_dashboard.py` 49 passed, 1 failed (gap 8, also failing without these changes); `python -m scripts.emit_openapi --check` matches; `ruff`, `black --check`, `mypy` on the new modules clean.
+- `mytheus-ui`: `npx tsc --noEmit`, `next lint`, `npm run generate:api:check`, `npm test` (23 passed) and `npx next build` all green. Not opened in a browser (gap 6).
+- `mytheus-platform`: `docker compose -f deploy/compose.prod.yml config --services` lists the same default services as before; with `COMPOSE_PROFILES=kg` it adds `age`, `knowledge-graph-service`, `knowledge-graph-worker`; `bash -n scripts/enable-tiers.sh` OK.
+
+## 10. Phase P8 part A: decision and action candidates (2026-11-09)
 
 P8 is split between two developers working in parallel. Part A (this section) is `DecisionAgent` and `ActionAgent`, the `core-api` confirm path and the meeting-room confirm cards (plan sections 3.5, 3.6 and 3.8 step 1). Part B is `knowledge-graph-service`, the `decisions__{org_id}` embedding, My Tasks (`GET /api/v1/actions` and mark done) and the lineage view, and is recorded by its owner. The seam between them is the `decisions` and `actions` topics, whose schemas Part B consumes.
 
-Canon first: `_canon/02-data-model.md` gains the `decisions`, `action_items` and `agent_suggestions` columns the plan DDL has, and [ADR-0031](../adr/0031-plan-8-decision-and-action-candidates.md) records the build decisions (D1 to D7).
+Canon first: `_canon/02-data-model.md` gains the `decisions`, `action_items` and `agent_suggestions` columns the plan DDL has, and [ADR-0032](../adr/0032-plan-8-decision-and-action-candidates.md) records the build decisions (D1 to D7).
 
 ### What landed, per repo
 
-- **mytheus-docs** `42566cf`: the canon rows, ADR-0031, the README index, the Glossary row for `agent_suggestions`.
-- **mytheus-events** `aee3060`: `Decision` gains `supersedes: ["null", uuid]`, default null (ADR-0031 D1). BACKWARD-compatible; clients and the golden fixture regenerated; registered on the local Schema Registry. Part B's developer chose the same option independently.
+- **mytheus-docs** `42566cf`: the canon rows, ADR-0032 (numbered after part B's ADR-0031, which merged first), the README index, the Glossary row for `agent_suggestions`.
+- **mytheus-events**: nothing merged from part A. `Decision.supersedes` landed from part B (`783bf4f`, [ADR-0031](../adr/0031-plan-8-graph-store-decision-supersedes-and-mark-done.md) D2); part A's identical change (`aee3060`, PR #2) was closed as redundant. `core-api` fills the field on confirm (ADR-0032 D1).
 - **mytheus-intelligence**:
   - `55aba99`: `agents/candidates.py` (the shared `CandidateAgent` graph: a Haiku gate, then Sonnet extraction to strict JSON, defensive parsing, the 0.7 / 0.4 bands per candidate, deterministic ids `uuid5(ns, "{agent}:{window_id}:{index}")`, "Participant N" labels mapped back to speaker ids, only UUIDs passed through); `agents/decision_agent.py` and `agents/action_agent.py`, both `scope = "meeting"`; four prompts (`decision_gate@v1`, `decision_agent@v1`, `action_gate@v1`, `action_agent@v1`); `tests/test_decision_action_agents.py`. The action prompt carries today's UTC date so "by Friday" becomes an ISO date.
   - `8e3477b`: the eval harness for both agents (doc 08 section 6.3): `tests/eval/{decision,action}_golden.json` (14 windows each: 7 with no item, 5 with one, 2 with two), greedy keyword matching to precision, recall and F1, and the Brier score of emitted confidence against matched.
@@ -291,13 +412,13 @@ Canon first: `_canon/02-data-model.md` gains the `decisions`, `action_items` and
   - `1b6fe1b`, `services/core_api/routes/candidates.py`: `GET /api/v1/meetings/{id}/candidates` (proposed, surfaced band only); `PATCH`, `POST .../confirm` and `POST .../dismiss` for `/api/v1/decisions/{id}` and `/api/v1/actions/{id}`. Rows are read `FOR UPDATE`. Confirm enqueues exactly one outbox row (`decision:{id}:confirmed` / `action:{id}:confirmed`) and an audit row in the same transaction; a second confirm returns the row and enqueues nothing; dismiss enqueues nothing; confirm after dismiss and edit or dismiss after confirm are 409. Participants only (403 `NOT_A_PARTICIPANT`), another tenant 404. OpenAPI re-emitted.
   - `bf87161`: a record the consumer cannot decode (for example a non-UUID string in a `uuid` field) is now `PoisonMessage` and goes to the DLQ. Before, the `ValueError` escaped the loop, the consumer died, and every restart re-read the same offset. Found by the end-to-end run below, on records left in the local broker by earlier test runs.
 - **mytheus-realtime**:
-  - `16d5cb7`: `agentOutput.ts` forwards surfaced decision and action candidates as a new pub/sub message `agent-candidate`; `server.ts` emits it to every socket of the meeting (ADR-0031 D4), on the org-scoped channel. PersonalListener notes stay per user.
+  - `16d5cb7`: `agentOutput.ts` forwards surfaced decision and action candidates as a new pub/sub message `agent-candidate`; `server.ts` emits it to every socket of the meeting (ADR-0032 D4), on the org-scoped channel. PersonalListener notes stay per user.
   - `202f919`: the three spawned-process tests set `AGENT_OUTPUT_ENABLED=0`; their gateways had joined the shared agent-output consumer group, and the pod-death test left a dead member holding partitions.
 - **mytheus-ui** `94f014a`: `src/lib/realtime/candidates.ts` (a pure reducer merging live and re-hydrated candidates by id; a confirmed or dismissed one never comes back), `useMeetingSocket` subscribes to `agent-candidate` and re-hydrates from `/api/meeting-candidates` on every (re)connect, `CandidateCard` in the agent sidebar with Confirm, Edit (inline) and Dismiss as server actions in `src/app/actions/candidates.ts`. Confirm retries a 404 briefly, because a card can arrive a moment before `core-api` has stored its row. Generated API types refreshed.
 
 ### Deviations, and why
 
-1. **Candidates are a list in `payload_json`** (ADR-0031 D2). The canon idempotency key allows one `agent-results` record per agent per window.
+1. **Candidates are a list in `payload_json`** (ADR-0032 D2). The canon idempotency key allows one `agent-results` record per agent per window.
 2. **The agent assigns the row id** (D3), so the live card and the stored row agree without a round trip.
 3. **Candidates go to the whole meeting** (D4), not to the user the runtime ran the meeting-scope agent as.
 4. **The silent band is a `proposed` row** (D6), not a worklog: there is no per-user note for a meeting's decision.
@@ -321,5 +442,5 @@ Canon first: `_canon/02-data-model.md` gains the `decisions`, `action_items` and
 1. **Deploy order for `supersedes`:** register the new `decisions-value` schema on the production Schema Registry, then restart the relay. The end-to-end run's decision event had no `supersedes` because a long-running relay had cached the older schema.
 2. **Browser check** of the cards in a live call with a signed-in user (gap 8).
 3. **A meeting-scope agent runs only when the lowest-sorted roster user's context fetch succeeds** (`runtime.py` `_run_user`); if that one fetch fails, the window gets no decision or action pass. A budget block notifies only that user, in wording about notes.
-4. **Another participant's confirm or dismiss is not pushed to the room**; the other cards settle on their next action (200 or 409) or on re-hydrate (ADR-0031 consequences).
+4. **Another participant's confirm or dismiss is not pushed to the room**; the other cards settle on their next action (200 or 409) or on re-hydrate (ADR-0032 consequences).
 5. **Mobile** confirm cards (plan section 7) are not started.

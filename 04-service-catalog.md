@@ -24,7 +24,7 @@ This catalog turns each of the **20 canonical services** in [Service Catalog (ca
 Two cross-cutting invariants bind every service and are repeated in each subsection's failure-mode analysis rather than re-derived:
 
 1. **Tenant isolation at every layer.** An authz middleware injects `org_id` (from the Clerk-verified JWT) into every query; Postgres uses Row-Level Security (RLS) for the pooled long tail and cell-based isolation for large/enterprise tenants; events are tenant-partitioned; Qdrant is per-tenant collections; Apache AGE `nexus_knowledge` is org-partitioned; Redis keys are `nexus:{org_id}:…`-namespaced. See [Multi-Tenancy & Isolation](06-multi-tenancy.md).
-2. **At-least-once event delivery with idempotency.** Every producer writes a transactional **outbox** in the same DB transaction as its state change; every consumer dedupes on `idempotency_key` via an **inbox** table + Redis dedupe cache (`nexus:{org_id}:dedupe:{topic}:{idempotency_key}`, 24h TTL); poison messages land in a per-topic **DLQ**. Avro + Schema Registry, **BACKWARD** compatibility, one subject per topic (`{topic}-value`). See [Event Streaming & Schema Registry](07-event-architecture.md).
+2. **At-least-once event delivery with idempotency.** Every producer writes a transactional **outbox** in the same DB transaction as its state change; every consumer dedupes on `idempotency_key` via an **inbox** table + Redis dedupe cache (`nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}`, 24h TTL); poison messages land in a per-topic **DLQ**. Avro + Schema Registry, **BACKWARD** compatibility, one subject per topic (`{topic}-value`). See [Event Streaming & Schema Registry](07-event-architecture.md).
 
 ### 1.1 The four scaling families
 

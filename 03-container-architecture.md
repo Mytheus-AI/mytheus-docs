@@ -273,7 +273,7 @@ The async backbone is **Redpanda** (Kafka API), **Avro + Schema Registry**, one 
 
 > [SaaS-scale adjustment] The SaaS posture adds control-plane / metering / lifecycle topics not in the PDF: `tenant-events`, `meeting-events`, `meeting-room-events`, `integration-events`, `usage-events`, `billing-events`, `graph-events`, `embedding-events`, `presence-events`, `notification-delivery-events`, `user-sync-events`, `admin-events`. These are listed in [Service Catalog](_canon/01-service-catalog.md) §5 and detailed in [Event Streaming & Schema Registry](07-event-architecture.md).
 
-Every async edge is **at-least-once with idempotency**: producers write through a transactional **outbox** in the same DB transaction as their state change; a relay publishes to Redpanda; consumers dedupe on `idempotency_key` via an **inbox** table plus the `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` Redis cache (24h TTL, per [Data Model](_canon/02-data-model.md) §5); poison messages land in a per-topic **DLQ**. This is locked in [Tech Decisions](_canon/06-tech-decisions.md) §2.4.
+Every async edge is **at-least-once with idempotency**: producers write through a transactional **outbox** in the same DB transaction as their state change; a relay publishes to Redpanda; consumers dedupe on `idempotency_key` via an **inbox** table plus the `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}` Redis cache (24h TTL, per [Data Model](_canon/02-data-model.md) §5); poison messages land in a per-topic **DLQ**. This is locked in [Tech Decisions](_canon/06-tech-decisions.md) §2.4.
 
 ```mermaid
 flowchart LR

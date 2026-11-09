@@ -107,9 +107,9 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `transcript_chunks` | entity | Finalized diarized utterances: speaker_id, start_ms, end_ms, text, is_final, confidence. Index on `(meeting_id, start_ms)`; only finals persisted. Owned by `transcription-service`. | — |
 | `meeting_speakers` | entity | Diarized `speaker_id` → `user_id` mapping with confidence and `assignment` (manual/suggested) — the R7 source of truth. Owned by `core-api` (the catalog lists it under `core-api`'s owned data; the data model labels its owner `transcription-service` — catalog wins, see §10). | — |
 | `worklogs` | entity | Per-user notes (PersonalListenerAgent): content, relevance_score, created_by_agent, source_chunk_ids. Owned by `core-api`. | — |
-| `decisions` | entity | Confirmed decisions: content, rationale, confidence, status, confirmed_by. On confirm → AGE `Decision`→`Meeting` `PRODUCED` edge. Owned by `core-api`. | — |
+| `decisions` | entity | Confirmed decisions: content, rationale, confidence, status, confirmed_by, supersedes. On confirm → AGE `Decision`→`Meeting` `PRODUCED` edge; `supersedes` → `FOLLOWS_FROM` (ADR-0031). Owned by `core-api`. | — |
 | `action_items` | entity | Confirmed action items: content, assignee_id, due_date, confidence, status. On confirm → AGE `Action`→`Person` `ASSIGNED_TO` edge. Owned by `core-api`. | — |
-| `agent_suggestions` | entity | QuestionAgent output: question, `priority` 1–3, `status` `open`/`asked`/`dismissed`/`saved` (Ask/Dismiss/Save-for-later; persists into next meeting, [ADR-0031](adr/0031-plan-8-decision-and-action-candidates.md) D7). Owned by `core-api`. | — |
+| `agent_suggestions` | entity | QuestionAgent output: question, `priority` 1–3, `status` `open`/`asked`/`dismissed`/`saved` (Ask/Dismiss/Save-for-later; persists into next meeting, [ADR-0032](adr/0032-plan-8-decision-and-action-candidates.md) D7). Owned by `core-api`. | — |
 | `agent_collaborations` | entity | ContextGapAgent A2A logs: requester, responder, query, result, success, latency. Owned by `core-api`. | — |
 | `chat_messages` | entity | In-meeting chat (non-AV via Socket.io). Range-partition by `created_at`. Owned by `core-api`. | — |
 | `document_chunks` | entity | unstructured.io typed elements: document_id, element_id, element_type, text, position. Mirrors the Qdrant `document_chunks` payload. Owned by `rag-service`. | — |
@@ -177,7 +177,7 @@ Only **seven** schema names are frozen canon ([Tech Decisions §2.4/§4](_canon/
 |---|---|---|---|
 | `TranscriptChunk` | Avro-schema | Value of `transcript-chunks`. Frozen canon. | — |
 | `AgentResult` | Avro-schema | Value of `agent-results`. Frozen canon. | — |
-| `Decision` | Avro-schema | Value of `decisions`. Frozen canon. | — |
+| `Decision` | Avro-schema | Value of `decisions`. Frozen canon. Optional `supersedes` appended, BACKWARD-safe (ADR-0031 D2). | — |
 | `Action` | Avro-schema | Value of `actions`. Frozen canon. | — |
 | `Notification` | Avro-schema | Value of `notifications`. Frozen canon. | — |
 | `AgentRequest` | Avro-schema | Value of `agent-requests`; carries requester_agent_id, responder_target, query, deadline, correlation_id. Frozen canon. | — |
@@ -259,7 +259,7 @@ Cross-cutting concepts referenced across the set. PDF-original concepts are dash
 | BACKWARD compatibility | concept | The Schema Registry compatibility mode: a new consumer schema can read data written by the previous producer schema. One subject per topic, `{topic}-value`. | — |
 | Transactional outbox / inbox | concept | Producer writes state + outbox row in one transaction; consumer dedupes via an inbox table — the at-least-once → exactly-once-in-effect machinery. | added (SaaS) |
 | DLQ (dead-letter queue) | concept | Per-topic `<topic>.dlq` (21 total) for poison messages; 14-day retention; idempotency-preserving replay via `admin-ops-service`. | added (SaaS) |
-| Idempotency key | concept | Stable per-logical-fact dedupe key carried in the envelope header and the Redis `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` cache (24h). | added (SaaS) |
+| Idempotency key | concept | Stable per-logical-fact dedupe key carried in the envelope header and the Redis `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}` cache (24h). | added (SaaS) |
 | SSO / SAML / SCIM | concept | Enterprise identity via Clerk for Enterprise-tier tenants. | added (SaaS) |
 | Dunning | concept | Stripe failed-payment recovery flow, run via `billing-metering-service` and Temporal sagas. | added (SaaS) |
 | Seats | concept | Per-subscription seat count billed via Stripe. | added (SaaS) |
