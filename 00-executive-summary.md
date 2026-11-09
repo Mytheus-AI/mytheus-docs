@@ -161,7 +161,7 @@ The PDF was a single-deployment student build. Eight changes turn it into a comm
 
 > [SaaS-scale adjustment] **Dedicated inference.** The PDF ran BGE-small embeddings and the BGE-reranker via ONNX on the same FastAPI API tier. They now run as dedicated autoscaling GPU services (`embedding-service`, `reranker-service`) on Ray Serve / vLLM, off the API tier, with `agent-runtime-service` autoscaling on token throughput — so the inference cost center scales and bills independently of CRUD traffic. This is the architectural fix for R4 (cost) and R5 (latency).
 
-> [SaaS-scale adjustment] **Idempotent events.** The PDF implied at-most-once "consume → process" semantics. Production locks at-least-once delivery with idempotency keys, a transactional outbox per producer, an inbox/dedupe cache per consumer (`nexus:{org_id}:dedupe:{topic}:{idempotency_key}`), and per-topic DLQs. Avro + Schema Registry BACKWARD compatibility is preserved verbatim.
+> [SaaS-scale adjustment] **Idempotent events.** The PDF implied at-most-once "consume → process" semantics. Production locks at-least-once delivery with idempotency keys, a transactional outbox per producer, an inbox/dedupe cache per consumer (`nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}`), and per-topic DLQs. Avro + Schema Registry BACKWARD compatibility is preserved verbatim.
 
 ### 4.1 The `org_id` injection chokepoint
 

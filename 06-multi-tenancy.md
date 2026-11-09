@@ -211,7 +211,7 @@ All canon topics — `transcript-chunks`, `document-chunks`, `agent-results`, `d
 Partition-key choice is `org_id`, not `meeting_id`, for tenant isolation; within a tenant, per-meeting ordering is preserved by including `meeting_id` in a composite key for topics where intra-meeting order matters (`transcript-chunks`, `agent-stream`). Two rules bind the stream layer:
 
 1. **`org_id` travels in the Avro record/header, and every consumer re-asserts it** before any write — the partition key is not trusted alone. A consumer sets `app.current_org` from the event's `org_id` exactly as a request handler does, so the same RLS backstop applies to event-sourced writes.
-2. **At-least-once + idempotency.** Producers write through a transactional **outbox** in the same DB transaction as their state change; consumers dedupe on `idempotency_key` via an inbox table + the Redis dedupe cache `nexus:{org_id}:dedupe:{topic}:{idempotency_key}`; poison messages land in a per-topic **DLQ**. Idempotency keys are tenant-scoped, so two tenants can never collide on a key.
+2. **At-least-once + idempotency.** Producers write through a transactional **outbox** in the same DB transaction as their state change; consumers dedupe on `idempotency_key` via an inbox table + the Redis dedupe cache `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}`; poison messages land in a per-topic **DLQ**. Idempotency keys are tenant-scoped, so two tenants can never collide on a key.
 
 ```mermaid
 flowchart LR
@@ -241,7 +241,7 @@ Redis (Upstash) keys are **all** prefixed `nexus:{org_id}:…` ([Data Model §5]
 | `nexus:{org_id}:presence:{meeting_id}` | Socket.io presence set | meeting-lifetime |
 | `nexus:{org_id}:pubsub:meeting:{meeting_id}` | Socket.io fan-out channel across `realtime-gateway` instances | channel |
 | `nexus:{org_id}:queue:agent:{user_id}` | Per-user priority queue (urgent alerts pre-empt notes) | session |
-| `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` | At-least-once consumer dedupe (inbox) | 24h |
+| `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}` | At-least-once consumer dedupe (inbox) | 24h |
 | `nexus:{org_id}:budget:{period}` | Hot mirror of `agent_budgets.tokens_consumed` for fast quota checks | period-end |
 | `nexus:{org_id}:ratelimit:{user_id}` | Per-user LiteLLM rate-limit counters | sliding window |
 | `nexus:{org_id}:llmcache:{prompt_ref}:{input_hash}` | Completion cache for an LLM call whose tier, prompt version and normalized input match exactly ([ADR-0030](adr/0030-plan-7-llm-response-cache-and-personal-listener-gating.md)) | 1h |

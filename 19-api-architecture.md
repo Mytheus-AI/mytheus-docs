@@ -344,7 +344,7 @@ sequenceDiagram
 
 | Rule | Detail |
 |---|---|
-| Scope | Keyed per `(org_id, endpoint, idempotency_key)` in `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` ([Data Model §5](_canon/02-data-model.md)) plus a unique constraint on the owning table as the durable backstop. |
+| Scope | Keyed per `(org_id, endpoint, idempotency_key)` in `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}` ([Data Model §5](_canon/02-data-model.md)) plus a unique constraint on the owning table as the durable backstop. |
 | Window | 24h Redis TTL; a uniqueness constraint persists beyond that for the durable record. |
 | Replay, same body | Returns the **original** response and status; the write runs **once**. |
 | Replay, different body | `409 IDEMPOTENCY_KEY_REUSED` — the key is bound to its first payload. |

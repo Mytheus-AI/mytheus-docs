@@ -565,7 +565,7 @@ Cache/pub-sub is **Redis (Upstash)**. Every key is tenant-namespaced `nexus:{org
 | `nexus:{org_id}:presence:{meeting_id}` | Socket.io presence set | meeting-lifetime |
 | `nexus:{org_id}:pubsub:meeting:{meeting_id}` | Pub/sub fan-out channel for Socket.io across `realtime-gateway` instances | n/a (channel) |
 | `nexus:{org_id}:queue:agent:{user_id}` | Per-user priority queue (urgent alerts pre-empt notes) | session |
-| `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` | At-least-once consumer dedupe (inbox cache) | 24h |
+| `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}` | At-least-once consumer dedupe (inbox cache) | 24h |
 | `nexus:{org_id}:budget:{period}` | Hot mirror of `agent_budgets.tokens_consumed` for fast quota checks | period-end |
 | `nexus:{org_id}:ratelimit:{user_id}` | Per-user LiteLLM rate-limit counters | sliding window |
 | `nexus:{org_id}:llmcache:{prompt_ref}:{input_hash}` | Completion cache for an LLM call whose tier, prompt version and normalized input match exactly ([ADR-0030](adr/0030-plan-7-llm-response-cache-and-personal-listener-gating.md)) | 1h |

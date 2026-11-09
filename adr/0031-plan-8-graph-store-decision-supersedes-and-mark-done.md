@@ -36,6 +36,10 @@ Chosen over the relational fallback because the AGE client, its tenant guards an
 
 **D5. `embedding-service` consumes `decisions`** to embed confirmed decisions into `decisions__{org_id}`. Canon already makes `decisions__{org_id}` "embedded on confirm" from the `decisions` topic; the event taxonomy row did not list the consumer.
 
+**D6. The consumer dedupe cache key is scoped by consumer group:** `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}`. The durable inbox already keys on the consumer group, but the Redis cache did not, so when two groups consume one topic (`transcript-chunks`: `embedding-service` and `search-service`; `decisions`: `knowledge-graph-service` and `embedding-service`) whichever group handled a message second within 24 hours read the other group's key as its own duplicate and skipped its effect. Found while adding the second `decisions` consumer. The `nexus:{org_id}:` prefix is unchanged.
+
+**D7. `knowledge-graph-service` consumes `meeting-room-events`** and writes `ATTENDED` (`Person` to `Meeting`) on `joined` when `participant_id` is a user id. Canon creates `ATTENDED` "when a participant joins" and names no source; this is that source. A join is an observed fact, not an agent candidate, so the confirmation rule is not touched.
+
 ## Consequences
 
 - **Positive.** The graph can be built now, against code that already passes its tenant-isolation tests, and lineage has a durable relational source.

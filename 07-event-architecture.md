@@ -371,7 +371,7 @@ CREATE TABLE inbox (
 The Redis dedupe key is the canonical namespace from the [Data Model §5](_canon/02-data-model.md):
 
 ```
-nexus:{org_id}:dedupe:{topic}:{idempotency_key}    TTL 24h
+nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}    TTL 24h
 ```
 
 ```python

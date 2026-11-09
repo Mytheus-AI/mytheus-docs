@@ -259,7 +259,7 @@ Cross-cutting concepts referenced across the set. PDF-original concepts are dash
 | BACKWARD compatibility | concept | The Schema Registry compatibility mode: a new consumer schema can read data written by the previous producer schema. One subject per topic, `{topic}-value`. | — |
 | Transactional outbox / inbox | concept | Producer writes state + outbox row in one transaction; consumer dedupes via an inbox table — the at-least-once → exactly-once-in-effect machinery. | added (SaaS) |
 | DLQ (dead-letter queue) | concept | Per-topic `<topic>.dlq` (21 total) for poison messages; 14-day retention; idempotency-preserving replay via `admin-ops-service`. | added (SaaS) |
-| Idempotency key | concept | Stable per-logical-fact dedupe key carried in the envelope header and the Redis `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` cache (24h). | added (SaaS) |
+| Idempotency key | concept | Stable per-logical-fact dedupe key carried in the envelope header and the Redis `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}` cache (24h). | added (SaaS) |
 | SSO / SAML / SCIM | concept | Enterprise identity via Clerk for Enterprise-tier tenants. | added (SaaS) |
 | Dunning | concept | Stripe failed-payment recovery flow, run via `billing-metering-service` and Temporal sagas. | added (SaaS) |
 | Seats | concept | Per-subscription seat count billed via Stripe. | added (SaaS) |
