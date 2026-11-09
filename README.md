@@ -120,6 +120,7 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0028](adr/0028-object-storage-buckets-use-the-mytheus-prefix.md) | Object storage buckets are named `mytheus-recordings`, `mytheus-documents`, `mytheus-attachments`, `mytheus-invoices`, `mytheus-exports`, `mytheus-audit-archive` (was `nexus-*`) |
 | [ADR-0029](adr/0029-plan-7-budget-scope-tier-mapping-and-metering-ownership.md) | Plan 7 entry decisions: plan allowances are per tenant, not per seat; extraction tier is Sonnet 5.5 (`claude-sonnet-5-5`); `billing-metering-service` derives minutes, transcription seconds and storage itself; `model_tier` added to `usage_events` and `UsageEvent`; no Anthropic DPA gate for this academic build. |
 | [ADR-0030](adr/0030-plan-7-llm-response-cache-and-personal-listener-gating.md) | Plan 7 build decisions: exact-match LLM response cache `nexus:{org_id}:llmcache:{prompt_ref}:{input_hash}` (1h); PersonalListener relevance threshold 0.5 (tunable); `core-api` decides `surfaced` with `agent_confidence_overrides`; only surfaced-band notes stream; live agent output delivered per user over the meeting channel. |
+| [ADR-0031](adr/0031-plan-8-decision-and-action-candidates.md) | Plan 8 build decisions: optional `supersedes` on `Decision`; candidates as a list in `payload_json` with deterministic ids; candidates delivered to the whole meeting (`agent-candidate`); any meeting participant confirms; silent band is a never-surfaced `proposed` row. |
 
 ---
 

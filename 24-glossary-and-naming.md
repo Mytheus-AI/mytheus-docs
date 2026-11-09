@@ -109,7 +109,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `worklogs` | entity | Per-user notes (PersonalListenerAgent): content, relevance_score, created_by_agent, source_chunk_ids. Owned by `core-api`. | — |
 | `decisions` | entity | Confirmed decisions: content, rationale, confidence, status, confirmed_by. On confirm → AGE `Decision`→`Meeting` `PRODUCED` edge. Owned by `core-api`. | — |
 | `action_items` | entity | Confirmed action items: content, assignee_id, due_date, confidence, status. On confirm → AGE `Action`→`Person` `ASSIGNED_TO` edge. Owned by `core-api`. | — |
-| `agent_suggestions` | entity | QuestionAgent output: question, `priority` 1–3, `status` Ask/Dismiss/Save-for-later (persists into next meeting). Owned by `core-api`. | — |
+| `agent_suggestions` | entity | QuestionAgent output: question, `priority` 1–3, `status` `open`/`asked`/`dismissed`/`saved` (Ask/Dismiss/Save-for-later; persists into next meeting, [ADR-0031](adr/0031-plan-8-decision-and-action-candidates.md) D7). Owned by `core-api`. | — |
 | `agent_collaborations` | entity | ContextGapAgent A2A logs: requester, responder, query, result, success, latency. Owned by `core-api`. | — |
 | `chat_messages` | entity | In-meeting chat (non-AV via Socket.io). Range-partition by `created_at`. Owned by `core-api`. | — |
 | `document_chunks` | entity | unstructured.io typed elements: document_id, element_id, element_type, text, position. Mirrors the Qdrant `document_chunks` payload. Owned by `rag-service`. | — |
