@@ -81,8 +81,8 @@ Every entity in NEXUS, its owning service, tenant key, key fields, store, and pa
 | `transcript_chunks` | transcription-service | Yes | `id`, `org_id`, `meeting_id`, `speaker_id`, `start_ms`, `end_ms`, `text`, `is_final`, `confidence` | Postgres | **Index on `(meeting_id, start_ms)`** (PDF). Only finals persisted. Range-partition by `created_at` month; hot 90d, then cold tier. |
 | `meeting_speakers` | transcription-service | Yes | `id`, `org_id`, `meeting_id`, `speaker_id` (diarized), `user_id` (mapped), `confidence`, `assignment` (`manual`/`suggested`) | Postgres | RLS by `org_id`. Diarized `speaker_id` → `user_id` mapping (PDF R7: reliable manual + confidence-scored suggestion). |
 | `worklogs` | agent-service | Yes | `id`, `org_id`, `meeting_id`, `user_id`, `window_id`, `content`, `relevance_score`, `confidence`, `created_by_agent`, `source_chunk_ids uuid[]`, `surfaced`, `created_at`, `deleted_at` | Postgres | RLS by `org_id`. Per-user notes (PersonalListenerAgent). `surfaced = false` is the 0.4-0.7 silent-log band: persisted, never rendered ([ADR-0030](../adr/0030-plan-7-llm-response-cache-and-personal-listener-gating.md) D3). Monthly partitions on `created_at` with a DEFAULT. Retained per tenant retention policy. |
-| `decisions` | agent-service | Yes | `id`, `org_id`, `meeting_id`, `content`, `rationale`, `confidence`, `status`, `confirmed_by` | Postgres | RLS by `org_id`. On confirmation → AGE `Decision`→`Meeting` `PRODUCED` edge. Soft delete. |
-| `action_items` | agent-service | Yes | `id`, `org_id`, `meeting_id`, `content`, `assignee_id`, `due_date`, `confidence`, `status` | Postgres | RLS by `org_id`. On confirmation → AGE `Action`→`Person` `ASSIGNED_TO` edge. |
+| `decisions` | agent-service | Yes | `id`, `org_id`, `meeting_id`, `content`, `rationale`, `confidence`, `status`, `confirmed_by`, `supersedes` | Postgres | RLS by `org_id`. On confirmation → AGE `Decision`→`Meeting` `PRODUCED` edge; a non-null `supersedes` (the earlier decision this one replaces) → `FOLLOWS_FROM` ([ADR-0031](../adr/0031-plan-8-graph-store-decision-supersedes-and-mark-done.md) D2). Soft delete. |
+| `action_items` | agent-service | Yes | `id`, `org_id`, `meeting_id`, `content`, `assignee_id`, `due_date`, `confidence`, `status` | Postgres | RLS by `org_id`. On confirmation → AGE `Action`→`Person` `ASSIGNED_TO` edge. `confirmed` → `done` via `POST /api/v1/actions/{id}/done`, which emits no event ([ADR-0031](../adr/0031-plan-8-graph-store-decision-supersedes-and-mark-done.md) D3). |
 | `agent_suggestions` | agent-service | Yes | `id`, `org_id`, `user_id`, `meeting_id`, `question`, `priority` (1–3), `status` (Ask/Dismiss/Save-for-later) | Postgres | RLS by `org_id`. QuestionAgent output. Save-for-later persists into next meeting. |
 | `agent_collaborations` | agent-service | Yes | `id`, `org_id`, `requester`, `responder`, `query`, `result`, `success`, `latency` | Postgres | RLS by `org_id`. ContextGapAgent A2A logs. Latency feeds R5/R6 dashboards. |
 | `chat_messages` | meeting-service | Yes | `id`, `org_id`, `meeting_id`, `user_id`, `content`, `created_at` | Postgres | RLS by `org_id`. In-meeting chat (non-AV via Socket.io). Range-partition by `created_at`. |
@@ -242,6 +242,7 @@ erDiagram
     float confidence
     text status
     uuid confirmed_by
+    uuid supersedes FK
   }
   action_items {
     uuid id PK
@@ -286,7 +287,7 @@ flowchart LR
 
 ## 4. Apache AGE knowledge graph (`nexus_knowledge`)
 
-Graph store is **Apache AGE** (Cypher over PostgreSQL), graph named **`nexus_knowledge`** (verbatim). Edges are created on confirmation, never speculatively. Owned by graph-service.
+Graph store is **Apache AGE** (Cypher over PostgreSQL), graph named **`nexus_knowledge`** (verbatim). Edges are created on confirmation, never speculatively. Owned by graph-service. In production the graph runs in a dedicated self-hosted `apache/age` Postgres beside the system-of-record Postgres, addressed by `AGE_DATABASE_URL` (R1 fallback, [ADR-0031](../adr/0031-plan-8-graph-store-decision-supersedes-and-mark-done.md) D1).
 
 > [SaaS-scale adjustment] The PDF described one global `nexus_knowledge` graph. At SaaS scale the graph is **org-partitioned**: every node carries an `org_id` property and every Cypher template is parameterized with `$org_id` so traversals never cross tenant boundaries. A documented migration path exists to Amazon Neptune / Neo4j Aura plus a relational materialized-view fallback (honors PDF R1, adds the at-scale exit). See [Data Architecture](../05-data-architecture.md).
 
@@ -296,7 +297,7 @@ Graph store is **Apache AGE** (Cypher over PostgreSQL), graph named **`nexus_kno
 | --- | --- | --- |
 | `Person` | `users` | `user_id`, `org_id`, `role` |
 | `Meeting` | `meetings` | `meeting_id`, `org_id`, `title` |
-| `Decision` | `decisions` | `decision_id`, `org_id`, `status`, `confidence` |
+| `Decision` | `decisions` | `decision_id`, `org_id`, `status`, `confidence` (plus `meeting_id`, `content`, `confirmed_at` for the lineage view, [ADR-0031](../adr/0031-plan-8-graph-store-decision-supersedes-and-mark-done.md) D4) |
 | `Action` | `action_items` | `action_id`, `org_id`, `status` |
 | `Topic` | role→topics taxonomy | `name`, `org_id` |
 

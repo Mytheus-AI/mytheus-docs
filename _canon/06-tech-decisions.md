@@ -133,7 +133,7 @@ sequenceDiagram
 | ORM / data layer | SQLAlchemy 2.0 async + asyncpg | locked | PDF | Async ORM matched to FastAPI; asyncpg for throughput. |
 | Validation | Pydantic v2 | locked | PDF | Request/response and settings validation; aligns with FastAPI. |
 | Migrations | Alembic | locked | PDF | Versioned schema evolution from Phase 2 onward. |
-| Graph store | Apache AGE extension, graph named `nexus_knowledge` | locked | PDF→SaaS | Cypher-over-Postgres keeps the graph co-located; SaaS adds documented exit to Amazon Neptune / Neo4j Aura plus a relational materialized-view fallback. |
+| Graph store | Apache AGE extension, graph named `nexus_knowledge` | locked | PDF→SaaS | Cypher-over-Postgres keeps the graph co-located; SaaS adds documented exit to Amazon Neptune / Neo4j Aura plus a relational materialized-view fallback. Production runs AGE in a dedicated self-hosted Postgres (R1 fallback, [ADR-0031](../adr/0031-plan-8-graph-store-decision-supersedes-and-mark-done.md) D1). |
 | Graph migration path | Amazon Neptune / Neo4j Aura + relational materialized-view fallback | locked | SaaS-add | Honors PDF R1 (AGE may be awkward on managed Supabase) and adds the at-scale exit. |
 | Vector DB | Qdrant Cloud | locked | PDF | Managed ANN store for hybrid retrieval; per-tenant collections at scale. |
 | Embedding model | BGE-small-en, 384-dim, via ONNX runtime | locked | PDF | Small, fast, good-enough recall; 384-dim keeps Qdrant memory low. |

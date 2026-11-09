@@ -107,7 +107,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `transcript_chunks` | entity | Finalized diarized utterances: speaker_id, start_ms, end_ms, text, is_final, confidence. Index on `(meeting_id, start_ms)`; only finals persisted. Owned by `transcription-service`. | — |
 | `meeting_speakers` | entity | Diarized `speaker_id` → `user_id` mapping with confidence and `assignment` (manual/suggested) — the R7 source of truth. Owned by `core-api` (the catalog lists it under `core-api`'s owned data; the data model labels its owner `transcription-service` — catalog wins, see §10). | — |
 | `worklogs` | entity | Per-user notes (PersonalListenerAgent): content, relevance_score, created_by_agent, source_chunk_ids. Owned by `core-api`. | — |
-| `decisions` | entity | Confirmed decisions: content, rationale, confidence, status, confirmed_by. On confirm → AGE `Decision`→`Meeting` `PRODUCED` edge. Owned by `core-api`. | — |
+| `decisions` | entity | Confirmed decisions: content, rationale, confidence, status, confirmed_by, supersedes. On confirm → AGE `Decision`→`Meeting` `PRODUCED` edge; `supersedes` → `FOLLOWS_FROM` (ADR-0031). Owned by `core-api`. | — |
 | `action_items` | entity | Confirmed action items: content, assignee_id, due_date, confidence, status. On confirm → AGE `Action`→`Person` `ASSIGNED_TO` edge. Owned by `core-api`. | — |
 | `agent_suggestions` | entity | QuestionAgent output: question, `priority` 1–3, `status` Ask/Dismiss/Save-for-later (persists into next meeting). Owned by `core-api`. | — |
 | `agent_collaborations` | entity | ContextGapAgent A2A logs: requester, responder, query, result, success, latency. Owned by `core-api`. | — |
@@ -177,7 +177,7 @@ Only **seven** schema names are frozen canon ([Tech Decisions §2.4/§4](_canon/
 |---|---|---|---|
 | `TranscriptChunk` | Avro-schema | Value of `transcript-chunks`. Frozen canon. | — |
 | `AgentResult` | Avro-schema | Value of `agent-results`. Frozen canon. | — |
-| `Decision` | Avro-schema | Value of `decisions`. Frozen canon. | — |
+| `Decision` | Avro-schema | Value of `decisions`. Frozen canon. Optional `supersedes` appended, BACKWARD-safe (ADR-0031 D2). | — |
 | `Action` | Avro-schema | Value of `actions`. Frozen canon. | — |
 | `Notification` | Avro-schema | Value of `notifications`. Frozen canon. | — |
 | `AgentRequest` | Avro-schema | Value of `agent-requests`; carries requester_agent_id, responder_target, query, deadline, correlation_id. Frozen canon. | — |
