@@ -1,6 +1,6 @@
 # Plan 7-9: Agents and Monetization
 
-**Status:** IN PROGRESS. Phase P7 work items 1 to 4 are built and verified against the local stack with a faked model: `billing-metering-service` (section 3.1), `agent-runtime-service` (3.2), `PersonalListenerAgent` with `worklogs` and LLM-egress PII redaction (3.3), and the `mytheus-ui` agent sidebar, My Notes and Usage page (3.4), plus the `realtime-gateway` agent-output bridge they need. Item 5 (`mytheus-mobile`, section 7) is deliberately not started (excluded by the maintainer for this session). No real-model call has succeeded yet (Anthropic workspace, section 5a). P8 and P9 are not started. Last verification 2026-11-08. What is left in P7 is listed in section 5a.
+**Status:** IN PROGRESS. Phase P7 work items 1 to 4 are built, deployed and verified; the PersonalListener pre-gate has a measured live baseline (section 8): `billing-metering-service` (section 3.1), `agent-runtime-service` (3.2), `PersonalListenerAgent` with `worklogs` and LLM-egress PII redaction (3.3), and the `mytheus-ui` agent sidebar, My Notes and Usage page (3.4), plus the `realtime-gateway` agent-output bridge they need. Item 5 (`mytheus-mobile`, section 7) is deliberately not started (excluded by the maintainer for this session). P8 and P9 are not started. Last verification 2026-11-08. What is left in P7 is listed in section 5a.
 
 Plan: [plan/plan-7-9-agents-and-monetization.md](../plan/plan-7-9-agents-and-monetization.md).
 
@@ -263,4 +263,10 @@ The first real meetings on `dashboard.mytheus.cloud` (three people) surfaced the
 
 **Names.** Every identity in a call is an internal user id and LiveKit tokens carry no name, so the room, chat, captions and transcript showed "Guest", raw ids or "Speaker 07b3...". The UI now resolves names from `GET /users` plus Clerk (`mytheus-ui` PRs #20, #24). The sidebar shows the workspace's Clerk name instead of its slug.
 
-**Still open after this.** A valid Anthropic key, then the live eval with recorded precision and recall (section 5a item 1); mobile (item 5); NER on the egress path (gap 9). Nothing above is a P8 or P9 agent; those are next.
+**Still open after this.** Mobile (item 5) and NER on the egress path (gap 9). Nothing above is a P8 or P9 agent; those are next.
+
+**Correction, later the same day.** The Anthropic key blocker above was resolved after this section was written:
+
+- The live eval ran: `personal_listener_gate@v1` on `claude-haiku-5-5`, threshold 0.5, over the 14-window golden set, precision 1.0 and recall 1.0 for 6,034 tokens. Recorded in `mytheus-intelligence` `tests/eval/personal_listener_baseline.json` (`measured: true`, `d2dc3b8`). Section 5a item 1 is closed.
+- Production's key is valid: a `GET /v1/models` made from inside `mytheus-agent-runtime-1` with its own environment answered 200 (status only; no key value was read or printed).
+- Production runs the fixes: `transcription-service`, `realtime-gateway` and `agent-runtime` restarted at 06:45 UTC on 2026-11-09, after `mytheus-realtime` PR #4 merged at 06:43 UTC, and the running transcription image contains the `nova-3` request; the `agent-runtime` has 0 restarts since. `worklogs` is still empty only because no meeting has run since; the next real call is the first end-to-end check of My Notes against a real model in production.
