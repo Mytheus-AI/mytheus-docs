@@ -556,3 +556,86 @@ Live answer metrics: answered 95% of answerable questions, abstained on 100% of 
   - `ruff check`, `black --check --target-version py312`, `mypy libs services` (106 files) clean.
 - `mytheus-platform`: `docker compose -f deploy/compose.prod.yml config` valid; with `COMPOSE_PROFILES=intelligence` the services list includes `rag-service` and `search-grpc`; `bash -n scripts/enable-tiers.sh` OK; `add_caller` exercised in isolation (add, no-op, replace a stale entry, new key; other callers untouched).
 - `mytheus-ui`: `npx tsc --noEmit`, `npx next lint`, `npm test` (32 passed, 4 of them the answer helpers), `npm run generate:api:check`, `npx next build` green. `/search` redirected to sign-in in the dev server, as expected unauthenticated.
+
+## 12. Phase P9 QuestionAgent: role-tuned suggested questions, end to end (2026-11-09)
+
+**Status:** P9 `QuestionAgent` track DONE WITH GAPS. Verified 2026-11-09 on the local stack, with every CI gate mirrored locally before the push, pushed to `main` in all five repos, CI re-run green after the Actions outage, and live in production since the `mytheus-backend` deploy at 18:46 UTC (12.6). Mobile is out of scope for this phase. RAG grounding is built and tested against `libs/shared/rag_client.py` and is OFF in production until `rag-service` is configured (12.5 item 1).
+
+This is the `QuestionAgent` track of P9 (plan section 3.10): agent, `agent-results`, `core-api`, `realtime-gateway`, the sidebar card. The RAG track is section 11. The seam is `libs/shared/rag_client.py`, which this track calls and does not edit.
+
+Entry decisions: [ADR-0034](../adr/0034-plan-9-question-agent-suggestions.md) (D1 to D9). Canon first: the `agent_suggestions` row in `_canon/02-data-model.md` gains `confidence`, `rationale` and `citations`, and is private to its `user_id`.
+
+### 12.1 What landed, per repo
+
+- **mytheus-docs** `5250885`: the canon row, ADR-0034, the README index, the Glossary row, doc 05 (ERD columns and the `(org_id, user_id, meeting_id, status)` index), the ERD diagram, doc 20 (status `saved`, the privacy rule).
+- **mytheus-intelligence**
+  - `f637e36`, `libs/shared/router.py`: triage-tier calls send `thinking: {"type": "disabled"}`. Haiku 5.5 thinks by default (effort `medium`). A gate asks for a few output tokens, the thinking blocks used them all, the call stopped at `length` with empty text, and empty text parses as score 0, so every gate silently closed. Found by this track's live eval (gap recall 0.43 before, 1.0 after). The Decision and Action live evals were re-run after the change and still pass (F1 1.0 both; Brier 0.012 and 0.006).
+  - `7fa18dd`:
+    - `agents/question_agent.py`: `QuestionAgent`, `scope = "participant"`. Per closed window: the context-gap heuristic (at least two turns and 25 words; after a window that surfaced something the next one is skipped, `QUESTION_COOLDOWN_WINDOWS` = 1), the Haiku gate `question_gate@v1` (`QUESTION_GATE_THRESHOLD` = 0.5), then Sonnet `question_agent@v1` with the participant's `get_user_context` profile. At most two suggestions, each with `priority` 1-3, `confidence` and a `rationale`; the 0.7 / 0.4 bands per suggestion. Kind `suggestion`, payload `{"suggestions": [...]}`, ids `uuid5(CANDIDATE_NS, "QuestionAgent:{window_id}:{user_id}:{index}")`.
+    - `agents/grounding.py`: the `Grounder` protocol and `RagClientGrounder` over `HttpRagClient.retrieve(org_id, user_id=<the participant>, query)`, with no `meeting_id` filter (the window's own meeting is already in the prompt). Off unless `QUESTION_RAG_GROUNDING=1`; bounded by `QUESTION_RAG_TIMEOUT_S` (0.8 s); a failure proposes without context. A suggestion keeps only the citations of the passages it cited, in the four ADR-0033 kinds.
+    - Prompts `question_gate@v1` and `question_agent@v1`, registered in `registry.json`; the runtime registers the agent per participant.
+    - `tests/test_question_agent.py`: routing Haiku then Sonnet, the heuristic and cooldown, bands, at most two, deterministic per-participant ids, the budget block, no user id reaching the model, participant-scoped grounding (Alice is never grounded on a meeting only Bob attended), passages only, every citation kind, the runtime. `tests/eval/question_golden.json` (14 windows: 7 with a context gap, 7 without), `tests/test_question_eval.py`, `tests/eval/question_baseline.json`.
+    - `tests/test_decision_action_agents.py` and `tests/test_personal_listener.py` pinned the exact agent and prompt sets; both now include `QuestionAgent` and its two prompts.
+- **mytheus-backend** `4780397`
+  - Migration `a9c4e2f7b813`: `confidence real` (CHECK 0..1), `rationale text`, `citations jsonb NOT NULL DEFAULT '[]'` on the partitioned parent, and `(org_id, user_id, meeting_id, status)` on every partition; `scripts/ensure_partitions.py` adds the index to partitions created later.
+  - `consumer.py`: a `QuestionAgent` / `suggestion` record becomes `open` rows for the record's `user_id` under the suggestions' own ids. The band is re-derived from `agent_confidence_overrides`; below `silent` nothing is written. The table is partitioned (primary key `(id, created_at)`), so the insert is the inbox claim plus `WHERE NOT EXISTS` plus `ON CONFLICT DO NOTHING`. A bad suggestion is skipped; a non-JSON payload is poison (DLQ). Nothing goes to the outbox.
+  - `routes/suggestions.py`: `GET /api/v1/suggestions?meeting_id=` (the caller's open, surfaced suggestions for that meeting, plus their saved ones from any meeting) and `POST /api/v1/suggestions/{id}/ask|dismiss|save` (owner only, 404 to anyone else in any tenant; `open` to `asked`/`dismissed`/`saved`, `saved` to `asked`/`dismissed`, a repeat is 200, anything else 409 `VERSION_CONFLICT`; one audit row each: `suggestion.asked`, `suggestion.dismissed`, `suggestion.saved`). OpenAPI re-emitted.
+  - `tests/test_suggestions.py` (25 tests, including RLS isolation for the table).
+- **mytheus-realtime** `5fca677`: `agentOutput.ts` routes a surfaced suggestion as the new pub/sub message `agent-suggestion` tagged with its `userId`; `server.ts` emits it only to that user's sockets in the meeting (ADR-0034 D6), unlike candidates. `test/agent-suggestion.test.ts`: routing, and real Redis plus Socket.io delivery to both of the owner's tabs, never to another participant or another org whose meeting has the same id.
+- **mytheus-ui** `9bd45bd`: `src/lib/realtime/suggestions.ts` (a pure reducer merging live and re-hydrated suggestions by id; asked or dismissed never come back; the server's `saved` wins and a saved card never moves back to open; `citationLink` for the four kinds). `useMeetingSocket` subscribes to `agent-suggestion` and re-hydrates from `/api/meeting-suggestions` on every (re)connect. `SuggestionCard` in `AgentSidebar`: priority colour, rationale, citation chips (transcript to the meeting's transcript, decision to its lineage page, action to its meeting or My Tasks, document as a label; a non-UUID id never reaches an href). Ask / Save / Dismiss are server actions in `src/app/actions/suggestions.ts` with the brief 404 retry candidates use. Saved suggestions from earlier meetings show in Saved for later. Generated `core-api` types regenerated after rebasing on main. `tests/suggestions.test.ts` (10 tests).
+
+### 12.2 Definition of Done audit (End of P9, QuestionAgent lines)
+
+| DoD line | State | Evidence |
+|---|---|---|
+| `QuestionAgent` drops priority 1-3 suggestion cards into `agent_suggestions` | MET | agent band and priority tests; consumer tests; end-to-end run (12.6) |
+| Ask / Dismiss / Save-for-later | MET (not browser-checked) | `tests/test_suggestions.py` transitions, 409s and audit rows; `SuggestionCard` server actions |
+| Save persists into the next meeting | MET | route test; end to end: saved, then a new meeting with the same user returned it under `saved` |
+| Budget gate | MET | `test_a_blocked_tenant_makes_no_call_and_gets_no_result` |
+| Confidence gate (under 0.4 dropped, 0.4-0.7 stored silent, over 0.7 surfaced) | MET | agent and consumer band tests; end to end: 0.86 surfaced, 0.55 stored and not served, 0.30 never emitted |
+| Suggestion cards shipped | MET (not browser-checked) | `mytheus-ui` `9bd45bd`, deployed by run 42673962391 |
+| Other users never see your cards | MET | route, gateway and end-to-end tests: another participant's GET is empty, their dismiss is 404, their socket gets nothing |
+| RLS isolation test | MET | `tests/test_suggestions.py` |
+| Eval gate: question usefulness | MET | live baseline 1.0 / 1.0 / 0.0 recorded and asserted (12.6) |
+| Mobile | NOT MET (out of scope) | Mobile excluded from this phase by the maintainer |
+
+### 12.3 Deviations from the plan, and why
+
+1. **The kind is `suggestion`, not a new `question_suggestion`.** The frozen Avro `AgentResult.kind` enum already has `suggestion`; reusing it needs no schema change (ADR-0034 D3).
+2. **Routes live under `/api/v1/suggestions`**, the prefix canon already assigns to `core-api`, with the meeting as a query parameter, because saved suggestions span meetings.
+3. **Anyone but the owner gets 404, not 403**, including another participant of the same meeting: whether someone else has a suggestion is not shown (ADR-0034 D6).
+4. **Save-for-later is a read rule, not a copy** (D8): the GET returns the caller's saved rows from every meeting.
+5. **The band is applied at read time from the stored confidence** (D4), like candidates, so a tenant's override change applies to rows already stored.
+6. **The triage-tier thinking fix (`f637e36`) touches every agent**, not only this one: without it no Haiku gate on Haiku 5.5 could pass. The other agents' live evals were re-run to confirm.
+7. **Grounding uses `rag_client`'s REST contract** (`HttpRagClient.retrieve`), as section 11.5 item 7 asks. The adapter was first written against a guessed interface, before `rag_client` merged, and was reconciled after rebasing on main.
+8. **Pushed straight to `main`, not through PRs**, on the maintainer's instruction.
+
+### 12.4 Process notes
+
+- Windows Application Control on this workstation blocks `pytest.exe` and the `confluent_kafka` native DLL, so every Python suite and the end-to-end run ran in Linux containers (`ghcr.io/astral-sh/uv:python3.12-bookworm`) on the local stack's Docker network. The gateway's two-process tests call `npx` through `execFileSync`, which fails on Windows, so the gateway suite also ran in a `node:20` container.
+- The local Postgres is the Supabase image; four backend tests about default privileges fail there and not on plain `postgres:15`, which is what CI uses. The CI mirror below ran on plain `postgres:15`.
+- `npm test` in `mytheus-ui` needs Node 22.6 or later (`--experimental-strip-types`); CI runs no test job, so this is not a gate.
+
+### 12.5 Open gaps and handover
+
+1. **Grounding is off in production.** Turning it on needs `rag-service` configured first (section 11.5 item 1: `enable-tiers.sh` on the server, which also writes `RAG_URL` and `RAG_CALLER_TOKEN` into `prod.agents.env`), then `QUESTION_RAG_GROUNDING=1` on `agent-runtime`. Set `QUESTION_RAG_TIMEOUT_S` to about 3 at the same time: the 0.8 s default is below `rag-service`'s measured CPU passage path (about 0.9 s p95, section 11.5 item 8), so most grounding calls would time out. Until then the agent proposes without context, which is the tested fallback.
+2. **Browser check** of the cards in a live call with a signed-in user.
+3. **The owner's other tabs are not told about a status change**: an Ask in one tab settles the card there; another tab drops it on its next action (404 or 409) or on re-hydrate.
+4. **Mobile** suggestion cards are not started.
+5. **Deploy secrets for the image repos (2026-11-10).** `VPS_HOST` and `VPS_KNOWN_HOSTS` are now set in `mytheus-intelligence` and `mytheus-realtime`. `VPS_KNOWN_HOSTS` holds the server's three pinned host keys (RSA `SHA256:hTfIc9PY...`, ECDSA `SHA256:xrn2W5jM...`, ED25519 `SHA256:A76JSetM...`), taken from a known_hosts already used for root SSH to this server, not from `ssh-keyscan`. `VPS_DEPLOY_KEY` is still missing in both: GitHub secrets cannot be read back, and the private key is not on the maintainer's machine, so whoever holds the forced-command key has to set it. Until then the `images` deploy job keeps skipping with "NOT deployed", and an image-only push to either repo needs a manual `mytheus-platform` deploy or rides on the next backend deploy.
+
+### 12.6 Verification (2026-11-09)
+
+Local, before the push, mirroring each repo's CI:
+
+- `mytheus-backend`, on a fresh `postgres:15` and `redis:7-alpine` like the Actions services: `ruff`, `black --check` (202 files), `mypy` (132 files) clean; `make proto`; `MYTHEUS_REQUIRE_DB=1 uv run pytest -q` 744 passed, 1 skipped; the six tenant-isolation assertions 6 passed; `alembic upgrade head`, `downgrade -1`, `upgrade head` on a second fresh database (the downgrade is this migration); `scripts.bootstrap_roles` passed, then refused a role holding `BYPASSRLS`; `scripts/check_authz.py` passed; `scripts.emit_openapi --check` matches; spectral 0 errors; `oasdiff breaking` against main: no breaking changes; `pip-audit --skip-editable` clean; `docker build` OK.
+- `mytheus-intelligence`: `uv run pytest -q` 368 passed, 57 skipped; `ruff`, `black --check`, `mypy` (112 files) clean; both images (`Dockerfile`, `services/ner_service/Dockerfile`) build.
+- `mytheus-realtime`: `npx vitest run` 60 passed (19 files, Linux, real Redis, Redpanda and Schema Registry); `tsc --noEmit` and `eslint` clean; both images build.
+- `mytheus-ui`: on Node 20, `npm ci`, `tsc --noEmit`, `next lint` clean; `npm test` 42 passed (Node 26); `npm run generate:api:check` matches; the Docker image (`next build`) builds with the Clerk build arguments.
+- `gitleaks dir` over every file this track changed in the five repos: no leaks.
+- **Live eval**, `EVAL_LIVE=1 uv run pytest -m eval tests/test_question_eval.py`, real Haiku and Sonnet: ask rate 1.0, gap recall 1.0, noise rate 0.0, 22 calls, 16,867 tokens. Recorded as the baseline (bounds 0.85 / 0.85 / 0.15, one case of variance each) and asserted.
+- **End to end, scripted model, everything else real** (throwaway scripts, not committed): one tenant, Alice ("Finance lead") and Bob, one meeting. The real `AgentRuntime` with every registered agent, the real prompts, router, budget gate (real Redis) and Avro emitter processed two windows: 12 Haiku gate calls and 4 Sonnet proposals, no user id in any request. The model script gave Alice 0.86 (priority 1) and 0.55 (priority 2) in window 1 and 0.30 in window 2, and Bob nothing. The real `core-api` consumer stored Alice's 0.86 and 0.55 as `open` and nothing else. `GET /api/v1/suggestions` as Alice returned only the 0.86; as Bob, nothing, and Bob's dismiss on Alice's suggestion was 404. Save, then a new meeting with both: Alice's GET returned it under `saved`, with exactly one `suggestion.saved` audit row. The real gateway with its real Kafka consumer delivered exactly one `agent-suggestion` (the 0.86) to Alice's socket and nothing to Bob's, and the UI reducer turned it into one open priority 1 card. A first attempt dead-lettered the record because the script used non-UUID chunk ids; `source_chunk_ids` is a `uuid` array, so that was the consumer working as designed.
+- **CI on GitHub, re-run after the 2026-11-09 Actions outage** (the first runs had no jobs, see 11.5 item 8). All four passed:
+  - `mytheus-backend` run 42672411399: lint, test, migrations, authz-check, openapi, security, docker, deploy all success (finished 18:46:49 UTC). Its deploy pulled every current image and recreated `agent-runtime`, so this track is live in production.
+  - `mytheus-ui` run 42673962391: quality, build, deploy success (18:47:47 UTC).
+  - `mytheus-intelligence` run 42673973619 and `mytheus-realtime` run 42673952935: both images built and pushed. Their `deploy` job reported success but only logged "published but NOT deployed" and skipped, because the repos had no deploy secrets then (12.5 item 5); the backend deploy carried both images.
