@@ -233,3 +233,34 @@ To switch the agent tier on, from the maintainer's machine:
 1. `MYTHEUS_INTELLIGENCE_ENV=<path to mytheus-intelligence/.env> scripts/push-secrets.sh agents` (add `ANTHROPIC_WORKSPACE_ID` to that `.env` first, see section 5a item 1).
 2. On the VPS, add `workers,agents,realtime` to `COMPOSE_PROFILES` in the deploy environment (the `workers` services also need their `prod.db.*-consumer.env` role files, see `deploy/README.md`).
 3. Redeploy (any push to `mytheus-backend` `main`, or the platform deploy workflow).
+
+## 8. Production run and follow-ups (2026-11-09)
+
+The first real meetings on `dashboard.mytheus.cloud` (three people) surfaced the issues below. Each fix is its own PR; this records what and why.
+
+**Agent tier, found in production.**
+
+- The real-model check (section 5a item 1) is still blocked, now for a different reason: `ANTHROPIC_WORKSPACE_ID` is set, but Anthropic answers `authentication_error: invalid x-api-key` for the key in `mytheus-intelligence/.env`, the same key staged on the VPS. The live eval (`EVAL_LIVE=1 uv run pytest -m eval`) fails on the first call. A new key is needed; nothing else is.
+- That bad key exposed a real defect: `mytheus-agent-runtime-1` had 3,149 restarts. A provider error escaped `process_window`, the consumer died before committing, and replayed the same window on every restart. Fixed in `mytheus-intelligence` PR #4: a failing agent call is logged and skipped for that window, so the window completes and its offset commits. Test first.
+- The pipeline itself is confirmed live: the test call produced 137 `transcript_chunks`, the runtime built windows and called the model; 0 `worklogs` only because every call was refused.
+
+**Plan 7 gaps 12 and 13** (`mytheus-backend` PR #9, `mytheus-ui` PR #25).
+
+- Gap 12: the `presence-events` unknown-tenant crash is now `PoisonMessage`, as `agent-results` already was.
+- Gap 13: `/bff/dashboard` `worklogs` is a typed, real arm (the caller's surfaced notes across meetings, newest first), and the dashboard has a Your notes panel. `action_items` and `decisions` stay `UnbuiltArm` until P8.
+
+**Transcription** (`mytheus-realtime` PR #4).
+
+- The Deepgram request named no model, so it ran on Deepgram's older default. Now `model=nova-3`, `language=multi` (English/Hindi code-switching, chosen by the maintainer), `punctuate`, `smart_format`, `endpointing=300`, `utterance_end_ms=1000`; `DEEPGRAM_MODEL` / `DEEPGRAM_LANGUAGE` override it.
+- Results with no words were saved as blank `transcript_chunks` rows (the call's transcript showed 137 lines, many empty); they are now dropped before persistence and captions.
+- Every line's time was relative to its own participant's stream, so all lines sat between 00:00 and 00:04. A participant's offset is now fixed when they join, on top of where the meeting's saved transcript already ends.
+
+**Meeting lifecycle** (`mytheus-backend` PR #8, `mytheus-platform` PR #7, `mytheus-ui` PR #24).
+
+- Nothing moved a meeting off `scheduled`, so a finished call still offered Join. LiveKit rooms are now created with `empty_timeout` and `departure_timeout` of 300 s; `meeting-service` reports `room_started` and `room_finished` to a new service-authenticated core-api route (`POST /internal/meetings/{id}/room-state`, `MYTHEUS_CORE_CALLER_TOKENS`), which moves the meeting to `live` and then `ended` with the usual `meeting-events` `ended` record. Transitions only go forward, and the token route refuses an ended meeting (409).
+- No canon change: `meetings.status` and its four values already exist; the route is internal and not in `api-gateway`'s map. The new audit row uses `actor_type = 'system'`.
+- The meeting page was reorganised (status by the title, people by name, one action card; recap and talk time by name after the call), and a scheduled meeting 5+ minutes past its end with nobody joining shows as "Didn't happen" with no Join.
+
+**Names.** Every identity in a call is an internal user id and LiveKit tokens carry no name, so the room, chat, captions and transcript showed "Guest", raw ids or "Speaker 07b3...". The UI now resolves names from `GET /users` plus Clerk (`mytheus-ui` PRs #20, #24). The sidebar shows the workspace's Clerk name instead of its slug.
+
+**Still open after this.** A valid Anthropic key, then the live eval with recorded precision and recall (section 5a item 1); mobile (item 5); NER on the egress path (gap 9). Nothing above is a P8 or P9 agent; those are next.
