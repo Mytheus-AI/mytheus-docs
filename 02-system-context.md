@@ -10,7 +10,7 @@ The system-level view of NEXUS: who uses it, which external systems it depends o
 - [Data Architecture](05-data-architecture.md) — store selection, retention, residency, backups/PITR.
 - [Event Streaming & Schema Registry](07-event-architecture.md) — Redpanda topics, Avro subjects, outbox/inbox, DLQs.
 - [Inference & LLM Pipeline](09-rag-and-inference-serving.md) — embedding/reranker inference tier, cost-controlled LLM pipeline.
-- [Agent Runtime & LangGraph](08-ai-agent-architecture.md) — the six agents, multi-agent collaboration.
+- [Agent Runtime & LangGraph](08-ai-agent-architecture.md) — the seven agents, multi-agent collaboration.
 - [Deployment & Infrastructure](16-deployment-and-infrastructure.md) — Kubernetes, Terraform, multi-region posture.
 - [SaaS Business: Billing, Metering, Tenancy Lifecycle](18-saas-business-architecture.md) — Stripe, usage metering, plans/tiers.
 - [Capacity & Scaling Math](_canon/05-capacity-math.md) — frozen load/cost anchors imported by reference.
@@ -94,7 +94,7 @@ The single arrow that all human traffic crosses — `Cloudflare -> NEXUS` — is
 | **End user** | Human (tenant member) | Joins meetings, sees their personal agent's My Notes / suggestion cards / decision & action cards, confirms decisions/actions, runs RAG queries, reviews transcripts. | `web-app` (Next.js) → Cloudflare → `api-gateway` | Own user + org-visible data, RLS-scoped to their `org_id` and RBAC role. |
 | **Tenant admin** | Human (tenant member, elevated) | Manages members, plan/seats, integrations, retention & PII settings, SSO/SCIM config, data export & right-to-be-forgotten requests. | `web-app` tenant admin console → Cloudflare → `api-gateway` | Single tenant (`org_id`), elevated RBAC. Cannot cross tenants. |
 | **NEXUS operator** | Human (internal staff) | Cross-tenant support, feature flags, tenant suspend/migrate, consumer-lag & cost dashboards, audit-log access. | Internal ops console (`admin-ops-service`) behind Cloudflare + stricter authz | Cross-tenant, **deny-by-default**, every action audited to `audit_logs`. |
-| **Personal AI agent** | Machine (internal, per participant) | One of the six LangGraph agents acting on behalf of a user during a meeting; the agent-to-agent collaboration peer for `ContextGapAgent`. | Internal only — `agent-runtime-service`; never crosses the system boundary as an actor | Agent-to-agent authz: deny-by-default, **own tenant only**, org/role scope-checked, audited. |
+| **Personal AI agent** | Machine (internal, per participant) | One of the seven LangGraph agents acting on behalf of a user during a meeting; the agent-to-agent collaboration peer for `ContextGapAgent`. | Internal only — `agent-runtime-service`; never crosses the system boundary as an actor | Agent-to-agent authz: deny-by-default, **own tenant only**, org/role scope-checked, audited. |
 
 > [SaaS-scale adjustment] The **NEXUS operator** persona and the **tenant admin** persona are both new. The PDF had a single undifferentiated "user" and a 4-person build team with no cross-tenant operations surface. The operator's cross-tenant reach is the single most security-sensitive path in the system and is therefore deny-by-default and fully audited (see [Security & AuthZ](11-security-architecture.md)).
 

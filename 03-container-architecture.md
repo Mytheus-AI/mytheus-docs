@@ -13,7 +13,7 @@ The frozen container-level view of NEXUS: every service from the canonical servi
 - [Data Architecture](05-data-architecture.md) — store selection, partitioning, retention, DR.
 - [Event Streaming & Schema Registry](07-event-architecture.md) — topics, Avro subjects, outbox/inbox, DLQs.
 - [Inference & LLM Pipeline](09-rag-and-inference-serving.md) — GPU inference tier, tiered LLM routing.
-- [Agent Runtime & LangGraph](08-ai-agent-architecture.md) — the six agents, `BaseAgent`, `AgentState`.
+- [Agent Runtime & LangGraph](08-ai-agent-architecture.md) — the seven agents, `BaseAgent`, `AgentState`.
 
 ---
 

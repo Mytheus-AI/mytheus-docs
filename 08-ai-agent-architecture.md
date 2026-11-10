@@ -1,6 +1,6 @@
 # AI Agent Architecture
 
-How NEXUS runs its six LangGraph agents on a shared lifecycle, processes live meetings through a cost-controlled LLM pipeline, and lets per-participant agents collaborate across meetings under deny-by-default tenant authorization.
+How NEXUS runs its seven LangGraph agents on a shared lifecycle, processes live meetings through a cost-controlled LLM pipeline, and lets per-participant agents collaborate across meetings under deny-by-default tenant authorization.
 
 ## Related documents
 
@@ -18,7 +18,7 @@ How NEXUS runs its six LangGraph agents on a shared lifecycle, processes live me
 
 ## 1. Purpose and scope
 
-This document specifies the **agent tier**: the six LangGraph agents that turn a live meeting into personal notes, confirmed decisions and actions, real-time questions, cross-meeting context fills, and proactive alerts. It is owned end-to-end by the `agent-runtime-service` (per the [Service Catalog](04-service-catalog.md), the single naming authority). That service owns **no Postgres tables** — it reads context and emits events; durable agent output reaches the relational core via the `core-api` transactional outbox.
+This document specifies the **agent tier**: the seven LangGraph agents that turn a live meeting into personal notes, confirmed decisions and actions, real-time questions, cross-meeting context fills, proactive alerts, and live agenda tracking. It is owned end-to-end by the `agent-runtime-service` (per the [Service Catalog](04-service-catalog.md), the single naming authority). That service owns **no Postgres tables** — it reads context and emits events; durable agent output reaches the relational core via the `core-api` transactional outbox.
 
 > [SaaS-scale adjustment] The PDF placed all six agents in-process inside a single-tenant FastAPI app, invoked once per raw `transcript_chunks` row, with per-user (not per-tenant) budgets and no agent-to-agent authorization. This document hosts them in a dedicated `agent-runtime-service` that autoscales independently on token throughput + chunk backlog (its own cost center), runs them on **30-second windows not raw chunks** (`A17`), and binds every cross-agent call to a deny-by-default tenant authorization check. The six agent names, their behaviors, the `BaseAgent`/`AgentState` contract, the confidence thresholds, the `ContextGapAgent` fallback chain, `get_user_context`, and the topic names are all carried over verbatim from the PDF.
 
@@ -26,9 +26,9 @@ What is **out of scope** here and lives elsewhere: the embedding/reranker GPU se
 
 ---
 
-## 2. The six agents
+## 2. The seven agents
 
-All six are PDF-original (names verbatim, phases 7–11). Each is a LangGraph graph built on the shared `BaseAgent` (§3). One PersonalListenerAgent is spawned **per participant per meeting**; the others are spawned per meeting and fan their reasoning across the roster.
+The first six are PDF-original (names verbatim, phases 7 to 11); the seventh, `MeetingAgent`, is a SaaS addition ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)). Each is a LangGraph graph built on the shared `BaseAgent` (§3). One PersonalListenerAgent is spawned **per participant per meeting**; the others are spawned per meeting and fan their reasoning across the roster. `MeetingAgent` is one per meeting and follows the meeting as a whole rather than any one participant.
 
 | Agent | Phase | Trigger / input | Output (topic) | Surfacing | Origin |
 |---|---|---|---|---|---|
@@ -38,6 +38,7 @@ All six are PDF-original (names verbatim, phases 7–11). Each is a LangGraph gr
 | `QuestionAgent` | P9 | `transcript-chunks` window, context-gap heuristic | `agent_suggestions` via `agent-results` | Suggestion card, priority 1–3 (Ask/Dismiss/Save) | PDF |
 | `ContextGapAgent` | P10 | Reference to context a participant lacks | `agent-requests` → peers; logs `agent_collaborations` | Context-fill card ("Context added from X agent") | PDF |
 | `ProactiveAgent` | P11 | Confirmed `decisions`/`actions`; AGE graph queries | `notifications` via `agent-results` | Conflict banner, workload warning, stakeholder/dependency card | PDF |
+| `MeetingAgent` | ADR-0038 | `transcript-chunks` window, only when the meeting has at least one agenda item; the agenda (`meeting_agenda_items`) and the previous meeting's open items | One `agent-results` record per meeting per window, `kind = meeting_update` (agenda `updates` plus an optional `nudge`), `user_id` = the host | Shared live agenda panel (every participant); nudges to the host only | SaaS-add |
 
 ### 2.1 Per-agent contract
 
@@ -47,6 +48,15 @@ All six are PDF-original (names verbatim, phases 7–11). Each is a LangGraph gr
 - **QuestionAgent (P9).** Detects context gaps in live conversation and proposes role-specific questions with `priority` 1–3 and `status` in {Ask, Dismiss, Save-for-later}. Save-for-later persists into the next meeting (`agent_suggestions`).
 - **ContextGapAgent (P10).** The novel multi-agent piece (R6). When the conversation references context the participant lacks, it queries **other users' agents** over `agent-requests`/`agent-responses` with correlation IDs and a deadline, falling through the chain peer-agents → related-meeting agents → RAG → silent (§5). Every round-trip is logged to `agent_collaborations`.
 - **ProactiveAgent (P11).** Three detectors: **conflict** (a new confirmed decision contradicting a past one, via an AGE `nexus_knowledge` query through `knowledge-graph-service`), **workload** (sum of open `action_items` per assignee, flagged at 80%/95% of capacity), and **missing-stakeholder** (org-graph traversal over `departments`/`teams`). Outputs ride `notifications`.
+- **MeetingAgent (SaaS-add, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D7).** One per meeting, on the same 30-second windows, and only when the meeting has at least one agenda item. Input: the window transcript (speakers as "Participant N"), the agenda with current statuses and how long the in-progress item has run, and the previous meeting's open items as plain strings (from the internal caller-token route `GET /internal/meetings/{id}/agenda` on `core-api`). Output: at most **one** `agent-results` record per meeting per window, `agent = MeetingAgent`, `user_id` = the host, `kind = meeting_update`, with `payload_json = {updates: [{item_id, status, note}], nudge: {id, type, item_id, content} | null, surfaced: true}`. One record, because the canonical idempotency key `agentresult:{meeting_id}:{window_id}:{user_id}:{agent}` allows one result per agent per window per participant; this is the batching pattern of ADR-0032 and ADR-0034. An update moves an item to `in_progress` or `covered` (at most one per item per window). A nudge is `over_time` (computed: an item in progress longer than its `duration_minutes`, once per item), `off_agenda` (confidence at least 0.75), or `unaddressed` (a carried-forward open item nobody has raised after 70% of the scheduled time); at most one nudge per meeting per 5 minutes. Fast tier (Haiku), metered against the tenant budget and skipped when the budget is `blocked`. It never writes Postgres: `core-api` applies each update to `meeting_agenda_items` (never over a host-set status, never `covered` back to `in_progress`), and the nudge is not persisted.
+
+> [SaaS-scale adjustment] `MeetingAgent` is net-new relative to the PDF, which had no agenda and no agent that follows the meeting as a whole. It adds one agent class and one `agent-results` kind (`meeting_update`) and changes nothing about the six PDF agents ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)).
+
+### 2.1.1 Agent persona and working profile
+
+Each person's agent has a persona: `users.agent_name` (NULL shows "{first name}'s agent"), `users.agent_avatar_seed` (a doodle seed), `users.agent_personality` (`balanced`, `concise`, `detailed`, `direct`, `friendly`) and `users.agent_instructions` (up to 500 chars). The persona is a display label and a wording preference over `PersonalListenerAgent` and `QuestionAgent` output; it is **not** an agent class, never appears in events, logs or metrics as an agent identifier, and never changes what is captured, the confidence bands, or who can see what. The working profile adds `users.listen_for` and `users.ignore_topics` beside `role`, `skills` and `bio`. `get_user_context` returns `listen_for`, `ignore_topics`, `agent_name`, `agent_personality` and `agent_instructions` (not the avatar seed). `PersonalListenerAgent` renders them in its profile block ("Listen especially for", "Ignore") and a voice line; `QuestionAgent` uses the same block and voice. `agent_instructions` is user text, placed in a delimited block that may change wording only ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D1, D2, D4, D10).
+
+> [SaaS-scale adjustment] The agent persona and the `listen_for` / `ignore_topics` working profile are net-new relative to the PDF, whose agents had no person-facing identity. Onboarding now asks for `role` and `bio`, so a new person's `PersonalListenerAgent` is not silent until they find Settings.
 
 ### 2.2 No silent commits — the candidate → confirm → edge path
 
@@ -70,7 +80,7 @@ The agent emits a confidence-scored *candidate* only; `core-api` writes the `dec
 
 ## 3. BaseAgent lifecycle, AgentState, and the versioned prompt loader
 
-All six agents share one LangGraph contract (PDF): a `BaseAgent` lifecycle (`spawn` / `process` / `terminate`), the shared `AgentState` dataclass, and a versioned prompt-template loader.
+All seven agents share one LangGraph contract (PDF): a `BaseAgent` lifecycle (`spawn` / `process` / `terminate`), the shared `AgentState` dataclass, and a versioned prompt-template loader.
 
 ```mermaid
 stateDiagram-v2
@@ -114,7 +124,7 @@ class AgentState:
 
 ```python
 class BaseAgent:
-    """Shared LangGraph lifecycle for all six agents."""
+    """Shared LangGraph lifecycle for all seven agents."""
     name: str
     prompt_key: str          # e.g. "decision_agent"
 

@@ -10,7 +10,7 @@ The frozen, production-grade specification of the NEXUS `web-app` — its Next.j
 - [Locked Tech & Architecture Decisions](_canon/06-tech-decisions.md) — §2.8 (frontend, incl. the Socket.io real-time client and the LiveKit meeting client), §2.7 (server-side real-time transport/transcription), §2.6 (agents, confidence thresholds), §2.9 (RAG/citations).
 - [Container Architecture](03-container-architecture.md) — the C4 L2 view: `web-app` ↔ Cloudflare → `api-gateway` → `bff`, and the `web-app` ↔ `realtime-gateway` WebSocket leg.
 - [Real-time & Transcription](10-realtime-and-transcription.md) — authority for the **server-side** fan-out plane (`realtime-gateway`, `agent-stream`, `agent-results`, captions); this document owns the **client** consumption of it.
-- [AI Agent Architecture](08-ai-agent-architecture.md) — the six agents whose outputs the sidebar surfaces, confidence thresholds, and `get_user_context`.
+- [AI Agent Architecture](08-ai-agent-architecture.md) — the seven agents whose outputs the sidebar and agenda panel surface, confidence thresholds, and `get_user_context`.
 - [RAG & Inference Serving](09-rag-and-inference-serving.md) — `POST /api/rag/query` contract and citation payload the context panel renders.
 - [Security Architecture](11-security-architecture.md) — Clerk auth, JWT, `org_id` injection at the edge that the client trusts.
 - [Multi-Tenancy & Isolation](06-multi-tenancy.md) — namespaced Redis, tenant-scoped data the UI never has to filter itself.
@@ -245,6 +245,17 @@ flowchart LR
 
 The client mints a LiveKit room token via the Next.js route handler `app/api/livekit-token/route.ts`, which proxies `POST /api/meetings/:id/token` (owned by `meeting-service`, [Service Catalog §6](_canon/01-service-catalog.md)). The route handler never holds LiveKit credentials — those are server-side in `meeting-service`. On reconnect, the client re-mints ([Real-time §4](10-realtime-and-transcription.md)).
 
+
+### 4.3 Agent personas, the live agenda and nudges
+
+Additions from [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D9, D11, layered on the room without changing the frozen sidebar order (§5.1):
+
+- **Your agent heads your sidebar.** The sidebar header shows your agent's doodle face (`users.agent_avatar_seed`, or one derived from your user id when NULL) and name (`users.agent_name`, or "{first name}'s agent" when NULL). Each participant tile carries a small badge of that participant's agent face, read from the `GET /api/v1/users` member list (`agent_name`, `agent_avatar_seed`). The persona is a label: it never changes which cards appear.
+- **Shared live agenda panel.** When the meeting has an agenda, every participant sees it with item statuses (`pending`, `in_progress`, `covered`, `skipped`) and the `MeetingAgent`'s notes. Live changes arrive as the `agent-agenda` Socket.io event (`{meetingId, payload: {itemId, status, note}}`), which `realtime-gateway` sends to every socket on the meeting channel; on join or reconnect the panel re-hydrates from `GET /api/v1/meetings/{id}`. The host (or creator) can mark an item covered or skipped (`PATCH /api/v1/meetings/{id}/agenda/{item_id}`); a host-set status always wins over the agent.
+- **Nudges reach the host only.** `agent-nudge` (`{meetingId, payload: {id, type, itemId, content}}`, `type` in `off_agenda`, `over_time`, `unaddressed`) is delivered only to the host's sockets and is not replayed after a reconnect.
+
+> [SaaS-scale adjustment] Agent personas, the shared agenda panel and host nudges are net-new relative to the PDF, whose room had per-participant agent output only and no meeting agenda.
+
 ---
 
 ## 5. The agent sidebar (the hardest UI problem)
@@ -444,13 +455,17 @@ Every screen, its route, render mode, primary data source, and the agents/entiti
 | --- | --- | --- | --- | --- |
 | Dashboard | `/dashboard` | RSC | `bff` aggregate | upcoming meetings, open `action_items`, recent `worklogs` |
 | Meeting list | `/meetings` | RSC | `core-api` `/meetings` | `meetings` (status, schedule) |
-| Meeting room | `/meetings/[id]/room` | client | `meeting-service` token, `realtime-gateway`, LiveKit | video, captions, chat, **agent sidebar** |
+| New meeting | meeting scheduling form | client + Server Action | `core-api` `POST /api/v1/meetings` | "Follow-up to" a recent meeting (`previous_meeting_id`), host (`host_user_id`), and an agenda editor (title, owner, minutes; add, remove, reorder; at most 20) |
+| Meeting detail | `/meetings/[id]` | RSC | `core-api` `GET /api/v1/meetings/{id}`, `/carry-forward` | host, follow-up link, the agenda with statuses and agent notes, and what was carried forward from the previous meeting |
+| Meeting room | `/meetings/[id]/room` | client | `meeting-service` token, `realtime-gateway`, LiveKit | video, captions, chat, **agent sidebar** (headed by your agent's face and name), shared live agenda panel, host-only nudges (§4.3) |
 | Transcript view | `/meetings/[id]/transcript` | RSC | `search-service` FTS over `transcript_chunks` | colored speaker labels (`meeting_speakers`), click-to-jump, in-page search |
 | Decision history & lineage | `/decisions` | RSC | `core-api` + `knowledge-graph-service` templates | `decisions`, `FOLLOWS_FROM` lineage |
 | My Tasks | `/tasks` | RSC | `core-api` `/actions` | `action_items` assigned to me (`ASSIGNED_TO`) |
 | Org chart | `/org` | RSC | `core-api` `/teams`, `/departments` | `departments`/`teams` hierarchy |
 | Search | `/search` | client | `rag-service` `POST /api/rag/query` + `search-service` | RAG passages + **citations** |
-| Profile / settings | `/settings/profile` | RSC + Server Action | `identity-tenant-service` | `users` role/skills/bio/avatar |
+| Onboarding: About you, Meet your agent | after the workspace is chosen, before the dashboard | client + Server Action | `identity-tenant-service` `PATCH /api/v1/users/{user_id}` | "About you" asks `role`, "what you work on" (`bio`, at least 20 chars), focus areas (`skills`), listen for, ignore; "Meet your agent" sets name, doodle face, personality preset and optional instructions, skippable with defaults. A signed-in person with no `role` sees a dashboard prompt that opens "About you" ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D11) |
+| Profile / settings | `/settings/profile` | RSC + Server Action | `identity-tenant-service` | `users` role/skills/bio/avatar, plus "what you work on" (`bio`), listen for (`listen_for`) and ignore (`ignore_topics`) |
+| Your agent (settings) | settings, "Your agent" page | RSC + Server Action | `identity-tenant-service` `PATCH /api/v1/users/{user_id}` (self only) | `agent_name`, `agent_avatar_seed`, `agent_personality`, `agent_instructions` |
 | Integrations | `/settings/integrations` | RSC + Server Action | `integration-service` `/oauth/{provider}` | `integration_connections` (Calendar/Slack/Jira\|Linear, R8) |
 | Billing | `/settings/billing` | RSC | `billing-metering-service` `/billing`, `/usage` | plan/tier, seats, `usage_events`, `invoices` |
 | Tenant admin console | `/tenant` | RSC (RBAC) | `admin-ops-service` `/admin/tenant/*` | members, plan, integrations, data export/erasure |

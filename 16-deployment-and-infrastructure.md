@@ -10,7 +10,7 @@ How NEXUS runs in production: the Kubernetes (EKS/GKE) topology, Terraform IaC, 
 - [Data Architecture](05-data-architecture.md) — Postgres partitioning, Qdrant, AGE, Redis, backups/PITR, regional placement.
 - [Multi-Tenancy & Tenant Isolation](06-multi-tenancy.md) — pooled + RLS, cell-based isolation, dedicated cell node pools.
 - [Event-Driven Architecture](07-event-architecture.md) — Redpanda topics, Avro BACKWARD compat, KEDA-on-lag, DLQs.
-- [AI Agent Architecture](08-ai-agent-architecture.md) — the six agents and the *prompt-template* canary (orthogonal to the *container* rollout here).
+- [AI Agent Architecture](08-ai-agent-architecture.md) — the seven agents and the *prompt-template* canary (orthogonal to the *container* rollout here).
 - [RAG Pipeline & Inference Serving](09-rag-and-inference-serving.md) — `embedding-service` / `reranker-service` GPU autoscaling on Ray Serve/vLLM.
 - [Real-time & Transcription](10-realtime-and-transcription.md) — `realtime-gateway` / `transcription-service` long-lived connection handling.
 - [Service Catalog (canon)](_canon/01-service-catalog.md) — the single naming authority; §7 Wave 1–4 split order.

@@ -8,7 +8,7 @@ The single consolidated register of every NEXUS risk — the eight PDF-original 
 - [Data Architecture](05-data-architecture.md) — partitioning, AGE migration path, retention, backups/PITR/read replica.
 - [Multi-Tenancy & Tenant Isolation](06-multi-tenancy.md) — pooled + RLS, cell-based isolation, `org_id` injection.
 - [Event-Driven Architecture](07-event-architecture.md) — at-least-once, outbox/inbox, dedupe, DLQs, webhook reliability.
-- [AI Agent Architecture](08-ai-agent-architecture.md) — the six agents, cost pipeline, agent-to-agent authz, ContextGapAgent.
+- [AI Agent Architecture](08-ai-agent-architecture.md) — the seven agents, cost pipeline, agent-to-agent authz, ContextGapAgent.
 - [RAG Pipeline & Inference Serving](09-rag-and-inference-serving.md) — dedicated inference tier, reranker budget.
 - [Real-time & Transcription](10-realtime-and-transcription.md) — LiveKit transport, Deepgram path, latency budget, speaker mapping.
 - [Security Architecture](11-security-architecture.md) — shift-left, API gateway + WAF, RBAC, agent-to-agent authorization.

@@ -11,7 +11,7 @@ How the 13 frozen PDF phases (W1–W36) map onto the production architecture, wh
 - [Data Architecture](05-data-architecture.md) — partitioning, replicas, cold tiering, and the stores stood up per phase.
 - [Multi-Tenancy & Isolation](06-multi-tenancy.md) — pooled + RLS for the long tail, cell-based isolation for large tenants.
 - [Event-Driven Architecture](07-event-architecture.md) — Redpanda topics, Avro subjects, outbox/inbox, DLQs introduced at P6.
-- [AI / Agent Architecture](08-ai-agent-architecture.md) — the six LangGraph agents and the cost-controlled pipeline landing at P7.
+- [AI / Agent Architecture](08-ai-agent-architecture.md) — the seven LangGraph agents and the cost-controlled pipeline landing at P7.
 - [RAG & Inference Serving](09-rag-and-inference-serving.md) — the dedicated GPU inference tier standing up at P6.
 - [Real-time & Transcription](10-realtime-and-transcription.md) — LiveKit, Deepgram, and the P4 transcription path.
 - [Security Architecture](11-security-architecture.md) — the shift-left program that replaces the PDF Phase-13 audit.

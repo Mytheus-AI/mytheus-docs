@@ -340,7 +340,7 @@ flowchart TB
     TRANS -->|"pii_redaction_enabled? → redact"| TC["transcript_chunks (C4, in-region)"]
     TC -->|transcript-chunks topic, tenant-partitioned| EMB["embedding-service"]
     EMB -->|384-dim BGE-small| QD["Qdrant transcript_chunks__{org_id} (C4, in-region)"]
-    TC -->|windowed batching| AGENT["agent-runtime-service (6 agents)"]
+    TC -->|windowed batching| AGENT["agent-runtime-service (7 agents)"]
     DOCIN["Uploaded doc"] --> ING["ingestion-service → redact"] --> DC["document_chunks (C3, in-region)"]
     AGENT -->|on confirm| CORE["core-api → decisions / action_items (C3)"]
     CORE -->|confirmed only| KG["nexus_knowledge AGE (C3, org-partitioned)"]

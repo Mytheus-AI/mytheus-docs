@@ -201,6 +201,7 @@ The provider boundary also satisfies a subprocessor-substitution requirement: a 
 |---|---|---|
 | Live captions | `transcription-service` (interims + finals) | server → client |
 | Agent sidebar output | `agent-results` topic | server → client |
+| Live agenda (`agent-agenda`) and host nudges (`agent-nudge`) | `agent-results` `MeetingAgent` `meeting_update` records, split by `realtime-gateway`: each agenda update to every socket on the meeting channel, the nudge to the host's sockets only; nudges are not replayed ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D9) | server → client |
 | Streamed agent tokens | `agent-stream` topic | server → client (§5) |
 | In-meeting chat | `web-app` ↔ `chat_messages` via `core-api` | bidirectional |
 | Presence | join/leave → `presence-events` | bidirectional |
