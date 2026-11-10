@@ -1,13 +1,13 @@
 # Plan 10-13: Multi-Agent, Proactive Intelligence, Integrations and Production GA
 
 **Band:** [plan/plan-10-13-collab-integrations-ga.md](../plan/plan-10-13-collab-integrations-ga.md)
-**Status:** IN PROGRESS. P10 built and verified per repo on 2026-11-10 (section 1), in seven open PRs awaiting the maintainer's merge; P11, P12 and P13 not started.
+**Status:** IN PROGRESS. P10 built, verified per repo, security-reviewed, merged and deployed to production on 2026-11-10 (section 1); the live two-person demo is still to do. P11, P12 and P13 not started.
 
 ---
 
 ## 1. Phase P10: Workflows and Multi-Agent Collaboration (2026-11-10)
 
-**Status:** P10 DONE WITH GAPS at the code level: every component of plan sections 3.1 to 3.5 is built, tested in its repo with that repo's CI mirrored locally, reviewed for security, and fixed after review. Not yet merged, deployed or demonstrated in a live meeting (1.6).
+**Status:** P10 DONE WITH GAPS: every component of plan sections 3.1 to 3.5 is built, tested in its repo with that repo's CI mirrored locally, reviewed for security, fixed after review, merged and deployed to production (1.7). Not yet demonstrated in a live meeting (1.6).
 
 Build decisions: [ADR-0035](../adr/0035-plan-10-context-gap-agent-and-a2a-build.md) (D1 to D11), on top of [ADR-0013](../adr/0013-agent-to-agent-authorization.md). Canon first: `_canon/02-data-model.md` (`agent_collaborations` full column list, `agent_authz_scopes`, `nexus:{org_id}:a2a:grant:{grantee_role}:{query_class}:{target_scope}`, `nexus:{org_id}:a2a:grant:version`) and `_canon/03-event-taxonomy.md` (`agent-results` `kind` `context_fill`).
 
@@ -37,9 +37,9 @@ Build decisions: [ADR-0035](../adr/0035-plan-10-context-gap-agent-and-a2a-build.
 
 | DoD line | State | Evidence |
 |---|---|---|
-| `ContextGapAgent` + A2A PEP/PDP + deny-by-default `agent_authz_scopes` live | PARTIAL | Built and tested (1.5); not deployed until the PRs merge |
-| `MeetingLifecycleWorkflow` runs real activities | PARTIAL | Activities, consumer and workflow tested in `mytheus-backend`; not deployed |
-| `agent_collaborations` persisted + log UI | PARTIAL | Consumer, routes and page built and tested; not deployed |
+| `ContextGapAgent` + A2A PEP/PDP + deny-by-default `agent_authz_scopes` live | MET (deployed, not yet exercised live) | Deployed 2026-11-10 (1.7); `agent-runtime` has its A2A settings; `agent_authz_scopes` exists in production |
+| `MeetingLifecycleWorkflow` runs real activities | MET (deployed, not yet observed on a real meeting) | Tested in `mytheus-backend`; `workflow` worker and `workflow-consumer` running in production |
+| `agent_collaborations` persisted + log UI | MET (deployed, not yet seen with real rows) | Table in production; consumer, routes and page deployed |
 | Demo: A's agent fills a gap from B's agent (peer hop) | NOT MET | Needs deploy and a live two-person call |
 | Demo: a cross-tenant probe is DLQ'd + audited | PARTIAL | Real-broker test: a forged org lands on `agent-requests.dlq` with an `org_spoof` entry; core-api audits it as `a2a.request.blocked` |
 | Demo: falls through to RAG on a deadline miss | PARTIAL | Agent tests cover deadline miss then related-meeting then RAG then silent |
@@ -80,9 +80,25 @@ Each repo's CI mirrored locally before the push:
 
 ### 1.6 Open gaps and handover
 
-1. **Merge and deploy**, in this order: events, backend, intelligence, realtime, UI, platform. Then register the updated `agent-results-value` in the production Schema Registry (until then the runtime logs and drops `context_fill` records), re-run `scripts/enable-tiers.sh` on the server (writes the new secrets and brings up `workflow-consumer`), and re-run `npm run generate:api` in `mytheus-ui`.
+1. **Merged and deployed** (1.7).
 2. **A2A is off for every tenant until an admin grants**: open `/tenant/agents` and choose a scope.
 3. **The live demo** (a two-person call, a gap filled from a peer, the log) is not done.
 4. **The A2A p95 is measured offline** with a faked retrieval delay; a live measurement under `E7` load belongs to P13 load testing.
 5. **`run_post_processing` triggers nothing yet**: the summary builder it should call does not exist.
 6. **Mobile** is out of scope for this phase.
+
+### 1.7 Merge and deploy (2026-11-10)
+
+Merged in order with each main build and deploy watched to completion before the next merge, so no repo's deploy pulled another's stale image (the P9 race, `07` section 11.5):
+
+- `mytheus-events` #3, then the production Schema Registry re-registered by the maintainer through an SSH tunnel (`make register`): `agent-results-value` is id 23, the 20 other subjects unchanged, `register OK: 21 subjects under BACKWARD`.
+- `mytheus-backend` #12. Its first main build failed one test, `test_the_run_survives_a_worker_restart`: a race in the test, not the workflow. The first worker could stop after the room row committed but before the activity's completion reached Temporal, so the restarted worker re-ran the idempotent open and correctly reported `opened: false`. Fixed in #13 (the test waits until no activity is pending; 11 passed three runs in a row locally), main run 42766147943 green, deploy `healthz OK` at 06:08 UTC.
+- `mytheus-intelligence` #7: main run 42766598119 built both images and, for the first time, deployed itself through its own `deploy` job with the new forced-command key (`07` section 12.5 item 5), `healthz OK` at 06:11 UTC.
+- `mytheus-realtime` #7: run 42770101305, `healthz OK` at 06:41 UTC.
+- `mytheus-ui` #32 (with the generated API types re-run against the merged backend): run 42770303200, quality, build, deploy success.
+- `mytheus-platform` #8: deploy run 42770701388, `healthz OK` at 06:46 UTC. Then `scripts/enable-tiers.sh` on the server, dry run first: it wrote `MYTHEUS_WORKFLOW_SERVICE_TOKEN`, `AGENT_IDENTITY_SECRET`, `CORE_URL` and `CORE_CALLER_TOKEN` and brought up all 37 services, `workflow-consumer` among them.
+- `mytheus-docs` #8.
+
+Checked on the server afterwards: `agent-runtime` has `AGENT_IDENTITY_SECRET`, `CORE_URL` and `CORE_CALLER_TOKEN` set (`CONTEXT_GAP_A2A` unset, which defaults to on); the `workflow` worker logged `Worker started on task queue: mytheus-backend`; no errors in `agent-runtime`, `workflow`, `workflow-consumer`, `identity-grpc` or `core-api-consumer`; `agent_collaborations` and `agent_authz_scopes` exist in the `mytheus` database and `alembic_version` is `c8f2d3e4a510`, the backend head.
+
+**Found while deploying, outside P10: the Ask page was answering "Not available".** `rag-service` (P9) verifies the asker's Clerk JWT itself and reads `CLERK_JWKS_URL` and `CLERK_ISSUER`, but those were only in `prod.env`, which it does not load, so every `POST /api/rag/query` raised `KeyError: CLERK_JWKS_URL` and the gateway returned 500. Fixed on the server by copying both into `prod.rag.env` and recreating `rag-service`; made permanent in `enable-tiers.sh` (`mytheus-platform` #8, which now also checks `CLERK_ISSUER` is staged). After the fix the gateway and `rag-service` both logged `POST /api/rag/query 200`.
