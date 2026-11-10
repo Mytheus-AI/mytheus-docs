@@ -27,7 +27,7 @@ Plan 10-13 phase P10 builds `ContextGapAgent`, the A2A protocol around it, the `
 
 ## Decision
 
-**D1. The agent identity is a signed id.** `requester_agent_id` and `responder_agent_id` are `cga:{org_id}:{user_id}:{sig}`, where `sig` is an HMAC-SHA256 over `cga:{org_id}:{user_id}` with a secret only `agent-runtime-service` holds (`AGENT_IDENTITY_SECRET`). The PEP derives org and user only from an id whose signature verifies; the envelope `org_id` is cross-checked against it (ADR-0013 rule 1). A bad signature has no derivable identity: the request goes to `agent-requests.dlq` and is logged, never served.
+**D1. The agent identity is a signed id, signed per request.** `requester_agent_id` and `responder_agent_id` are `cga:{org_id}:{user_id}:{sig}`, where `sig` is an HMAC-SHA256 with a secret only `agent-runtime-service` holds (`AGENT_IDENTITY_SECRET`). For a request it covers the org, the user, `correlation_id`, `responder_target`, `deadline` and a hash of `query`; for a response, the org, the user and `correlation_id`. The PEP derives org and user only from an id whose signature verifies against the message's own fields, so a copied id cannot be reused for another request. A request whose deadline is past or more than 5 s ahead is refused, and a `correlation_id` already served in the last 60 s is not served again. The envelope `org_id` is cross-checked against the derived org (ADR-0013 rule 1). A bad signature has no derivable identity: the request goes to `agent-requests.dlq` (rate-limited) and is logged, never served.
 
 **D2. `grantee_role` is the RBAC tier** (`owner`/`admin`/`member`, `UserContext.rbac_tier`). The domain role is free text and cannot key a grant. `target_scope` is resolved by the PEP from both users' `get_user_context`: same user `self`, a shared team `same_team`, same department `department`, otherwise `org`.
 
@@ -40,6 +40,12 @@ Plan 10-13 phase P10 builds `ContextGapAgent`, the A2A protocol around it, the `
 **D6. `agent-results` carries the log.** `AgentResult.kind` gains `context_fill`, appended last with enum default `note` (BACKWARD-safe). One result per window and requester carries every hop attempt and the optional fill in `payload_json`. Responder-side blocks (spoof, foreign org) are reported under the derived requester's org.
 
 **D7. `agent_collaborations` is the fill's home.** One row per hop attempt, grants and denials alike, with `success`, `result` and `latency_ms`. The fill (content, confidence, rationale, citations) sits on the row that produced it and is private to `requester`; the collaboration log shown to participants and admins never includes it. The band is re-derived in `core-api` from the stored confidence, like ADR-0034 D4. Dismiss sets `dismissed_at`; only the requester may dismiss (404 to anyone else).
+
+**D9. `query_class` bounds what is returned, not only who may ask.** The responder, and the requester's own RAG hop, keep only passages whose citation kind matches the class: `decision_lineage` returns `decision` passages, `action_status` returns `action` passages, `meeting_context` returns `transcript` and `document` passages. A tenant that allows `meeting_context` but denies `decision_lineage` therefore never sees decision content through a query the classifier placed in `meeting_context`. A query with no decision or action signal is `meeting_context`, which is the narrowest class in what it can return.
+
+**D10. Revocation is not undone by an in-flight PDP answer.** Every grant change deletes the tenant's decision keys and then increments `nexus:{org_id}:a2a:grant:version`; the PEP caches a PDP answer only if that version is unchanged across the call.
+
+**D11. The collaboration log does not reveal whom the requester met.** A `related_meeting` row names its responder only to the requester and to org admins and owners; other participants see "A colleague".
 
 **D8. Each attempt is audited** by `core-api` in `audit_logs` with `actor_type = 'agent'`: `a2a.request.allowed`, `a2a.request.denied`, `a2a.request.blocked`.
 

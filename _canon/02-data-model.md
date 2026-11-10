@@ -338,6 +338,7 @@ Cache/pubsub is **Redis (Upstash)**. Every key is **tenant-namespaced** so evict
 | --- | --- | --- | --- |
 | `nexus:{org_id}:user_ctx:{user_id}` | `get_user_context()` result (role/skills/team/recent meetings/topics) | 5 min (PDF) | Phase 5 |
 | `nexus:{org_id}:a2a:grant:{grantee_role}:{query_class}:{target_scope}` | A2A authorization decision (`allow`/`deny`) cached by the PEP; deleted on grant create/revoke ([ADR-0013](../adr/0013-agent-to-agent-authorization.md) section 4) | 60 s | Phase 10 |
+| `nexus:{org_id}:a2a:grant:version` | Per-tenant grant version, incremented on every grant change; the PEP caches a decision only if it is unchanged across the PDP call ([ADR-0035](../adr/0035-plan-10-context-gap-agent-and-a2a-build.md) D10) | none | Phase 10 |
 | `nexus:{org_id}:rag:{user_id}:{query_hash}` | RAG query result cache (passages + citations) | 10 min (PDF) | Phase 9 |
 | `nexus:{org_id}:presence:{meeting_id}` | Socket.io presence set for a meeting room | meeting-lifetime | Phase 3 |
 | `nexus:{org_id}:pubsub:meeting:{meeting_id}` | Redis pub/sub fan-out channel for Socket.io across backend instances | n/a (channel) | Phase 11 |
