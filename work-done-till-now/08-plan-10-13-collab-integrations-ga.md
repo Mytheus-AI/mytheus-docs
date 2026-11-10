@@ -102,3 +102,73 @@ Merged in order with each main build and deploy watched to completion before the
 Checked on the server afterwards: `agent-runtime` has `AGENT_IDENTITY_SECRET`, `CORE_URL` and `CORE_CALLER_TOKEN` set (`CONTEXT_GAP_A2A` unset, which defaults to on); the `workflow` worker logged `Worker started on task queue: mytheus-backend`; no errors in `agent-runtime`, `workflow`, `workflow-consumer`, `identity-grpc` or `core-api-consumer`; `agent_collaborations` and `agent_authz_scopes` exist in the `mytheus` database and `alembic_version` is `c8f2d3e4a510`, the backend head.
 
 **Found while deploying, outside P10: the Ask page was answering "Not available".** `rag-service` (P9) verifies the asker's Clerk JWT itself and reads `CLERK_JWKS_URL` and `CLERK_ISSUER`, but those were only in `prod.env`, which it does not load, so every `POST /api/rag/query` raised `KeyError: CLERK_JWKS_URL` and the gateway returned 500. Fixed on the server by copying both into `prod.rag.env` and recreating `rag-service`; made permanent in `enable-tiers.sh` (`mytheus-platform` #8, which now also checks `CLERK_ISSUER` is staged). After the fix the gateway and `rag-service` both logged `POST /api/rag/query 200`.
+
+---
+
+## 2. Phase P11: Proactive Intelligence and Real-time Polish (2026-11-10)
+
+**Status:** P11 DONE WITH GAPS: plan sections 3.6 to 3.9 built, tested per repo with each CI mirrored locally, security-reviewed, fixed after review, merged and deployed. The dependency alert cannot fire yet (2.5 item 1) and nothing has been seen in a live meeting.
+
+Build decisions: [ADR-0036](../adr/0036-plan-11-proactive-agent-and-delivery-build.md) (D1 to D11). Canon first: `_canon/02-data-model.md` (`notification_log`, `notification_preferences`) and `_canon/03-event-taxonomy.md` (`agent-runtime-service` consumes `decisions` and `actions`).
+
+### 2.1 What landed, per repo
+
+| Repo | PR | Branch |
+|---|---|---|
+| `mytheus-backend` | [Mytheus-AI/mytheus-backend#15](https://github.com/Mytheus-AI/mytheus-backend/pull/15) | `feat/p11-notifications` |
+| `mytheus-intelligence` | [Mytheus-AI/mytheus-intelligence#8](https://github.com/Mytheus-AI/mytheus-intelligence/pull/8) | `feat/p11-proactive-agent` |
+| `mytheus-realtime` | [Mytheus-AI/mytheus-realtime#8](https://github.com/Mytheus-AI/mytheus-realtime/pull/8) | `feat/p11-priority-queue` |
+| `mytheus-ui` | [Mytheus-AI/mytheus-ui#34](https://github.com/Mytheus-AI/mytheus-ui/pull/34) | `feat/p11-alerts` |
+| `mytheus-platform` | [Mytheus-AI/mytheus-platform#9](https://github.com/Mytheus-AI/mytheus-platform/pull/9) | `feat/p11-proactive-deploy` |
+
+No `mytheus-events` change: `AgentResult.kind` already had `alert`, and `Notification` and `NotificationDeliveryEvent` already existed.
+
+- **mytheus-intelligence:** `ProactiveAgent` (`agents/proactive_agent.py`) with a new `decisions`/`actions` consumer loop (group `agent-runtime-proactive`, latest). Conflict: candidates from `knowledge-graph-service` lineage over gRPC (`libs/shared/kg_client.py`, `KG_GRPC_ADDR`, `KG_CALLER_TOKEN`, 800 ms timeout) and a decision-only `rag-service` search (a caller-forced `source` filter that only narrows), judged by one Sonnet call `proactive_conflict@v1`; `supersedes` is never a conflict; with the graph down only the rag path runs. Workload and dependency: deterministic from the `core-api` action context. Missing stakeholder: per window, a Haiku gate `proactive_stakeholder@v1`, then people who attended the meetings behind the topic's decisions, once per (meeting, person) and only after a surfaced alert. One alert per recipient with deterministic ids; per recipient, detail from another meeting only if they attended it (redacted otherwise); URLs stripped from title, body and rationale. Suspended when the budget is `throttled`/`blocked` or the plan lacks `proactive_agent` (override `PROACTIVE_AGENT_ALL_PLANS`). The KG gRPC server binds `KG_GRPC_BIND` (50104).
+- **mytheus-backend:** `notification-service` migration (`notification_log`, `notification_preferences`, RLS FORCE); the real consumer (`python -m services.notification_service.consumer`, group `notification-service`) for surfaced `ProactiveAgent` alerts and `notifications` events: one `notification_log` row per item, delivery per preferences (in-app always; email through SMTP when `SMTP_URL` is set and the user opted in, sent after the commit; Slack recorded as skipped until P12), one `notification-delivery-events` receipt per attempt through the outbox (a skip is `failed` with detail `skipped:...`, because the receipt schema has no skipped status). Routes `GET /notifications`, `PATCH /notifications/{id}` (owner only, 404 otherwise, audited), `GET`/`PUT /notifications/preferences`. `core-api` internal `GET /internal/actions/{id}/context` and `GET /internal/meetings/{id}/participants`; `billing-metering-service` `GET /internal/plan-features` (caller `agent-runtime-service` only).
+- **mytheus-realtime:** `alertQueue.ts`: the per-user `nexus:{org_id}:queue:agent:{user_id}` sorted set (priority then age), at most 100 items and nothing older than 24 h, drained only into the alert's own meeting room as `agent-alert` to the recipient's sockets, cross-pod through a content-free nudge on the meeting channel. Backpressure sheds `agent-stream` deltas first.
+- **mytheus-ui:** `AlertCard` and the red conflict banner pinned above every card, yellow and blue cards, Mark read and Dismiss through `PATCH /notifications/{id}`, the alerts reducer with rehydrate from `/api/meeting-alerts`, link allowlist, streamed draft cards with reserved heights and reduced motion, and notification preferences on Settings, Profile (email off by default).
+- **mytheus-platform:** `notification-consumer` (profile `workers`), `knowledge-graph-grpc` (profile `kg`), `kg` in the default profiles of `enable-tiers.sh`, and `KG_GRPC_ADDR`, `KG_CALLER_TOKEN` (listed in `MYTHEUS_KG_CALLER_TOKENS`) and `PROACTIVE_AGENT_ALL_PLANS=1` for `agent-runtime`.
+
+### 2.2 Definition of Done audit (P11 DoD, plan section 10)
+
+| DoD line | State | Evidence |
+|---|---|---|
+| `ProactiveAgent` (conflict/workload/stakeholder/dependency) live over the graph + `decisions__{org_id}` complement | PARTIAL | Deployed; conflict, workload and stakeholder tested; dependency cannot fire (2.5 item 1) |
+| `realtime-gateway` Redis pub/sub backbone + `agent-stream` deltas + per-user priority queue | MET | 80 tests including a two-instance cross-pod test (p50 1.6 ms, p95 2.8 to 13 ms, assert under 50 ms) |
+| `notification-service` three-channel delivery | PARTIAL | In-app delivers; email wired, off until SMTP is configured and a user opts in; Slack waits for P12 |
+| Alert UI + sidebar polish | MET (not browser-checked) | 77 UI tests; build passes |
+| Demo: a confirmed decision raises a red conflict banner | NOT MET | Needs a live meeting |
+| Demo: still fires via the Qdrant complement with `knowledge-graph-service` killed | MET (tested) | Agent test with the graph down |
+| Demo: a workload alert | MET (tested) | Agent and core-api route tests |
+| Demo: streamed deltas render progressively cross-pod | MET (tested) | Gateway cross-pod and UI draft tests |
+| Demo: urgent alerts pre-empt notes | MET (tested) | Priority-order test: a priority-1 alert queued after priority-3 items is delivered first |
+
+### 2.3 Deviations from the plan, and why
+
+1. **Alerts are `notification_log` rows read and dismissed through `notification-service`**, not `core-api` (ADR-0036 D5): canon already gives that service the log and the `/notifications` surface.
+2. **`ProactiveAgent` consumes `decisions` and `actions`** (D1): the checks are triggered by confirmations, which the transcript windows do not carry.
+3. **Workload and dependency make no model call** (D3); the conflict judge is Sonnet, not Opus.
+4. **The plan gate has a deployment override, set in production** (D8): there are no paying tenants yet.
+5. **Email is opt-in** (D10) and is sent after the commit, so a crash between commit and send loses that email rather than duplicating it.
+6. **Alerts are delivered only in their own meeting** (D11), so the meeting-scoped rehydrate always finds them.
+7. **Missing-stakeholder ids are keyed by `{meeting_id}:{person_id}`**, so two absent people do not collide.
+
+### 2.4 Review
+
+A read-only review of the four code PRs found RLS, owner-only routes, caller tokens, header-derived org, tenant-scoped dedupe and fail-closed gates correct, and five issues, all fixed before merge: alert text revealing decisions and attendees from meetings a recipient never attended (now redacted per recipient, D9); a silent stakeholder window blocking later alerts; alerts about another meeting lost after a reload (D11); an uncapped per-user queue; URLs from meeting text reaching alert emails (stripped) and an open relative-link pass-through in the UI (allowlisted). Email was made opt-in at the same time (D10).
+
+### 2.5 Open gaps and handover
+
+1. **The dependency alert cannot fire**: no table records that one action depends on another (P8 never stored the candidate's `depends_on`), so the context route returns `depends_on: []`. Needs a column on `action_items` set at confirm.
+2. **Stakeholder alerts stay silent until `RELATES_TO` edges exist** for the topic's decisions.
+3. **The rag decision arm is participant-scoped**, so the conflict search sees only decisions from meetings the confirming user attended; the graph lineage covers the rest when `kg` runs.
+4. **Email needs `SMTP_URL` and `SMTP_FROM`** on the server, and Slack needs P12.
+5. **Live demo** of the conflict banner in a real meeting is not done.
+
+### 2.6 Verification (2026-11-10)
+
+- `mytheus-backend`: on throwaway `postgres:15` and `redis`: pytest 818 passed, 1 skipped (25 new); the six isolation assertions; `ruff`, `black --check`, `mypy`, `check_authz`, `emit_openapi --check`, Spectral 0 errors, `oasdiff` no breaking changes; migrations up, down, up. GitHub CI green; deploy `healthz OK` 07:58 UTC.
+- `mytheus-intelligence`: `uv run pytest -q` 462 passed, 117 skipped; Avro round trip and real-Redpanda consumer tests pass against a throwaway broker; `ruff`, `black`, `mypy` clean; both images build. Live conflict-judge eval, Sonnet 5.5, 12 golden pairs: precision 1.0, recall 1.0, false-positive rate 0.0, 9,211 tokens; baseline recorded. Deploy `healthz OK` 08:01 UTC.
+- `mytheus-realtime`: `npx vitest run` 80 passed; `tsc`, eslint, prettier, `docker build`. Shed test with the client's TCP paused: all 80 captions, the suggestion and the alert arrived; 68 of 80 deltas were shed. Deploy `healthz OK` 08:02 UTC.
+- `mytheus-ui`: `npm test` 77 passed; `tsc`, `next lint`, `next build`; merged with the mock-data PR (#33) and the generated types re-run against the merged backend.
+- Cross-repo: the alert fields emitted by the agent and read by `notification-service` and the gateway were compared and match.
