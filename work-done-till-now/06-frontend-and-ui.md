@@ -382,3 +382,12 @@ The owner reviewed the first pass and found it too empty: a small scene in a mos
 Verified on 2026-11-10:
 - `tsc` and `next lint` were clean.
 - In the browser at 1440x900, the room renders unframed on `/sign-in` (529 x 536px) and `/sign-up`, with no console errors.
+
+### 9.5 Owner tweaks before push (`mytheus-ui` `3698a27`, `c8ec962`, `919bef2`)
+
+- The live timer, the meeting name and its time line ("Kickoff", "Pricing sync" and the others) were removed at the owner's request, so `SceneProps` is now `{ lines, you, label }`. The "n of 3" counter on the kept strip was removed too. A bead appears only once its item is kept, so no empty dots wait on the thread.
+- The room was too small on short screens. It was sized from a `100dvh` formula, which gave about 310px of a 747px panel at 1520x740. The art slot in `AuthShell` is now a CSS size container, and the room takes `min(100%, 780px, (100cqh - 140px) * RW/rh)`. The panel's top padding is tighter, and its headline drops to 2.25rem under 820px of height. Measured widths:
+  - 555px on `/sign-in` and 492px on `/sign-up` at 1520x740
+  - 780px at 1920x1080
+  - the room never reached the headline
+
