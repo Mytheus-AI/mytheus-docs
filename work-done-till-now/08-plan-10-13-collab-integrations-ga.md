@@ -172,3 +172,73 @@ A read-only review of the four code PRs found RLS, owner-only routes, caller tok
 - `mytheus-realtime`: `npx vitest run` 80 passed; `tsc`, eslint, prettier, `docker build`. Shed test with the client's TCP paused: all 80 captions, the suggestion and the alert arrived; 68 of 80 deltas were shed. Deploy `healthz OK` 08:02 UTC.
 - `mytheus-ui`: `npm test` 77 passed; `tsc`, `next lint`, `next build`; merged with the mock-data PR (#33) and the generated types re-run against the merged backend.
 - Cross-repo: the alert fields emitted by the agent and read by `notification-service` and the gateway were compared and match.
+
+---
+
+## 3. Phase P12: External Integrations, follow-ups and the admin consoles (2026-11-10)
+
+**Status:** P12 DONE WITH GAPS: built, tested per repo with each CI mirrored locally, security-reviewed, fixed after review, merged and deployed on 2026-11-10 (3.7). Live connections need each provider's app registered (3.5 item 1).
+
+Build decisions: [ADR-0037](../adr/0037-plan-12-integrations-follow-ups-and-consoles-build.md) (D1 to D8). Canon first: `_canon/02-data-model.md` (`integration_id_map`, `integration_cursors`, `integration_webhook_inbox`, `feature_flags`, `ops_audit_log`, `support_grants`, `meetings.calendar_event_id`).
+
+### 3.1 What landed, per repo
+
+| Repo | PR | Branch |
+|---|---|---|
+| `mytheus-backend` | [Mytheus-AI/mytheus-backend#17](https://github.com/Mytheus-AI/mytheus-backend/pull/17) | `feat/p12-integrations` |
+| `mytheus-backend` | [Mytheus-AI/mytheus-backend#16](https://github.com/Mytheus-AI/mytheus-backend/pull/16) | `feat/p12-followups-admin-ops` |
+| `mytheus-ui` | [Mytheus-AI/mytheus-ui#35](https://github.com/Mytheus-AI/mytheus-ui/pull/35) | `feat/p12-integrations-consoles` |
+| `mytheus-platform` | [Mytheus-AI/mytheus-platform#10](https://github.com/Mytheus-AI/mytheus-platform/pull/10) | `feat/p12-integrations-deploy` |
+
+No `mytheus-events` change: `Action.status` stays confirmed-only on purpose (ADR-0037 D2).
+
+- **`integration-service` (#17):** migration `7c3e9a1f5b20` (`integration_connections`, the id map, cursors, webhook inbox; one active connection per provider account across all tenants); OAuth with signed state and PKCE, the authorize redirect returning to the dashboard page `/settings/integrations/callback/{provider}`, which completes it through `POST /oauth/{provider}` under the user's own session (the user and organization must match the state); tokens envelope-encrypted with `libs/shared/crypto`, never returned or logged; `GET /integrations`, connect, disconnect; `/webhooks/{provider}` with per-provider verification, a deduped inbox and fast ACK, drained by `python -m services.integration_service.worker`; Google Calendar (watch, delta sync, tenant-organized events only, the organizer's attachments to `attachment_to_ingest`), Slack (bot install, user map, internal token and message-building routes), Jira (`python -m services.integration_service.consumer` on confirmed `actions`: one issue per action with a `nexus:{id}` label, idempotent; inbound status re-read with the tenant's token, then `core-api` `POST /internal/actions/{id}/external-status`, echo-suppressed). `core-api`: the external-status route, the `calendar_event_upserted` consumer (idempotent on `meetings.calendar_event_id`), `GET /internal/actions/{id}/status`. `notification-service`: real Slack DMs with a short-lived fetched token. api-gateway: every path is decoded and rejected on dot segments, encoded or doubled slashes, or a leading `/internal`, before routing; `/webhooks/` is the only new public prefix.
+- **`workflow-service` and `admin-ops-service` (#16):** migration `e2b6c4a8f913` (on `7c3e9a1f5b20`): `feature_flags` (tenant rows read-only to tenants), `ops_audit_log`, `support_grants`. `ActionFollowUpWorkflow` started from confirmed `actions` (`actionfollowup-{id}`), reminders on day 1, 3 and 7 and escalation on day 10 (owner or admin in the assignee's department, then the organizer, then an org admin), each through workflow-service's own outbox as in-app and Slack `notifications`; status re-read each step. `MeetingLifecycleWorkflow` sends a Slack prep brief at T-15 minutes and a summary on end. Tenant-admin `/admin/tenant/*` (members, settings, support grants, data export recorded as pending); internal-ops `/admin/ops/*` for users in `MYTHEUS_STAFF_USER_IDS` (tenants with suspend and reinstate through identity's caller-token route, feature flags, costs from aggregates, audit log only under a live support grant), every call in `ops_audit_log`.
+- **`mytheus-ui` (#35):** `/settings/integrations` (Calendar, Slack, the PM radio with Jira and Linear unavailable, Not configured states), the callback page, tenant console screens (members, settings, support access, data export), and the ops console (`/ops`, flags, costs, audit) gated by `GET /admin/ops/whoami`.
+- **`mytheus-platform` (#10):** `integration-worker` and `integration-consumer`; `enable-tiers.sh` writes `APP_BASE_URL`, `OAUTH_STATE_SECRET`, `INTEGRATION_SERVICE_URL`, `CORE_API_URL` and one caller secret each for notification-service, integration-service and admin-ops-service.
+
+### 3.2 Definition of Done audit (P12 DoD, plan section 10)
+
+| DoD line | State | Evidence |
+|---|---|---|
+| `integration-service` framework + Calendar + Slack + live Jira | PARTIAL | Built and tested against fakes; live needs the provider apps (3.5 item 1) |
+| `ActionFollowUpWorkflow` | MET (tested) | Temporal time-skipping tests: reminders 1/3/7, escalation 10, early completion, worker restart |
+| Both `admin-ops-service` consoles | MET (tested) | API and UI tests; staff gate, audit, support grants |
+| Demo: admin OAuth-connects Jira, a confirmed action becomes a real issue, Done flips the action | NOT MET | Needs a registered Atlassian app |
+| Demo: day-1 follow-up Slack DM | NOT MET | Needs a registered Slack app |
+| Demo: a Calendar event creates a meeting and ingests its attachment | NOT MET | Needs a registered Google app (Drive scope needs Google verification) |
+| Demo: ops cost dashboard and tenant suspend | MET (tested) | Ops route tests |
+| Gate: R8 cap enforced | MET | Second PM connection 409; Linear unavailable |
+| Gate: webhook idempotency and loop suppression | MET (tested) | Replay dedupe and echo suppression tests |
+
+### 3.3 Deviations from the plan, and why
+
+1. **Jira status reaches `action_items` through a `core-api` internal route**, not `actions` (D2); NEXUS to Jira status sync is not built.
+2. **The OAuth callback runs through the signed-in dashboard** (D4), after the review showed a public callback let a connect link connect someone else's account into the attacker's workspace.
+3. **Staff are an allowlist** (D5) and audit-log reads need a live support grant (D8).
+4. **Slack messages are title, text and link** turned into Block Kit by `notification-service`: the `Notification` schema has no blocks field. Prep briefs do not query `rag-service` yet.
+5. **Jira issues go to the first project the installing account sees, as Task.**
+6. **Reinstate emits no event**: neither frozen schema has a reinstated value. **A data export is recorded as pending**: the RTBF workflow is still a stub.
+
+### 3.4 Review
+
+A read-only review found ten issues, all addressed before merge: gateway dot-segment traversal reaching `/internal/*` (also present on the live gateway for signed-in users; fixed for every path); the OAuth state not bound to the user; one provider account connectable by many tenants; Jira webhook claims, payload status and label mapping trusted; calendar invites from outside the tenant ingested; data export emitting the tenant-erasure event; support grants not enforced on audit reads; two migration heads (re-chained); tenant-writable feature flags. One is mitigated, not removed: `set_organization_status` stays executable by the shared `mytheus_app` role, because no identity-only role exists; a test pins its single grantee and call site.
+
+### 3.5 Open gaps and handover
+
+1. **Register the provider apps** and set their credentials in `prod.env`: Google (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`), Slack (`SLACK_CLIENT_ID`/`SECRET`, `SLACK_SIGNING_SECRET`, Events URL `https://api.mytheus.cloud/webhooks/slack`), Atlassian (`JIRA_CLIENT_ID`/`SECRET`), each with the redirect URI `https://dashboard.mytheus.cloud/settings/integrations/callback/{provider}`.
+2. **Jira webhook JWT claim** for the cloud id is unconfirmed; check against a real delivery.
+3. **`MYTHEUS_STAFF_USER_IDS`** must be set by hand for the ops console.
+4. **No identity-only database role** (3.4).
+5. **NEXUS to Jira status sync**, RTBF-backed data export, Slack prep briefs grounded in RAG, and a re-auth notification on a degraded connection are not built.
+
+### 3.6 Verification (2026-11-10)
+
+- `mytheus-backend` #17: on throwaway `postgres:15` and `redis:7`: pytest 926 passed, 1 skipped (98 integration tests); the six isolation assertions; `ruff`, `black`, `mypy`, `check_authz`, `emit_openapi --check`, migrations up, down, up, `bootstrap_roles`. GitHub CI green.
+- `mytheus-backend` #16: pytest 853 passed, 1 skipped locally with #17's migration copied in (the 3 failures were #17's schema against pre-#17 code and a known timing-dependent dashboard test); all other gates clean. GitHub CI fails until #17 merges (its migration's parent is #17's).
+- `mytheus-ui` #35: `npm test` 105 passed; `tsc`, `next lint`, `next build` clean. GitHub CI green.
+- `mytheus-platform` #10: `bash -n`, `docker compose config -q`. GitHub CI green.
+
+### 3.7 Merge and deploy (2026-11-10)
+
+Merged in order with each main build and deploy watched to completion: `mytheus-backend` #17 (deploy `healthz OK` 09:47 UTC); #16 after merging main into it (an `.env.example` conflict kept both sides, the `admin-ops-service` OpenAPI spec re-emitted, the migration chain `d4b8e2f61a37` <- `7c3e9a1f5b20` <- `e2b6c4a8f913` confirmed; deploy `healthz OK` 09:57 UTC); `mytheus-ui` #35 with the generated types re-run against the merged backend; `mytheus-platform` #10; this docs PR. `scripts/enable-tiers.sh` is re-run on the server afterwards to write the P12 secrets and start `integration-worker` and `integration-consumer`.

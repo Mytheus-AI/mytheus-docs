@@ -114,6 +114,10 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `agent_authz_scopes` | entity | The A2A grant store: `grantee_role` (RBAC tier) x `query_class` x `target_scope` x `effect`, deny by default ([ADR-0013](adr/0013-agent-to-agent-authorization.md), [ADR-0035](adr/0035-plan-10-context-gap-agent-and-a2a-build.md)). Owned by `identity-tenant-service`. | - |
 | `notification_log` | entity | One row per delivered in-app item, including `ProactiveAgent` alerts; status `unread`/`read`/`dismissed`; private to its user ([ADR-0036](adr/0036-plan-11-proactive-agent-and-delivery-build.md)). Owned by `notification-service`. | - |
 | `notification_preferences` | entity | Per-user channel prefs (`in_app`/`email`/`slack`, enabled, `max_priority`). Owned by `notification-service`. | - |
+| `integration_id_map` | entity | `integration-service`'s external to NEXUS id map with `last_synced_status` for loop suppression ([ADR-0037](adr/0037-plan-12-integrations-follow-ups-and-consoles-build.md)). | - |
+| `integration_cursors` | entity | `integration-service`'s sync cursors and push-channel state. | - |
+| `ops_audit_log` | entity | Append-only record of every internal-ops console call. Owned by `admin-ops-service`. | - |
+| `support_grants` | entity | Time-boxed, tenant-granted support access. Owned by `admin-ops-service`. | - |
 | `context_fill` | event kind | `AgentResult.kind` for `ContextGapAgent`: the window's A2A collaboration entries plus the optional fill ([ADR-0035](adr/0035-plan-10-context-gap-agent-and-a2a-build.md)). | - |
 | `chat_messages` | entity | In-meeting chat (non-AV via Socket.io). Range-partition by `created_at`. Owned by `core-api`. | — |
 | `document_chunks` | entity | unstructured.io typed elements: document_id, element_id, element_type, text, position. Mirrors the Qdrant `document_chunks` payload. Owned by `rag-service`. | — |
