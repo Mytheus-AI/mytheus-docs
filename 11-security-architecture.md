@@ -154,6 +154,8 @@ Two non-negotiable middleware properties:
 
 The novel surface is the `ContextGapAgent` asking *other users' agents* over `agent-requests` / `agent-responses` (the PDF's R6). The lock is **deny-by-default, org/role scope checks, audited** ([Tech Decisions §2.6](_canon/06-tech-decisions.md)); the isolation mechanics — tenant-keyed partitions, the grant check before a responder processes, and DLQ-on-foreign-`org_id` — are specified with a sequence diagram in [Multi-Tenancy §6.1](06-multi-tenancy.md) and detailed in [AI Agent Architecture](08-ai-agent-architecture.md). This document does not re-derive that path; it incorporates the control into the STRIDE model (§8, multi-agent surface) where the failure mode and audit trail matter. The grant store is the same RBAC store in `identity-tenant-service`: an agent inherits its principal user's tenant and a deny-by-default scope, and a request is authorized only if requester and responder share `org_id` **and** the scope permits the query.
 
+The same PDP gates the one [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) path that shows meeting content to someone outside the meeting: a `ProactiveAgent` `topic_watch` alert reaches a watcher only when the PDP allows `meeting_context` on that meeting for them, carries a snippet of at most 200 chars, and is never raised from a confidential meeting. Company-wide writes to the company brain (`/api/v1/org/*`, meeting templates) require the `rbac_grants.tier` `owner` or `admin`, never `users.role` (§3.1).
+
 ---
 
 ## 4. Hardened user-sync — fixing webhook flakiness

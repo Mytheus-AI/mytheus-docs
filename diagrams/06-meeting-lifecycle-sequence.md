@@ -60,6 +60,7 @@ sequenceDiagram
     participant EMB as embedding-service
     participant AGENT as agent-runtime-service
     participant KG as knowledge-graph-service
+    participant IDENT as identity-tenant-service
 
     Note over GCAL,WF: P1 — Pre-meeting (T-minus hours → T-15 min)
     GCAL-->>INTEG: webhook: calendar event created/updated
@@ -75,6 +76,10 @@ sequenceDiagram
     RAG-->>INTEG: prep-brief content + citations
     INTEG->>RP: notifications (Block Kit prep brief, channel=slack_dm)
     RP->>NOTIF: deliver prep brief to each participant
+    WF->>CORE: T-60, follow-ups only: POST /internal/meetings/{id}/status-requests
+    WF->>RP: notifications (in_app "Quick status on {action}?", one per request)
+    WF->>RP: T-10: notifications (in_app "Your brief for {title}", each live participant)
+    RP->>NOTIF: deliver status requests and brief reminders
 
     Note over U,LK: P2 — Join (T-0)
     U->>MEET: POST /api/meetings/:id/token (Clerk JWT, verify participant, RLS)
@@ -87,6 +92,7 @@ sequenceDiagram
 
     Note over LK,KG: P3 — Live (audio flowing)
     LK->>TRANS: server-side mixed-audio hook (one diarized stream/meeting)
+    TRANS->>IDENT: gRPC GetOrgContext (up to 100 key terms; failure opens without them)
     TRANS->>DG: WSS audio (key server-side, diarization, interim+final)
     DG-->>TRANS: interim (caption) + final (persist)
     TRANS-->>RTGW: interim caption (live)
@@ -114,6 +120,7 @@ sequenceDiagram
     RAG-->>WF: summary + citations
     WF->>RP: notifications (summary → channel/DM)
     RP->>NOTIF: deliver summary
+    WF->>RP: T+5 after end: notifications (in_app catch-up, each participant who sent their agent)
 
     Note over WF,INTEG: P5 — Follow-up (Day 1 → Day 10+)
     WF->>WF: start ActionFollowUpWorkflow per confirmed action
@@ -152,9 +159,13 @@ The `transcript-chunks` topic fans to two consumers: `embedding-service` (embed-
 
 The seven agents act here: **PersonalListenerAgent** writes per-user `worklogs`; **DecisionAgent** / **ActionAgent** surface decisions/actions as confirm/edit/dismiss cards; **QuestionAgent** emits `agent_suggestions` (priority 1–3); **ContextGapAgent** fills cross-meeting context over `agent-requests`/`agent-responses`; **ProactiveAgent** raises conflict/workload/stakeholder alerts; **MeetingAgent** (one per meeting, only with an agenda) updates agenda item statuses for everyone and nudges the host ([ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)). On user **confirmation**, `core-api` emits `decisions`/`actions` through its outbox, and `knowledge-graph-service` creates the `PRODUCED` (Decision/Action→Meeting) and `ASSIGNED_TO` (Action→Person) edges in `nexus_knowledge`. Every LLM call emits `usage-events` for metering.
 
+Company-brain additions ([ADR-0039](../adr/0039-company-brain-and-meeting-companions.md)): `transcription-service` fetches `GetOrgContext` when the stream opens and passes the org's key terms to Deepgram; `agent-runtime-service` reads the same context for the company block, never-record topics and topic watches; a participant whose attendance is `agent` is not in the room but still gets a `PersonalListenerAgent` pass on every window; `ProactiveAgent` may raise `already_decided` to the room and `topic_watch` to watchers outside it (never from a confidential meeting).
+
 ### 3.4 P4 — End & summarize
 
 When the last participant leaves, LiveKit fires `recording.ready` (egress); `meeting-service` records the egress reference into `meeting_rooms` (recording object lands in `mytheus-recordings` at `{org_id}/{meeting_id}/`) and `core-api` sets `meetings.status = ended`, emitting `meeting-events (ended)`. The `MeetingLifecycleWorkflow` advances to its summarize step: `rag-service` assembles a **per-participant** summary from confirmed `decisions`/`action_items` and the user's `worklogs`, with citations; `notification-service` delivers it to channel/DM.
+
+> [SaaS-scale adjustment] The meeting timers are net-new relative to the PDF: for a meeting with `scheduled_start`, `MeetingLifecycleWorkflow` (or a sibling workflow it starts) sleeps on durable Temporal timers, not cron, for the status requests at start minus 60 minutes (only when `previous_meeting_id` is set), the brief reminder at minus 10, and the agent catch-up 5 minutes after the end. Each reminder is a plain `notifications` record with an in-app link; a meeting rescheduled or cancelled before a timer fires gets no notification for it ([ADR-0039](../adr/0039-company-brain-and-meeting-companions.md) B9). The in-app brief is distinct from the Slack prep brief above.
 
 ### 3.5 P5 — Follow-up: ActionFollowUpWorkflow and ticket sync
 

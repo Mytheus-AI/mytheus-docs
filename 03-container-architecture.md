@@ -134,6 +134,8 @@ flowchart TB
   CLERK -.->|webhook| IDENT
   GW -.->|JWT verify| CLERK
   AGENT -->|"gRPC /context"| IDENT
+  AGENT -->|"gRPC GetOrgContext"| IDENT
+  TRANS -->|"gRPC GetOrgContext"| IDENT
 
   %% Meeting + real-time + transcription
   MEET -.->|"mint token / room API"| LK
@@ -261,7 +263,11 @@ flowchart LR
   RAG -->|"gRPC GraphQuery (template, $org_id)"| KG["knowledge-graph-service"]
   RAG -->|"gRPC Search (FTS arm)"| SEARCH["search-service"]
   AGENT -->|"gRPC GetUserContext(user_id)"| IDENT["identity-tenant-service"]
+  AGENT -->|"gRPC GetOrgContext (org_id in metadata)"| IDENT
+  TRANS["transcription-service"] -->|"gRPC GetOrgContext (key terms at stream open)"| IDENT
 ```
+
+`IdentityService.GetOrgContext` returns the company brain (profile, vocabulary, topic owners, active goals, never-record topics, topic watches), cached at `nexus:{org_id}:org_ctx` for 5 minutes and evicted by every company-brain write. `agent-runtime-service` uses it for the company block in prompts and the ProactiveAgent topic-watch check; `transcription-service` passes up to 100 key terms from it to Deepgram when a stream opens ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) A9).
 
 The `rag-service` is the sync orchestrator of the hybrid-retrieval fan-out: it calls `embedding-service` (query-embed only), `reranker-service`, `knowledge-graph-service` (AGE topic-relations arm), and `search-service` (Postgres FTS arm), then fuses results with RRF — exactly the `expand → retrieve → rerank → assemble → cite` pipeline locked in [Tech Decisions](_canon/06-tech-decisions.md) §2.9. Every gRPC call carries the `org_id` in metadata so the callee's authz middleware and RLS scope apply identically to sync paths.
 

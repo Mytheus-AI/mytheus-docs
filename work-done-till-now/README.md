@@ -28,6 +28,7 @@ This exists because progress was previously scattered across four repos in three
 | `06-frontend-and-ui.md` | Which frontend repo is the product and which is a draft, what `mytheus-ui` already has, the API contract it expects, the open frontend items, the 2026-11-07 custom auth flows, missing screens and dev-server speed fix, and the 2026-11-10 pass that put every authenticated screen on real data. |
 | `08-plan-10-13-collab-integrations-ga.md` | Plan 10-13 (`plan/plan-10-13-collab-integrations-ga.md`): P10 `ContextGapAgent`, the A2A PEP/PDP and `agent_authz_scopes`, `agent_collaborations` and its log UI, the real `MeetingLifecycleWorkflow` activities, the security review and its fixes (section 1). |
 | `09-agent-personas-profiles-and-agendas.md` | ADR-0038, not a plan band: working profiles and onboarding, agent personas, meeting host, follow-up link and agendas, and the seventh agent `MeetingAgent`, across all six code repos. |
+| `10-company-brain-and-meeting-companions.md` | ADR-0039, not a plan band: the company brain (profile, vocabulary, owners, goals, ground rules, readiness, welcome) and ten features on it (drafted agendas, briefs, send your agent, topic watch, already decided, promises, status requests, health, catch-up, vocabulary in captions), across all seven repos. |
 
 ## How to write a band file
 

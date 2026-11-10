@@ -67,6 +67,8 @@ flowchart TB
   BFF --> CORE
   BFF --> IDENT
   CORE -.->|"gRPC GetUserContext"| IDENT
+  AGENT -.->|"gRPC GetOrgContext"| IDENT
+  TRANS -.->|"gRPC GetOrgContext"| IDENT
 
   IDENT --> PG
   CORE --> PG

@@ -256,6 +256,17 @@ Additions from [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-a
 
 > [SaaS-scale adjustment] Agent personas, the shared agenda panel and host nudges are net-new relative to the PDF, whose room had per-participant agent output only and no meeting agenda.
 
+### 4.4 The company brain and meeting companions in the room
+
+Additions from [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part E, again without changing the frozen sidebar order (§5.1):
+
+- **Proxied participants.** A participant whose attendance is `agent` ("Send my agent instead") appears as an agent tile (their agent's face and name) carrying their `proxy_update`, which is meant for the room and visible to everyone.
+- **The `proxy_update` nudge.** When an agenda item owned by a proxied participant becomes `in_progress`, the host gets an `agent-nudge` of type `proxy_update` carrying that person's update.
+- **The already-decided card.** A `ProactiveAgent` `already_decided` alert shows the original decision (`decision_content`, `decided_at`, the meeting it came from) so the room does not re-open a settled question. It rides the existing alert path and the frozen colour language (§5.3).
+- **Topic watch alerts** reach watchers who are not in the meeting, so they appear in the notification surfaces (`GET /api/v1/notifications`), not in a room sidebar.
+
+> [SaaS-scale adjustment] Proxied attendance, the `proxy_update` nudge and the already-decided card are net-new relative to the PDF, whose room assumed every participant attends live.
+
 ---
 
 ## 5. The agent sidebar (the hardest UI problem)
@@ -453,11 +464,11 @@ Every screen, its route, render mode, primary data source, and the agents/entiti
 
 | Screen | Route | Mode | Primary source(s) | Surfaces |
 | --- | --- | --- | --- | --- |
-| Dashboard | `/dashboard` | RSC | `bff` aggregate | upcoming meetings, open `action_items`, recent `worklogs` |
+| Dashboard | `/dashboard` | RSC | `bff` aggregate | upcoming meetings, open `action_items`, recent `worklogs`; open promises, pending status requests answered inline, and the new joiner brief offer for 14 days after joining ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) |
 | Meeting list | `/meetings` | RSC | `core-api` `/meetings` | `meetings` (status, schedule) |
-| New meeting | meeting scheduling form | client + Server Action | `core-api` `POST /api/v1/meetings` | "Follow-up to" a recent meeting (`previous_meeting_id`), host (`host_user_id`), and an agenda editor (title, owner, minutes; add, remove, reorder; at most 20) |
-| Meeting detail | `/meetings/[id]` | RSC | `core-api` `GET /api/v1/meetings/{id}`, `/carry-forward` | host, follow-up link, the agenda with statuses and agent notes, and what was carried forward from the previous meeting |
-| Meeting room | `/meetings/[id]/room` | client | `meeting-service` token, `realtime-gateway`, LiveKit | video, captions, chat, **agent sidebar** (headed by your agent's face and name), shared live agenda panel, host-only nudges (§4.3) |
+| New meeting | meeting scheduling form | client + Server Action | `core-api` `POST /api/v1/meetings`, `GET /api/v1/meeting-templates`, `POST /api/v1/meetings/agenda-draft` | A meeting type picker (fills length, agenda and confidential), a confidential toggle, "Draft the agenda" for a follow-up, a goal on each agenda item (`goal_id`) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)); "Follow-up to" a recent meeting (`previous_meeting_id`), host (`host_user_id`), and an agenda editor (title, owner, minutes; add, remove, reorder; at most 20) |
+| Meeting detail | `/meetings/[id]` | RSC | `core-api` `GET /api/v1/meetings/{id}`, `/carry-forward`, `PUT /api/v1/meetings/{id}/attendance`; `bff` `/bff/meetings/{id}/brief`, `/bff/meetings/{id}/health` | host, follow-up link, the agenda with statuses and agent notes, and what was carried forward from the previous meeting with each open action's latest status; "Send my agent instead" (an update and up to 5 questions); your brief (`#brief`); the health card after it ends ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) |
+| Meeting room | `/meetings/[id]/room` | client | `meeting-service` token, `realtime-gateway`, LiveKit | video, captions, chat, **agent sidebar** (headed by your agent's face and name), shared live agenda panel, host-only nudges (§4.3), agent tiles for proxied participants, the `proxy_update` nudge and the already-decided card (§4.4) |
 | Transcript view | `/meetings/[id]/transcript` | RSC | `search-service` FTS over `transcript_chunks` | colored speaker labels (`meeting_speakers`), click-to-jump, in-page search |
 | Decision history & lineage | `/decisions` | RSC | `core-api` + `knowledge-graph-service` templates | `decisions`, `FOLLOWS_FROM` lineage |
 | My Tasks | `/tasks` | RSC | `core-api` `/actions` | `action_items` assigned to me (`ASSIGNED_TO`) |
@@ -465,7 +476,12 @@ Every screen, its route, render mode, primary data source, and the agents/entiti
 | Search | `/search` | client | `rag-service` `POST /api/rag/query` + `search-service` | RAG passages + **citations** |
 | Onboarding: About you, Meet your agent | after the workspace is chosen, before the dashboard | client + Server Action | `identity-tenant-service` `PATCH /api/v1/users/{user_id}` | "About you" asks `role`, "what you work on" (`bio`, at least 20 chars), focus areas (`skills`), listen for, ignore; "Meet your agent" sets name, doodle face, personality preset and optional instructions, skippable with defaults. A signed-in person with no `role` sees a dashboard prompt that opens "About you" ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D11) |
 | Profile / settings | `/settings/profile` | RSC + Server Action | `identity-tenant-service` | `users` role/skills/bio/avatar, plus "what you work on" (`bio`), listen for (`listen_for`) and ignore (`ignore_topics`) |
-| Your agent (settings) | settings, "Your agent" page | RSC + Server Action | `identity-tenant-service` `PATCH /api/v1/users/{user_id}` (self only) | `agent_name`, `agent_avatar_seed`, `agent_personality`, `agent_instructions` |
+| Your agent (settings) | settings, "Your agent" page | RSC + Server Action | `identity-tenant-service` `PATCH /api/v1/users/{user_id}` (self only) | `agent_name`, `agent_avatar_seed`, `agent_personality`, `agent_instructions`; topic watch (`GET/POST/DELETE /api/v1/users/me/topic-watches`, up to 20 topics, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) A6) |
+| Company brain | Workspace admin: About, Vocabulary, Who owns what, Goals, Meeting types, Ground rules | RSC + Server Action (owner/admin) | `identity-tenant-service` `/api/v1/org/*`, `core-api` `/api/v1/meeting-templates` | `org_profiles`, `org_glossary_terms` (with paste-a-list import), `topic_owners`, `org_goals`, `meeting_templates`, `tenant_settings.never_record_topics` (the UI says never-record is a model instruction, not a guarantee), and a readiness meter from `GET /api/v1/org/readiness`; a first-run setup for the admin who creates a workspace ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part E) |
+| New joiner brief | `/welcome` | RSC | `identity-tenant-service` `GET /api/v1/org/welcome` | company profile, active goals, who owns what, the first 40 vocabulary terms, your team mates; offered on the dashboard for 14 days after joining ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) |
+| Promises | `/promises` (and on the dashboard) | RSC + Server Action | `core-api` `GET/PATCH /api/v1/commitments` | the caller's own `commitments` (open, done, dismissed) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B6) |
+| Status requests | `/status-requests` (and answered inline on the dashboard) | client + Server Action | `core-api` `GET /api/v1/status-requests`, `POST .../answer` | the caller's pending `action_status_requests` ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B7) |
+| Meeting catch-up | `/meetings/[id]/catch-up` | RSC | `bff` `GET /bff/meetings/{id}/catch-up` | agenda statuses and agent notes, decisions, what was assigned to me, my notes, my questions ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B8) |
 | Integrations | `/settings/integrations` | RSC + Server Action | `integration-service` `/oauth/{provider}` | `integration_connections` (Calendar/Slack/Jira\|Linear, R8) |
 | Billing | `/settings/billing` | RSC | `billing-metering-service` `/billing`, `/usage` | plan/tier, seats, `usage_events`, `invoices` |
 | Tenant admin console | `/tenant` | RSC (RBAC) | `admin-ops-service` `/admin/tenant/*` | members, plan, integrations, data export/erasure |

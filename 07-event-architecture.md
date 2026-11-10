@@ -42,7 +42,7 @@ All topics are listed once here; the [Service Catalog](_canon/01-service-catalog
 |---|---|---|---|---|
 | `transcript-chunks` | `TranscriptChunk` | Finalized diarized utterances from the live meeting | `transcription-service` | `embedding-service`, `agent-runtime-service`, `search-service` |
 | `document-chunks` | `DocumentChunk` † (chunk envelope) | Typed, split document elements from ingestion | `ingestion-service` | `embedding-service`, `agent-runtime-service` |
-| `agent-results` | `AgentResult` | Agent output (notes, scores, suggestions, and `MeetingAgent` `meeting_update` agenda records, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)) | `agent-runtime-service` | `core-api`, `realtime-gateway`, `notification-service` |
+| `agent-results` | `AgentResult` | Agent output (notes, scores, suggestions, and `MeetingAgent` `meeting_update` agenda records, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md); `PersonalListenerAgent` `payload_json.commitments`, the `ProactiveAgent` alert types `already_decided` and `topic_watch`, and the `proxy_update` nudge, all inside `payload_json` with no schema change, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) | `agent-runtime-service` | `core-api`, `realtime-gateway`, `notification-service` |
 | `decisions` | `Decision` | Confirmed decisions only | `core-api` (outbox, on confirm) | `knowledge-graph-service`, `notification-service` |
 | `actions` | `Action` | Confirmed action items only | `core-api` (outbox, on confirm) | `knowledge-graph-service`, `workflow-service`, `integration-service` |
 | `notifications` | `Notification` | Cross-channel notification intents | multiple | `notification-service`, `realtime-gateway` |
