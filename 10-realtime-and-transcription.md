@@ -169,6 +169,12 @@ The emitted bus message is the `TranscriptChunk` Avro value enveloped per [Event
 
 > [SaaS-scale adjustment] The bus message is enveloped (`org_id`, `idempotency_key = chunk:{chunk_id}`, `correlation_id`, `schema_version`) and the topic is partitioned by the composite key `{org_id}:{meeting_id}` so a hot enterprise tenant spreads across partitions while within-meeting speech order is preserved ([Event-Driven Architecture §4.1](07-event-architecture.md), ratified by [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). The PDF had no envelope and no tenant partition key.
 
+### 3.2.1 Company vocabulary as key terms
+
+When a meeting's stream opens, `transcription-service` fetches the company brain through gRPC `IdentityService.GetOrgContext` on `identity-tenant-service` (cached at `nexus:{org_id}:org_ctx`) and passes up to 100 key terms to Deepgram Nova-3 as `keyterm`: the vocabulary terms and their aliases (`org_glossary_terms`), then the products and customers from `org_profiles`. This is what keeps product, customer and codename spellings right in captions and finals. A failed fetch opens the stream without key terms; captions never wait on it ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) D1).
+
+> [SaaS-scale adjustment] Key-term prompting from a per-tenant vocabulary is net-new relative to the PDF, which configured one Deepgram session shape for every tenant. It adds one cached read at stream open and nothing to the per-chunk path, so the caption budget in §6 is unchanged.
+
 ### 3.3 Provider abstraction and the Whisper cost tier
 
 Deepgram is the **locked default** transcription provider ([Tech Decisions §2.7](_canon/06-tech-decisions.md)). To control cost on low-value paths without renegotiating that lock, transcription sits behind a provider adapter — the same pattern as the LiveKit transport adapter.
@@ -202,6 +208,7 @@ The provider boundary also satisfies a subprocessor-substitution requirement: a 
 | Live captions | `transcription-service` (interims + finals) | server → client |
 | Agent sidebar output | `agent-results` topic | server → client |
 | Live agenda (`agent-agenda`) and host nudges (`agent-nudge`) | `agent-results` `MeetingAgent` `meeting_update` records, split by `realtime-gateway`: each agenda update to every socket on the meeting channel, the nudge to the host's sockets only; nudges are not replayed ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D9) | server → client |
+| `ProactiveAgent` alerts `already_decided` and `topic_watch`, and the `proxy_update` nudge | `agent-results` (`kind = alert`) and `meeting_update` records; the gateway's validators accept the new `alert_type` values and nudge type and route them unchanged: alerts through the per-user priority queue, `proxy_update` as `agent-nudge` to the host only ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) D2) | server → client |
 | Streamed agent tokens | `agent-stream` topic | server → client (§5) |
 | In-meeting chat | `web-app` ↔ `chat_messages` via `core-api` | bidirectional |
 | Presence | join/leave → `presence-events` | bidirectional |

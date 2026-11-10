@@ -132,6 +132,17 @@ sequenceDiagram
 
 If a participant declines, they are not admitted to the recorded session; the tenant admin may configure a consent-exempt internal meeting type via a proposed `tenant_settings` field — this field is **not** part of [ADR-0018](adr/0018-consent-entity-behind-flag.md)'s ratified schema, remains a proposal, and requires its own ADR + canon amendment before implementation.
 
+### 3.3.1 Never-record topics and confidential meetings
+
+Two org-level controls added by [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) narrow what the agent tier does with a meeting. Neither changes what is transcribed or who may join.
+
+- **Never-record topics.** `tenant_settings.never_record_topics` (up to 30, each up to 80 chars, set by an org `owner` or `admin` through `PUT /api/v1/org/ground-rules`) lists the org's ground rules. A transcript window mainly about one of them produces no note, suggestion, candidate or agenda note: the relevance gate scores it 0 and the agent prompts say so (C2). This is a **model instruction, not a guarantee**, and the UI says so. The transcript itself is still captured and retained under `retention_days_transcripts`; a tenant that must not capture a subject at all must not discuss it in a recorded meeting.
+- **Confidential meetings.** `meetings.confidential` (default from the meeting's `meeting_templates` row) keeps a meeting out of every path that would show its content to someone outside it: it is never a source for a `topic_watch` alert, for the `ContextGapAgent` `related_meeting` hop, or for another meeting's carry-forward shown to non-participants (B2). Inside the meeting nothing changes; participants see what they always saw.
+
+Topic watch is the one ADR-0039 path that shows meeting content to a non-participant, and it is bounded on three sides: never from a confidential meeting, only to a watcher the A2A PDP ([ADR-0013](adr/0013-agent-to-agent-authorization.md)) authorizes for `meeting_context` on that meeting, and only a snippet of up to 200 chars (C7). A fresh tenant has no A2A grants, so topic watch delivers nothing until an admin grants `meeting_context`.
+
+> [SaaS-scale adjustment] Never-record topics and confidential meetings are net-new relative to the PDF, which had no per-org ground rules and no meeting-level confidentiality. They are opt-in by data: an org that sets neither behaves as before.
+
 ### 3.4 Erasure and the legal-hold carve-out
 
 Erasure reuses the cross-store RTBF Temporal saga in [Data Architecture §8.1](05-data-architecture.md) — Postgres partition/row purge, Qdrant point delete by `org_id` filter across all three collections, AGE `deleted_at`-tag-then-remove, Redis `nexus:{org_id}:*` flush, object-prefix delete — ending with an append-only `audit_logs` record. This document adds only the **legal basis for what survives erasure**:

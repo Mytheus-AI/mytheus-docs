@@ -126,6 +126,16 @@ The split rule:
 - **Resource-shaped reads/writes** (a client mutating a single resource, or any service-to-service call) → the owning service directly through `api-gateway` (`PATCH /api/v1/worklogs/:id`).
 - **Webhooks and OAuth callbacks** → routed by `api-gateway` straight to the owning service, never through `bff` (they are not screen reads).
 
+Three participant-only meeting reads are `bff` screens ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B8):
+
+| Method & path | Who | Returns |
+|---|---|---|
+| `GET /bff/meetings/:id/brief` | a participant | `meeting` (`{id, title, scheduled_start}`), `my_agenda_items`, `my_open_actions` (from the previous meeting, each with `latest_status`), `saved_questions` (the caller's saved suggestions), `proxies: [{user_id, proxy_update}]`, `previous_meeting` (`{id, title}` or null) |
+| `GET /bff/meetings/:id/health` | a participant, after the meeting ended | `{duration_minutes, people_hours, agenda: {covered, total}, decisions, actions, talk_balance: [{user_id, share}] \| null, async_suggestion, trend: [{meeting_id, title, scheduled_start, coverage, decisions}]}`. `trend` walks `previous_meeting_id` back up to 6 meetings; `async_suggestion` is true when the meeting had no decisions, no actions and covered under half its agenda; `talk_balance` is null when no speaker timing is stored. |
+| `GET /bff/meetings/:id/catch-up` | a participant whose attendance was `agent`, or anyone who missed it | `agenda` (statuses and agent notes), `decisions`, `assigned_to_me`, `my_notes` (the caller's surfaced worklogs), `my_questions` (the caller's `proxy_questions`) |
+
+> [SaaS-scale adjustment] The brief, the health card and the catch-up are net-new screens relative to the PDF. They are reads over existing `core-api` data plus the new agenda, attendance and status-request rows, so they add no store ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)).
+
 > [SaaS-scale adjustment] The PDF had no BFF — the Next.js app called the monolith directly. With the CRUD heart split into `core-api`, `identity-tenant-service`, `billing-metering-service`, etc., a thin BFF prevents the client from N+1-calling the service mesh and keeps screen latency inside the CRUD p95 < 300 ms budget ([Capacity §11.1](_canon/05-capacity-math.md)).
 
 ---
@@ -156,11 +166,34 @@ This is the complete synchronous REST surface, organized by owning service per t
 | `GET/POST /api/v1/orgs` | identity-tenant-service | **SaaS-add** | Tenant provisioning/listing (§5.6). |
 | `/rbac/*`, `/scim/v2/*` | identity-tenant-service | **SaaS-add** | Org RBAC and SCIM 2.0 provisioning (see [Security §2.2, §3](11-security-architecture.md)). |
 
+### 5.1.1 The company brain and topic watches: `identity-tenant-service`
+
+Every route below is tenant-scoped; a write that changes company-wide data requires the org tier `owner` or `admin` (`rbac_grants.tier`), reads are open to members, and a limit failure is 422 naming the field. Every write evicts `nexus:{org_id}:org_ctx` ([Data Model (canon)](_canon/02-data-model.md) §2.2, §5; [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part A).
+
+| Method & path | Owner | Origin | Description |
+|---|---|---|---|
+| `GET /api/v1/org/profile`, `PUT /api/v1/org/profile` | identity-tenant-service | **SaaS-add** | The company profile (`org_profiles`): `description` (up to 2000), `industry` (up to 100), `products[]` (up to 30), `customers[]` (up to 50) (A1). |
+| `GET /api/v1/org/glossary`, `POST /api/v1/org/glossary`, `PATCH /api/v1/org/glossary/:id`, `DELETE /api/v1/org/glossary/:id` | identity-tenant-service | **SaaS-add** | The vocabulary (`org_glossary_terms`): `term` (1 to 80, unique per org ignoring case), `kind` (`product`/`codename`/`acronym`/`customer`/`person`/`other`), `definition` (up to 300), `aliases[]` (up to 10); at most 500 per org (A2). |
+| `POST /api/v1/org/glossary/import` | identity-tenant-service | **SaaS-add** | Paste a list: `{terms: [...]}`, up to 200, upsert by term (A2). |
+| `GET /api/v1/org/topic-owners`, `POST /api/v1/org/topic-owners`, `PATCH /api/v1/org/topic-owners/:id`, `DELETE /api/v1/org/topic-owners/:id` | identity-tenant-service | **SaaS-add** | Who owns what (`topic_owners`): `topic` (1 to 80, unique per org ignoring case), `owner_user_id`; at most 200 (A3). |
+| `GET /api/v1/org/goals`, `POST /api/v1/org/goals`, `PATCH /api/v1/org/goals/:id`, `DELETE /api/v1/org/goals/:id` | identity-tenant-service | **SaaS-add** | Goals (`org_goals`): `title`, `description`, `period`, `status` (`active`/`achieved`/`dropped`), `owner_user_id`, `position`; at most 30 active (A4). |
+| `GET /api/v1/org/ground-rules`, `PUT /api/v1/org/ground-rules` | identity-tenant-service | **SaaS-add** | `{never_record_topics}` (`tenant_settings.never_record_topics`, up to 30, each up to 80) (A5). |
+| `GET /api/v1/org/readiness` | identity-tenant-service | **SaaS-add** | Owner/admin only. `{score: 0..100, checks: [{key, label, done, detail}]}` with equal-weight keys `profile` (description at least 40 chars), `vocabulary` (at least 10 terms), `owners` (at least 5), `goals` (at least 1 active), `ground_rules` (set at least once), `roles` (done when every member has a `role`; `detail` names how many do not) (A7). |
+| `GET /api/v1/org/welcome` | identity-tenant-service | **SaaS-add** | The new joiner brief, any member: `profile`, `goals` (active), `owners: [{topic, owner_user_id}]`, `glossary` (first 40 by term), `team: [{user_id}]`, where `team` is the caller's team mates (A8). |
+| `GET /api/v1/users/me/topic-watches`, `POST /api/v1/users/me/topic-watches`, `DELETE /api/v1/users/me/topic-watches/:id` | identity-tenant-service | **SaaS-add** | The caller's own topic watches (`topic_watches`): `topic` (1 to 80, unique per user ignoring case), at most 20; self only (A6). |
+
+> [SaaS-scale adjustment] The company brain and topic watches are net-new relative to the PDF, whose agents knew the person and the meeting but nothing about the company. Services read the same data through the internal gRPC `IdentityService.GetOrgContext` (§5.8), never through these routes.
+
 ### 5.2 Meetings — `core-api` and `meeting-service`
 
 | Method & path | Owner | Origin | Description |
 |---|---|---|---|
 | `POST /api/v1/meetings` | core-api | **PDF (verbatim)** | Create a meeting. Body: `title`, `scheduled_start`, `scheduled_end`, `participant_ids[]`, and (SaaS-add, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D5, D6) optional `host_user_id` (default the creator; must be the creator or a participant), `previous_meeting_id` (a visible meeting of the same tenant, not itself) and `agenda: [{title, owner_user_id?, duration_minutes?}]` (at most 20; owners must be participants); a rule failure is 422 naming the field. Returns the row incl. `status`, `created_by`, `host_user_id`, `previous_meeting_id`. Idempotent via `Idempotency-Key` (§8). |
+| `POST /api/v1/meetings` (company-brain fields) | core-api | **SaaS-add** | `MeetingCreate` also accepts `template_id` and `confidential` (a template's `confidential` is the default); each agenda item accepts `goal_id` (an `org_goals` id) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B1 to B3). |
+| `GET /api/v1/meeting-templates` | core-api | **SaaS-add** | Meeting types (`meeting_templates`), any member: `name`, `description`, `default_duration_minutes` (5 to 480), `agenda: [{title, duration_minutes}]` (up to 20), `confidential` ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B1). |
+| `POST /api/v1/meeting-templates`, `PATCH /api/v1/meeting-templates/:id`, `DELETE /api/v1/meeting-templates/:id` | core-api | **SaaS-add** | Owner/admin only; at most 50 per org ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B1). |
+| `POST /api/v1/meetings/agenda-draft` | core-api | **SaaS-add** | `{previous_meeting_id?, template_id?}` returns `{items: [{title, owner_user_id, duration_minutes, goal_id, source}]}`, deterministic, at most 20, in order: the template's items (`source: "template"`), the previous meeting's agenda items not `covered` (`"unfinished"`), its open confirmed action items as `Status: {title}` owned by the assignee (`"open_action"`). Saves nothing ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B4). |
+| `PUT /api/v1/meetings/:id/attendance` | core-api | **SaaS-add** | Send your agent instead: `{attendance, proxy_update?, proxy_questions?}` with `attendance` in `live`/`agent`, `proxy_update` up to 2000 chars, `proxy_questions` up to 5 of up to 300 chars. Self only, a participant, 409 after the meeting ended. Participants in meeting responses carry `attendance` and `proxy_update` (meant for the room); `proxy_questions` go only to the person and the host ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B5). |
 | `GET /api/v1/meetings` | core-api | **PDF (verbatim, LIST)** | List the caller's meetings; cursor-paginated (§6), filterable by `status`, `from`, `to`. |
 | `GET /api/v1/meetings/:id` | core-api | **PDF (verbatim)** | A single meeting with participants, plus `host_user_id`, `previous_meeting_id`, `previous_meeting: {id, title, scheduled_start} \| null` and `agenda: AgendaItem[]` ordered by `position` ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D6). |
 | `PATCH /api/v1/meetings/:id` | core-api | PDF→SaaS | Update title/schedule/status; emits `meeting-events`. Also accepts `host_user_id` (must be a participant) and `previous_meeting_id` (create rules); only the current host or the creator may change either, 403 otherwise ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D6). |
@@ -171,7 +204,11 @@ This is the complete synchronous REST surface, organized by owning service per t
 | `GET /api/v1/meetings/:id/transcript` | core-api | **PDF (verbatim)** | Post-meeting transcript view over `transcript_chunks` (finals only), with in-page FTS via `search-service`. Ownership note: `transcription-service` owns `transcript_chunks` **writes** (finals only), while `core-api` serves this **read** endpoint via `search-service` FTS — the whole `/meetings` prefix is `core-api`'s per canon §6, so the §3 Sync API cell that lists this endpoint under `transcription-service` with the qualifier "(read via core-api FTS)" is reconciled, not contradicted. |
 | `GET /api/v1/meetings/:id/chat` / `POST .../chat` | core-api | PDF→SaaS | In-meeting chat persistence (`chat_messages`); live delivery is over Socket.io ([Real-time §3](10-realtime-and-transcription.md)). |
 
-`AgendaItem` = `{id, position, title, owner_user_id, duration_minutes, status, status_source, agent_note, updated_at}`, with `status` in `pending`, `in_progress`, `covered`, `skipped` and `status_source` in `agent`, `host` (rows of `meeting_agenda_items`, [Data Model (canon)](_canon/02-data-model.md)).
+`AgendaItem` = `{id, position, title, owner_user_id, duration_minutes, status, status_source, agent_note, updated_at}` plus `goal_id` ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B3; the agenda `PUT` accepts it), with `status` in `pending`, `in_progress`, `covered`, `skipped` and `status_source` in `agent`, `host` (rows of `meeting_agenda_items`, [Data Model (canon)](_canon/02-data-model.md)).
+
+Carry-forward `open_actions` gain `latest_status: {text, answered_at} | null`, the latest answered status request for that action ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B7).
+
+> [SaaS-scale adjustment] Meeting types, confidential meetings, agenda goals, the drafted agenda and sending your agent are net-new relative to the PDF. A confidential meeting is never a source for topic watch, the `related_meeting` hop, or another meeting's carry-forward shown to non-participants ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B2).
 
 > [SaaS-scale adjustment] Explicit hosts, the follow-up link, agendas and carry-forward are net-new relative to the PDF, whose meetings had no agenda and only an implicit host. Every new field is optional, so existing clients are unaffected ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)).
 
@@ -188,6 +225,17 @@ This is the complete synchronous REST surface, organized by owning service per t
 | `POST /api/v1/actions/:id/confirm` | core-api | PDF→SaaS | Confirm an action; emits `actions` event → `Action`→`Person` `ASSIGNED_TO` edge, and (if integration installed) pushes to Jira/Linear via `integration-service`. |
 | `GET /api/v1/suggestions` / `PATCH .../:id` | core-api | PDF→SaaS | QuestionAgent suggestions (`question`, `priority` 1–3, `status` Ask/Dismiss/Save-for-later); Save-for-later persists into the next meeting. |
 | `GET /api/v1/collaborations` | core-api | PDF→SaaS | ContextGapAgent agent-to-agent collaboration logs (`agent_collaborations`: `requester`, `responder`, `query`, `result`, `success`, `latency`), filterable by `meeting_id`; backs the context-fill provenance and the R5/R6 latency dashboards. Read-only; canon §6 does not mandate a public path, surfaced here for read-model completeness alongside the other `core-api` agent read models. |
+
+Promises and status requests ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B6, B7):
+
+| Method & path | Owner | Origin | Description |
+|---|---|---|---|
+| `GET /api/v1/commitments?status=` | core-api | **SaaS-add** | The caller's own promises (`commitments`, written from `PersonalListenerAgent` `payload_json.commitments`): `content`, `due_hint`, `status` (`open`/`done`/`dismissed`), `meeting_id`. |
+| `PATCH /api/v1/commitments/:id` | core-api | **SaaS-add** | `{status}`; the owner only. |
+| `GET /api/v1/status-requests?state=pending` | core-api | **SaaS-add** | The caller's status requests (`action_status_requests`): one per open confirmed action of the previous meeting, created 60 minutes before the follow-up starts. |
+| `POST /api/v1/status-requests/:id/answer` | core-api | **SaaS-add** | `{status_text}` (up to 500); the assignee only. Sets `state = answered`. |
+
+> [SaaS-scale adjustment] Promises and status requests are net-new relative to the PDF. Neither adds an event: commitments ride the existing `agent-results` record and status requests are created by an internal route `workflow-service` calls.
 
 ### 5.4 RAG and ingestion — `rag-service` and `ingestion-service`
 
@@ -235,7 +283,7 @@ The in-app notification center: the durable read/dismiss companion to the realti
 
 ### 5.8 What is deliberately NOT in the public surface
 
-These canon endpoints are **internal-only** and never routed by `api-gateway` from the public host — they are mesh-internal ([Service Catalog (canon)](_canon/01-service-catalog.md) §6): `POST /embed`, `POST /rerank` (inference tier), `POST /agents/spawn` and `/agents/:id/terminate` (`agent-runtime-service`), `POST /graph/query/{template}` and `/graph/cypher` (`knowledge-graph-service`), the Temporal task queues / admin `/workflows/*` (`workflow-service`), and the caller-token route `GET /internal/meetings/{id}/agenda` on `core-api` (caller `agent-runtime-service`; the agenda, host, follow-up link and the previous meeting's open decisions and actions as plain strings for the `MeetingAgent`, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D6). Exposing a raw Cypher endpoint to clients would be a tenant-isolation hole; it is reachable only by `rag-service`/`agent-runtime-service` within the org-partitioned graph contract.
+These canon endpoints are **internal-only** and never routed by `api-gateway` from the public host — they are mesh-internal ([Service Catalog (canon)](_canon/01-service-catalog.md) §6): `POST /embed`, `POST /rerank` (inference tier), `POST /agents/spawn` and `/agents/:id/terminate` (`agent-runtime-service`), `POST /graph/query/{template}` and `/graph/cypher` (`knowledge-graph-service`), the Temporal task queues / admin `/workflows/*` (`workflow-service`), and the caller-token route `GET /internal/meetings/{id}/agenda` on `core-api` (caller `agent-runtime-service`; the agenda, host, follow-up link and the previous meeting's open decisions and actions as plain strings for the `MeetingAgent`, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D6; it adds `proxies: [{user_id, proxy_update, proxy_questions}]` and appends the latest status to each carried-forward open action, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B5, B7), the caller-token route `POST /internal/meetings/{id}/status-requests` on `core-api` (caller `workflow-service`: one `action_status_requests` row per open confirmed action of the meeting's `previous_meeting_id`, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B7), and the gRPC method `IdentityService.GetOrgContext` on `identity-tenant-service` (callers `agent-runtime-service` and `transcription-service`, `org_id` in metadata, cached at `nexus:{org_id}:org_ctx` for 5 minutes, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) A9). Exposing a raw Cypher endpoint to clients would be a tenant-isolation hole; it is reachable only by `rag-service`/`agent-runtime-service` within the org-partitioned graph contract.
 
 ---
 

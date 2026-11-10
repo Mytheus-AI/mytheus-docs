@@ -173,12 +173,19 @@ Family autoscaler signal: HTTP req/s + p95 latency. Cost driver: CPU + Postgres 
 | `departments` | `org_id` | `name`, `parent_id` | Postgres RLS; self-referential org tree. |
 | `tenant_settings` | `org_id` (PK) | `retention_days_*`, `agent_confidence_overrides jsonb`, `pii_redaction_enabled`, `sso_config jsonb` | Postgres RLS; one row per tenant. |
 | `data_residency` | `org_id` (PK) | `region`, `db_cell`, `qdrant_region`, `object_bucket_region`, `locked_at` | Postgres RLS; immutable after `locked_at`. |
+| `org_profiles` | `org_id` (PK) | `description`, `industry`, `products text[]`, `customers text[]` | Postgres RLS; the company profile ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) A1). |
+| `org_glossary_terms` | `org_id` | `term`, `kind`, `definition`, `aliases text[]` | Postgres RLS; the vocabulary, at most 500 per org (A2). |
+| `topic_owners` | `org_id` | `topic`, `owner_user_id` | Postgres RLS; who owns what, at most 200 (A3). |
+| `org_goals` | `org_id` | `title`, `period`, `status`, `owner_user_id`, `position` | Postgres RLS; at most 30 active (A4). |
+| `topic_watches` | `org_id` | `user_id`, `topic` | Postgres RLS; self only, at most 20 per user (A6). |
 
   Plus RBAC roles/grants, SSO config, SCIM state, agent-authz scopes.
 
 > [SaaS-scale adjustment] `identity-tenant-service` owns the full identity-and-tenancy surface — `users/organizations/teams/team_members/departments` plus the new `tenant_settings`/`data_residency`. The SaaS-added control-plane tables and the RBAC/SSO/SCIM and agent-authz state did not exist in the PDF.
 
-- **API surface (canon §6).** `POST /clerk/webhook`, `GET/POST /orgs`, `/rbac/*`, `/scim/v2/*`, `GET /context/{user_id}`.
+- **API surface (canon §6).** `POST /clerk/webhook`, `GET/POST /orgs`, `/rbac/*`, `/scim/v2/*`, `GET /context/{user_id}`; the company brain under `/org/*` (profile, glossary with import, topic owners, goals, ground rules, readiness, welcome) and `/users/me/topic-watches`; internal gRPC `IdentityService.GetOrgContext` for `agent-runtime-service` and `transcription-service`, cached at `nexus:{org_id}:org_ctx` for 5 minutes and evicted by every company-brain write ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part A; routes in [API Architecture §5.1.1](19-api-architecture.md)).
+
+> [SaaS-scale adjustment] The company brain (`org_profiles`, `org_glossary_terms`, `topic_owners`, `org_goals`, `tenant_settings.never_record_topics`) and `topic_watches` are net-new relative to the PDF: its agents knew the person and the meeting but nothing about the company ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)).
 - **Events.** Consumes `user-sync-events` (Clerk inbox). Produces `tenant-events` (provisioned/suspended/deleted), `notifications`.
 - **Dependencies.** Upstream: `bff`, `api-gateway`, Clerk (webhooks). Downstream consumers of `tenant-events`: `billing-metering-service`, `workflow-service`, `admin-ops-service`. `get_user_context` is cached at `nexus:{org_id}:user_ctx:{user_id}` (5-min TTL) and read heavily by `agent-runtime-service`.
 - **Scaling profile.** Horizontal; scales on auth + webhook req/s. Control-plane critical path; HA, low latency.
@@ -190,6 +197,7 @@ Family autoscaler signal: HTTP req/s + p95 latency. Cost driver: CPU + Postgres 
 | Mode | Behavior | Mitigation / canon anchor |
 |---|---|---|
 | Clerk webhook dropped | User-sync reconciliation loop re-pulls Clerk state and replays into the outbox | Outbox + reconciliation; Clerk is source of truth (06 §2.11). |
+| `GetOrgContext` fails or is slow | Agents render no company block; `transcription-service` opens the stream without key terms | Opt-in by data: a missing brain behaves as before ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) C1, D1). |
 | `get_user_context` Redis miss/stale | Recompute from Postgres; agent personalization still proceeds | 5-min TTL `nexus:{org_id}:user_ctx:{user_id}` (02 §5); cache is an optimization, not a dependency. |
 | Agent-authz grant lookup fails | Deny-by-default — the requesting agent's `agent-requests` call is refused and audited | Deny-by-default agent-to-agent authz (06 §2.6); never fail open across tenants. |
 
@@ -210,10 +218,15 @@ Family autoscaler signal: HTTP req/s + p95 latency. Cost driver: CPU + Postgres 
 | `agent_collaborations` | `org_id` | `requester`, `responder`, `query`, `result`, `success`, `latency` | Postgres RLS; ContextGapAgent A2A logs (R5/R6 dashboards). |
 | `chat_messages` | `org_id` | `user_id`, `content`, `created_at` | Postgres RLS; monthly range-partition by `created_at`. |
 | `teams`, `team_members`, `departments` | `org_id` | (read models / org-chart) | Postgres RLS. |
+| `meeting_templates` | `org_id` | `name`, `default_duration_minutes`, `agenda jsonb`, `confidential` | Postgres RLS; meeting types, at most 50 per org ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B1). |
+| `commitments` | `org_id` | `user_id`, `meeting_id`, `content`, `due_hint`, `status`, `source_window_id` | Postgres RLS; promises from `PersonalListenerAgent` records, private to `user_id` (B6). |
+| `action_status_requests` | `org_id` | `action_id`, `user_id`, `meeting_id`, `state`, `status_text` | Postgres RLS; one per open confirmed action before a follow-up (B7). |
+
+`meetings` also carries `template_id` and `confidential`, `meeting_participants` carries `attendance`, `proxy_update` and `proxy_questions`, and `meeting_agenda_items` carries `goal_id` ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B2, B3, B5).
 
 Note one boundary: `core-api` owns the full relational heart — including `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations` — but **not** `transcript_chunks`, which belongs to `transcription-service`; `core-api` only serves its read view via FTS.
 
-- **API surface (canon §6).** `GET/POST/PATCH /meetings`, `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/chat`. The transcript read endpoint `GET /meetings/:id/transcript` is served via `core-api` FTS over `transcription-service`-owned data.
+- **API surface (canon §6).** `GET/POST/PATCH /meetings`, `/meeting-templates`, `POST /meetings/agenda-draft`, `PUT /meetings/{id}/attendance`, `/commitments`, `/status-requests`, the internal caller-token `/internal/meetings/*` routes, `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/chat` ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part B). The transcript read endpoint `GET /meetings/:id/transcript` is served via `core-api` FTS over `transcription-service`-owned data.
 - **Events.** Consumes `decisions`, `actions`, `agent-results` (to update read models). Produces `meeting-events` (created/updated/ended) and, via transactional **outbox**, `decisions`/`actions` **on confirmation** — never speculatively.
 - **Dependencies.** Upstream: `bff`, `workflow-service`. Downstream: `knowledge-graph-service` (consumes `decisions`/`actions` to build edges), `realtime-gateway` (agent outputs to sidebar), `meeting-service` (consumes `meeting-events` to open/close rooms).
 - **Scaling profile.** Horizontal stateless; scales on req/s. Pooled + RLS long tail, cell-routed for enterprise. p95 < 300 ms (05 §11.1).
@@ -377,7 +390,7 @@ Family autoscaler signal: concurrent WebSocket connections / live audio streams.
 - **Owned data.** `transcript_chunks` (`org_id`, `meeting_id`, `speaker_id`, `start_ms`, `end_ms`, `text`, `is_final`, `confidence`). Postgres, RLS by `org_id`, **index on `(meeting_id, start_ms)`**, monthly range-partition by `created_at` (hot 90d → cold tier). Only finals persisted (02 §2.1).
 - **API surface.** Internal WS audio in; the read view `GET /meetings/:id/transcript` is served via `core-api` FTS (canon §6).
 - **Events.** Consumes `meeting-room-events` (recording/audio start). Produces `transcript-chunks` (Avro `TranscriptChunk`).
-- **Dependencies.** Upstream: `meeting-service` (server-side LiveKit audio hook), Deepgram (WS). Downstream consumers of `transcript-chunks`: `embedding-service`, `agent-runtime-service`, `search-service`. Live captions fan to `realtime-gateway`.
+- **Dependencies.** Upstream: `meeting-service` (server-side LiveKit audio hook), Deepgram (WS), `identity-tenant-service` (`GetOrgContext` at stream open: up to 100 key terms passed to Deepgram Nova-3 as `keyterm`; a failed fetch opens the stream without them, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) D1). Downstream consumers of `transcript-chunks`: `embedding-service`, `agent-runtime-service`, `search-service`. Live captions fan to `realtime-gateway`.
 - **Scaling profile.** Horizontal; scales on **concurrent live streams** (A5 = 20k; one diarized stream per meeting, not per participant — a 6× cost lever, 05 §7). Sub-2s caption budget.
 
 > [SaaS-scale adjustment] At 360 finals/meeting (T2) and 4.8M meetings/month (R4), `transcript_chunks` is a ~1.73B rows/month flow (T3); the PDF's single indexed table becomes monthly range partitions with 90-day hot/cold tiering (05 §4, 02 §2.1). One diarized Deepgram stream per meeting (not per participant) holds D1 at 216M min/month vs 1.3B (05 §7).
@@ -475,7 +488,7 @@ flowchart LR
 - **Owned data.** **None.** Stateless inference; writes via `core-api` outbox semantics; reads context. (Canon 01 is explicit — `agent-runtime-service` owns no Postgres tables; the agent outputs `worklogs`/`decisions`/`action_items`/`agent_suggestions`/`agent_collaborations` are owned by `core-api`.)
 - **API surface (canon §6).** Internal control: `POST /agents/spawn`, `POST /agents/{id}/terminate`; emits to bus + `realtime-gateway`.
 - **Events.** Consumes `transcript-chunks`, `document-chunks`, `agent-requests`, `agent-responses`. Produces `agent-results`, `agent-requests`, `agent-responses`, `agent-stream`, `notifications`, `usage-events`. It *detects* decisions and action items, but the `decisions`/`actions` topics that `knowledge-graph-service` consumes are emitted by the `core-api` transactional outbox **on confirmation** (no silent commits) — agent-runtime surfaces them via `agent-results` to the sidebar for confirmation first.
-- **Dependencies.** Upstream: `transcription-service`, `ingestion-service`. Downstream: `core-api` (read models/outbox), `rag-service` (context fill), `realtime-gateway` (sidebar/stream), `billing-metering-service` (`usage-events`), `notification-service`, `knowledge-graph-service` (via confirmed `decisions`/`actions`). Reads `get_user_context` from `identity-tenant-service` (`nexus:{org_id}:user_ctx:{user_id}`).
+- **Dependencies.** Upstream: `transcription-service`, `ingestion-service`, `identity-tenant-service` (`get_user_context`, and `GetOrgContext` for the company block, never-record topics, topic owners and topic watches, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part C). Downstream: `core-api` (read models/outbox), `rag-service` (context fill), `realtime-gateway` (sidebar/stream), `billing-metering-service` (`usage-events`), `notification-service`, `knowledge-graph-service` (via confirmed `decisions`/`actions`). Reads `get_user_context` from `identity-tenant-service` (`nexus:{org_id}:user_ctx:{user_id}`).
 - **Scaling profile.** Horizontal, independent autoscaler on **token throughput + chunk backlog**. Distinct cost center; per-tenant token budgets. L9 ≈ 8,930 LLM calls/s peak; L6 ≈ 1,206 LLM calls/meeting under the cost-controlled pipeline (86% reduction vs naive per-chunk; 05 §8).
 
 > [SaaS-scale adjustment] The PDF's agents "processed every transcript chunk" (the R4 cost bomb: N1 = 8,640 calls/meeting). Canon replaces this with **relevance pre-gating (Haiku) → windowed batching (30 s, A17) → tiered routing (Haiku → Sonnet → Opus) → semantic + Anthropic prompt caching → per-tenant token budgets** — L6 ≈ 1,206 calls/meeting, an 86% reduction (L10) before caching savings (05 §8, 06 §2.5).
@@ -573,6 +586,7 @@ flowchart LR
 
 - **Responsibility.** Temporal Cloud workers: `MeetingLifecycleWorkflow`, `ActionFollowUpWorkflow` (reminder day 1/3/7; escalation to manager via Slack DM at day 10), tenant-provisioning and **right-to-be-forgotten** deletion workflows, billing dunning sagas. Durable orchestration only.
 - **Owned data.** None (Temporal owns workflow state; this service is the worker fleet).
+- **Meeting timers ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B9).** For a meeting with `scheduled_start`, `MeetingLifecycleWorkflow` (or a sibling workflow it starts) sleeps on durable timers, not cron: at start minus 60 minutes, only with `previous_meeting_id`, it calls `core-api` `POST /internal/meetings/{id}/status-requests` and emits one `notifications` record per request ("Quick status on {action}?", link `/status-requests`); at start minus 10 minutes, one per live participant ("Your brief for {title}", link `/meetings/{id}#brief`); 5 minutes after the end, one per participant whose attendance was `agent` ("Your agent's catch-up from {title}", link `/meetings/{id}/catch-up`). A meeting rescheduled or cancelled before a timer fires gets no notification for it.
 - **API surface (canon §6).** Temporal task queues (no public HTTP); admin `POST /workflows/*`.
 - **Events.** Consumes `meeting-events`, `actions`, `tenant-events`, `billing-events`. Produces `notifications`, `actions` (reminders), `integration-events`.
 - **Dependencies.** Upstream: `core-api` (`meeting-events`/`actions`), `identity-tenant-service` (`tenant-events`), `billing-metering-service` (`billing-events`), `admin-ops-service` (`admin-events` → RTBF/suspend). Downstream: `core-api`, `integration-service`, `notification-service`.
@@ -608,8 +622,8 @@ Each path prefix is owned by exactly one service (canon §6); `bff` and `api-gat
 
 | Path / surface | Owner |
 |---|---|
-| `/clerk/webhook`, `/orgs`, `/rbac/*`, `/scim/v2/*`, `/context/{user_id}` | `identity-tenant-service` |
-| `/meetings`, `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/chat` | `core-api` |
+| `/clerk/webhook`, `/orgs`, `/org/*`, `/users` (incl. `/users/me/topic-watches`), `/rbac/*`, `/scim/v2/*`, `/context/{user_id}`, gRPC `GetOrgContext` (internal) | `identity-tenant-service` |
+| `/meetings`, `/meeting-templates`, `/commitments`, `/status-requests`, `/internal/meetings/*` (internal), `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/chat` | `core-api` |
 | `/api/meetings/:id/token`, `/livekit/webhook` | `meeting-service` |
 | Socket.io / WSS meeting rooms, live captions, agent output channels | `realtime-gateway` |
 | Internal audio WS in, transcript finals | `transcription-service` |
