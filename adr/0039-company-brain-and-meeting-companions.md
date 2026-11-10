@@ -37,7 +37,7 @@ Every table below is tenant-scoped with `org_id`, ENABLE and FORCE row-level sec
 
 **A6. Topic watches.** `topic_watches`: `id`, `org_id`, `user_id`, `topic` (1 to 80), `created_at`; unique per user on `lower(topic)`; at most 20 per user. `GET /api/v1/users/me/topic-watches`, `POST /api/v1/users/me/topic-watches`, `DELETE /api/v1/users/me/topic-watches/{id}`. Self only.
 
-**A7. Readiness.** `GET /api/v1/org/readiness` (owner/admin): `{score: 0..100, checks: [{key, label, done, detail}]}` with keys `profile` (description at least 40 chars), `vocabulary` (at least 10 terms), `owners` (at least 5), `goals` (at least 1 active), `ground_rules` (set at least once), `roles` (detail names how many members have no `role`; done when none). Equal weights.
+**A7. Readiness.** `GET /api/v1/org/readiness` (owner/admin): `{score: 0..100, checks: [{key, label, done, detail}]}` with keys `profile` (description at least 40 chars), `vocabulary` (at least 10 terms), `owners` (at least 5), `goals` (at least 1 active), `ground_rules` (at least one never-record topic: an empty list cannot be told apart from one never set), `roles` (detail names how many members have no `role`; done when none). Equal weights.
 
 **A8. Welcome.** `GET /api/v1/org/welcome` (any member): `{profile, goals (active), owners: [{topic, owner_user_id}], glossary (first 40 by term), team: [{user_id}]}` where `team` is the caller's team mates.
 
@@ -85,8 +85,8 @@ A meeting rescheduled or cancelled before a timer fires gets no notification for
 **C6. Proxied participants.** A participant with attendance `agent` gets a PersonalListener pass on every window even though they never speak, so their catch-up has notes.
 
 **C7. ProactiveAgent, two new window checks** (meeting-scoped, same gating, budget and rate limits as `missing_stakeholder`):
-- `already_decided`: a triage gate decides whether the window re-opens a settled question; if so, the org's confirmed decisions are searched (rag-service, as the alert's recipient); a match at confidence 0.8 or more alerts every participant (cap 10) with `{alert_type: "already_decided", decision_id, decision_content, decided_at, meeting_id, meeting_title}`. At most once per (meeting, decision).
-- `topic_watch`: the window's topic is matched against the org's `topic_watches` (exact or alias match first, then a triage-tier check); each watcher not in the meeting, authorized by the ADR-0013 PDP for `meeting_context` on that meeting, gets `{alert_type: "topic_watch", topic, meeting_id, meeting_title, snippet (up to 200 chars)}`. Never from a confidential meeting. At most once per (meeting, watcher, topic).
+- `already_decided`: a triage gate decides whether the window re-opens a settled question; if so, the org's confirmed decisions are searched (rag-service, as the alert's recipient); the search runs once per participant (cap 10), as that participant, so the ADR-0033 retrieval rule and ADR-0036 D9 hold: a participant who cannot see the earlier decision gets no alert. Each participant with a match at confidence 0.8 or more is alerted with `{alert_type: "already_decided", priority: 2, decision_id, decision_content, decided_at, meeting_id, meeting_title}`. At most once per (meeting, decision, participant).
+- `topic_watch`: the window's topic is matched against the org's `topic_watches` (exact or alias match first, then a triage-tier check); each watcher not in the meeting, authorized by the ADR-0013 PDP for `meeting_context` on that meeting, gets `{alert_type: "topic_watch", priority: 3, topic, meeting_id, meeting_title, snippet (up to 200 chars)}`. Watchers are not in the meeting, so this arrives through the notification surfaces (`notification_log`), not the room. Never from a confidential meeting. At most once per (meeting, watcher, topic).
 
 ### Part D: realtime
 
