@@ -1,6 +1,6 @@
 # Frontend and UI
 
-Status: IN PROGRESS. Last verified 2026-11-10 (section 8); section 6 on 2026-11-07; sections 1 to 5 last verified 2026-08-08.
+Status: IN PROGRESS. Last verified 2026-11-10 (sections 8 and 9); section 6 on 2026-11-07; sections 1 to 5 last verified 2026-08-08.
 
 Written because "which repo is the actual product" was a live question, and the answer was not
 recorded anywhere. Two repositories hold a Next.js application and only one of them is the
@@ -329,3 +329,42 @@ All observed in this session on 2026-11-10.
 - `oasdiff breaking --fail-on ERR` (`tufin/oasdiff:latest`) for `bff.yaml` and `core-api.yaml` against `origin/main`: "No breaking changes to report", exit 0.
 - `mytheus-ui`: `npx tsc --noEmit` and `npx next lint` clean; `npm run generate:api:check` matches the branch's specs; `npm test` 60 pass, 0 fail (new `tests/dashboard-format.test.ts`); `npx next build` succeeds (51 static pages) with the test Clerk publishable key, on Node 25 locally (CI builds the Docker image on Node 20).
 
+## 9. The one-line redesign of every page (2026-11-10)
+
+`mytheus-ui` PR #36, branch `feat/oneline-redesign`. Every route (49 at the start, 59 static pages after `main`'s P12 merge was brought in) moved to one visual language. Presentation only: no change to data fetching, Server Actions, `src/lib/api`, `src/lib/realtime` or `src/middleware.ts`.
+
+### 9.1 Why
+
+The owner rejected the marketing site's look (Geist "Playex" grotesk, narrow cream and clay range, nav, footer and logo motion) and asked for a fresh direction. A doodle/notebook draft was rejected as off-brand: the product deliberately follows a Claude.ai-like aesthetic with its own touch. The approved direction, a static draft outside the repos, is "one line": the logo is a single drawn stroke, and that coral line becomes the signature of the whole system. The owner then asked for every page, marketing and app, to be redesigned in that language, as real code in `mytheus-ui`.
+
+### 9.2 What landed
+
+- Token layer: the signed-in app's warm cream tokens (previously scoped to `.mx-app`) moved to `:root` in `src/app/globals.css`, so marketing, auth, app, call and admin share one set. New tokens: `--surface-2`, `--ink-4`, `--signal-line`, `--signal-ink`, `--pill-2`, `--pill-on`, `--danger-on`, illustration tints, stage washes, warm shadows, and the radius rule (controls 12, cards 20, stages 28, chips full). Dark mode stays scoped to `.mx-app[data-theme="dark"]` in `src/styles/app-theme.css`.
+- Type: Newsreader (display titles, wordmark) and Hanken Grotesk (everything else) load at the root through `src/lib/fonts.ts`; Geist, Geist Mono, Refinity, Fraunces and Caveat are gone.
+- Shared primitives in `components/ui` restyled (dark primary `Button`, chips, cards, inputs, `EmptyState` with a drawn line, `Select`).
+- Marketing chrome in `src/components/site/`: floating pill nav with a coral squiggle under the current page, `Thread` (the page-long line that starts at the hero `Loop`, crosses between sections marked `cross`, and ends in the footer mark), section, stage and window primitives, `CloseCTA` with the memory line, and a new `src/app/(marketing)/layout.tsx`.
+- Pages: home rebuilt from the approved draft; `/features` hub and 11 feature pages with product windows; pricing, enterprise, security, about, careers, blog, students, privacy, terms; sign-in, sign-up, onboarding, SSO callback; app shell, dashboard, decisions, tasks, search, people; settings, org, billing, tenant, admin and ops; meetings hub, meeting detail, transcript, collaborations, decision detail, pre-join and the live room; the 404 page.
+- Removed: `src/components/landing/**` (the old Playex landing), unused components, dead global utilities, and the `lenis` dependency.
+- The contract for future pages: `mytheus-ui/docs/DESIGN-ONELINE.md`.
+
+### 9.3 Deviations and why
+
+- The work was split across seven parallel page agents after a shared foundation commit, each owning a disjoint set of files, then integrated and verified in one place. The split kept each area's live behaviour in one owner's hands.
+- Sample copy on the home page avoids any price, because "Pro tier set at $29" read as a real offer next to the real $25 Pro price.
+- The meeting CSS was rewritten on global tokens and `meeting-dark.css` emptied, because tokens now flip under the app's dark scope; the separate dark sheet would have drifted.
+- `main` merged P12 (integrations, tenant admin, ops console) while this branch was open. The merge kept `main`'s behaviour in every conflict and restyled the pages P12 added.
+
+### 9.4 Open gaps
+
+- No live browser check of signed-in pages (app, meetings, call, admin): they need a Clerk session, and the owner chose to skip that review. Checked by typecheck, lint, build and code review against the references only.
+- The privacy policy says there are no third-party integrations while pricing lists Calendar, Slack, Jira and Linear. Legal copy needs an owner decision; left unchanged.
+- The sidebar's in-call card has no live-meeting source yet, so it never shows.
+- The integrations tracker radio is not inside a form, so choosing a tracker saves nothing. This predates the redesign (same on `main`).
+- `ui/Button` lacks `forwardRef` and `LinkButton` lacks `onClick`; call sites work around both.
+
+### 9.5 Verification
+
+Observed in this session on 2026-11-10, in a worktree of `mytheus-ui` on `feat/oneline-redesign` after merging `origin/main`:
+
+- `npx tsc --noEmit -p .` clean; `npm run lint` clean; `npm test` 105 pass, 0 fail; `next build` succeeds (59 static pages) on Node 20.
+- Browser, desktop and 375px: home, `/features`, several feature pages, pricing, security, about, privacy, sign-in, sign-up and 404 inspected visually. A script loaded all 19 public routes at 375px and confirmed none scrolls sideways (after clipping the hero loop's overflow).
