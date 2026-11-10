@@ -1,6 +1,6 @@
 # The company brain and ten features built on it
 
-**Status:** IN PROGRESS (built and integrated on branches, PRs open, not merged or deployed). Not a plan band: an owner request of 2026-11-10, decided in [ADR-0039](../adr/0039-company-brain-and-meeting-companions.md). Last verification 2026-11-11.
+**Status:** DONE WITH GAPS (merged and deployed to production on 2026-11-11; gaps in section 5). Not a plan band: an owner request of 2026-11-10, decided in [ADR-0039](../adr/0039-company-brain-and-meeting-companions.md). Last verification 2026-11-11.
 
 The owner asked for an organisation setup that gives every agent the company's context, plus ten features, built in parallel with strong UI and UX. ADR-0039 fixed the contracts; eight builders then worked at once (docs, two backend, intelligence, realtime, three UI), each owning disjoint files, and one integration pass joined them.
 
@@ -69,7 +69,7 @@ The owner asked for an organisation setup that gives every agent the company's c
 
 ## 5. Open gaps
 
-- Deploy in order: backend, realtime, platform, intelligence, then UI.
+- Deployed 2026-11-11: backend (production `alembic_version` `d2b3c4d5e6f7`; new routes answer 401 without a token), realtime and platform (transcription-service runs `org_context.py` with `IDENTITY_GRPC_ADDR=identity-grpc:50051`), intelligence (agent-runtime on PersonalListener v3, Question v3, Action v2, MeetingAgent v2 and the two ProactiveAgent prompts, no restarts), then the UI. Backend, realtime and platform deploys ran at the same moment and the realtime one failed removing a container another run had replaced; production was checked consistent and the realtime deploy re-run on its own succeeded. Deploys from different repos should be run one at a time.
 - A signed-in walk-through of every new screen in both themes.
 - The paid live evals for the new prompt versions.
 - `DecisionAgent` and the never-record rule.
