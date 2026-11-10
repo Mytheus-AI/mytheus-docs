@@ -33,11 +33,15 @@ Plan 10-13 phase P12 builds `integration-service` (OAuth engine, token vault, we
 
 **D3. A provider is connectable only when its app is configured.** `integration-service` reads each provider's client id and secret from its environment; without them the provider reports `configured: false` and connect returns 409.
 
-**D4. OAuth callbacks and webhooks are public paths authenticated by their own proof.** `/oauth/{provider}` is verified by the HMAC-signed state and PKCE, `/webhooks/{provider}` by the provider's signature; the gateway passes them without a Clerk JWT. Everything else stays JWT-gated.
+**D4. The OAuth callback is completed by the signed-in user who started it; only webhooks are public.** The provider redirects to the dashboard page `/settings/integrations/callback/{provider}`, which calls `POST /oauth/{provider}` with the code and state under the user's own session; `integration-service` accepts it only when the session's user and organization match the signed state, the PKCE verifier matches and the user is an owner or admin. A connect link sent to someone else therefore cannot connect their account into another workspace. One provider account (Slack team, Jira site, Google account) can be connected to one workspace at a time. `/webhooks/{provider}` is the only public path, authenticated by the provider's signature; the gateway rejects any path with dot segments, encoded or doubled slashes, or a leading `/internal` before routing.
 
 **D5. Mytheus staff are an allowlist.** `admin-ops-service` treats a user as staff only when their id is in `MYTHEUS_STAFF_USER_IDS`; every `/admin/ops/*` call, reads included, is appended to `ops_audit_log`; ops views are aggregates over control-plane data, never tenant content.
 
 **D6. The follow-up escalation is best-effort.** The manager is an owner or admin in the assignee's team's department, then the meeting organizer, then an org admin.
+
+**D7. Untrusted provider input is not authority.** A Jira webhook is checked for expiry and its site, and the issue is re-read with the workspace's own token before its status is applied; a `nexus:{id}` label only maps to an action whose stored issue key matches. A calendar event is ingested only when its organizer is a user of the workspace, and only that organizer's attachments are fetched.
+
+**D8. Support access needs a live grant.** A staff member reads a workspace's audit log only under an unexpired, unrevoked `support_grants` row for that staff member and workspace; tenant rows of `feature_flags` are read-only to the tenant. A data export request is recorded, never sent as an erasure event.
 
 ## Consequences
 
