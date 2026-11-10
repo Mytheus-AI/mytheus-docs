@@ -1,6 +1,6 @@
 # Agent personas, working profiles, agendas and the MeetingAgent
 
-**Status:** IN PROGRESS (built and reviewed on branches, PRs open, nothing merged or deployed). Not a plan band: an owner request of 2026-11-10, decided in [ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md). Last verification 2026-11-10.
+**Status:** DONE WITH GAPS (merged and deployed to production on 2026-11-10; gaps in section 5). Not a plan band: an owner request of 2026-11-10, decided in [ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md). Last verification 2026-11-10.
 
 The owner asked for three things: every person's agent has a name, a face and a personality; onboarding asks each person what they work on so their agent knows what to listen for; and a meeting can follow up an earlier one, name a host, carry an agenda, and gets one meeting-wide agent that tracks it. ADR-0038 fixed the contracts first; seven builders then worked in parallel, one worktree per repo, all on branch `feat/agents-personas-meetings`.
 
@@ -80,7 +80,7 @@ There is no plan band for this work, so the audit is against ADR-0038's decision
 
 ## 5. Open gaps
 
-- Deploy, in this order: backend (its consumer must handle `meeting_update` before anything produces it), realtime, then `make register` against the production Schema Registry from a `mytheus-events` checkout, then intelligence, then the UI. Until the schema is registered, `MeetingAgent` records fail to encode and are dropped without failing the window.
+- Deployed 2026-11-10 in this order: `mytheus-backend` (CI deploy green; production `alembic_version` is `0b91a00079a7`, `meeting_agenda_items` exists with RLS enabled and forced, the six `users` columns and `meetings.previous_meeting_id` present), `mytheus-realtime` (images and deploy green), then the production Schema Registry through an SSH tunnel from a `mytheus-events` checkout matching main (`make check-registered` showed only `agent-results-value` differing; `make register` moved it to v3 with `MeetingAgent` and `meeting_update`; all 21 subjects then in sync), then `mytheus-intelligence` (the running `agent-runtime` has `meeting_agent.py`, prompt defaults `personal_listener`, `personal_listener_gate`, `question_agent`, `question_gate` at v2 and `meeting_agent` at v1, `CORE_URL` and the caller token set, zero restarts; the internal agenda route answers 404 for an unknown meeting, so the caller token is accepted), then `mytheus-ui` (CI deploy green; `/onboarding/profile` and `/onboarding/agent` serve the new steps).
 - Signed-in browser check of every new screen in both themes and at 360 to 1600 px.
 - Paid live evals for the v2 prompts, and a golden set for the `MeetingAgent`.
 - The local developer Postgres could not run the migrations (existing data breaks migration `7c3e9a1f5b20`), so a fresh `mytheus-agents-pg` container now serves port 5443; the old container is stopped with its volume kept.
