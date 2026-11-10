@@ -10,7 +10,7 @@ A focused diagram surface for how the `realtime-gateway` tier fans streamed agen
 - [Container Architecture](../03-container-architecture.md) — the C4 L2 view; `realtime-gateway` as an independently-scaled container with its own HPA.
 - [Multi-Tenancy & Isolation](../06-multi-tenancy.md) — tenant-keyed partitions, `org_id` injection, namespaced Redis channels.
 - [Data Architecture](../05-data-architecture.md) — the canonical Redis key namespaces (`nexus:{org_id}:pubsub:meeting:{meeting_id}`, presence set, per-user priority queue).
-- [AI Agent Architecture](../08-ai-agent-architecture.md) — the six LangGraph agents that emit the streamed output and priority alerts.
+- [AI Agent Architecture](../08-ai-agent-architecture.md) — the seven LangGraph agents that emit the streamed output and priority alerts.
 - [Capacity & Scaling Math](../_canon/05-capacity-math.md) — frozen anchors: `A6` 100,000 peak participant connections, `A5` 20,000 peak meetings, `E8` ~1,260 `agent-stream` deltas/meeting.
 
 ---
@@ -149,6 +149,7 @@ flowchart LR
 - **One pod consumes, all pods deliver.** An `agent-results` / `agent-stream` / caption event arrives at a single pod from the bus; that pod publishes once on `nexus:{org_id}:pubsub:meeting:{meeting_id}` and every pod subscribed to that channel emits to its local room sockets. This is the only way to fan out across `A6` = 100,000 connections that are spread over many pods. See [Data Architecture §5](../05-data-architecture.md).
 - **Captions and agent output are two SLOs on two paths.** Caption events (`transcript-chunks` interims/finals) target **p95 < 2 s**; agent sidebar output (`agent-results` / `agent-stream`) targets **p50 < 2 s, p95 < 4 s** ([Capacity §11.1](../_canon/05-capacity-math.md)). Both fan out through this same plane, but they are sized and shed differently.
 - **`agent-stream` is shed first under congestion.** Token deltas are disposable once rendered (1-hour retention); the UI still receives the final `agent-results` message. The bounded per-socket buffer drops deltas before it drops captions or confirmed agent output — the same load-shedding order as the bus.
+- **A `meeting_update` is split, not forwarded whole.** For a `MeetingAgent` record, `realtime-gateway` emits each agenda update as `agent-agenda` to the whole meeting room and a non-null nudge as `agent-nudge` to the host's sockets only (the record's `user_id`); clients re-hydrate the agenda from `GET /api/v1/meetings/{id}` and nudges are not replayed ([ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D9).
 - **Urgent alerts pre-empt notes.** The per-user priority queue `nexus:{org_id}:queue:agent:{user_id}` (PDF Phase 11) lets a ProactiveAgent conflict banner or workload warning jump ahead of routine PersonalListenerAgent note deltas on a slow connection.
 - **Fan-out delivery is at-least-once, deduped per tenant.** Each pod dedupes consumed events on `idempotency_key` via its inbox table plus the `nexus:{org_id}:dedupe:{topic}:{consumer_group}:{idempotency_key}` Redis cache before publishing, so a redelivered bus event never double-renders in the sidebar. See [Event-Driven Architecture §6–§7](../07-event-architecture.md).
 

@@ -7,7 +7,7 @@ This is the canonical glossary and naming reference for the NEXUS architecture s
 - [Service Catalog](04-service-catalog.md) — the single naming authority for services; this glossary's service rows defer to it.
 - [Data Architecture](05-data-architecture.md) — store selection, retention, and partitioning for the entities defined here.
 - [Event-Driven Architecture](07-event-architecture.md) — Redpanda topics, Avro envelopes, and the topic/schema reconciliation notes this glossary cites.
-- [AI Agent Architecture](08-ai-agent-architecture.md) — the six agents, `BaseAgent`/`AgentState`, and the cost-controlled pipeline.
+- [AI Agent Architecture](08-ai-agent-architecture.md) — the seven agents, `BaseAgent`/`AgentState`, and the cost-controlled pipeline.
 - [`_canon/01-service-catalog.md`](_canon/01-service-catalog.md) — frozen service-naming authority (20 services).
 - [`_canon/02-data-model.md`](_canon/02-data-model.md) — frozen data-naming authority (entities, Qdrant collections, AGE labels, Redis namespaces).
 - [`_canon/06-tech-decisions.md`](_canon/06-tech-decisions.md) — the locked decision register and the frozen canonical-names list (§4).
@@ -60,7 +60,7 @@ All 20 services are kebab-case, named exactly once in [`_canon/01-service-catalo
 | `embedding-service` | service | Dedicated autoscaling inference for BGE-small-en 384-dim via ONNX; embed-on-ingest + query-embed; upserts per-tenant Qdrant. Off the API tier. | — · added (SaaS) |
 | `reranker-service` | service | Dedicated autoscaling inference for the BGE-reranker-base cross-encoder; reranks top-50 → top-10 for `rag-service`. Off the API tier. | — · added (SaaS) |
 | `ner-service` | service | Dedicated autoscaling inference for the lightweight NER model behind the PII redaction pass ([ADR-0020](adr/0020-pii-token-vault-and-ner-placement.md)). Detects the unstructured entities (`PERSON`, `ORG`, `LOC`) the deterministic regex layer cannot; it detects only and does not redact, so each boundary keeps its own pass. Off the API tier, and specifically not in `transcription-service`. | — · added (SaaS) |
-| `agent-runtime-service` | service | Hosts the six LangGraph agents on `BaseAgent`/`AgentState` + the cost-controlled LLM pipeline + A2A collaboration. Owns no Postgres tables. | — · added (SaaS) |
+| `agent-runtime-service` | service | Hosts the seven LangGraph agents on `BaseAgent`/`AgentState` + the cost-controlled LLM pipeline + A2A collaboration. Owns no Postgres tables. | — · added (SaaS) |
 | `rag-service` | service | `RAGService` pipeline expand → retrieve → rerank → assemble → cite; hybrid retrieval (Qdrant + Postgres FTS + AGE) with RRF fusion; Redis answer cache. | — · added (SaaS) |
 | `knowledge-graph-service` | service | Owns the Apache AGE graph `nexus_knowledge`: node/edge labels, Cypher templates, org-partitioned, edges on confirmation. | — · added (SaaS) |
 | `search-service` | service | Keyword/lexical retrieval: Postgres FTS over `transcript_chunks` and `chat_messages`; the FTS arm of hybrid retrieval. | — · added (SaaS) |
@@ -72,9 +72,9 @@ All 20 services are kebab-case, named exactly once in [`_canon/01-service-catalo
 
 ---
 
-## 3. The six agents
+## 3. The seven agents
 
-All six are PDF-original (names verbatim, phases 7–11), hosted by `agent-runtime-service` ([AI Agent Architecture §2](08-ai-agent-architecture.md)).
+The first six are PDF-original (names verbatim, phases 7 to 11); the seventh, `MeetingAgent`, is a SaaS addition ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)). All are hosted by `agent-runtime-service` ([AI Agent Architecture §2](08-ai-agent-architecture.md)).
 
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
@@ -84,6 +84,7 @@ All six are PDF-original (names verbatim, phases 7–11), hosted by `agent-runti
 | `QuestionAgent` | agent | Detects context gaps, proposes role-specific questions with `priority` 1–3 and status Ask/Dismiss/Save-for-later → `agent_suggestions`. (P9) | — |
 | `ContextGapAgent` | agent | The cross-meeting piece (R6): asks other users' agents for missing context over `agent-requests`/`agent-responses`; fallback chain peer-agents → related-meeting agents → RAG → silent; logs `agent_collaborations`. (P10) | — |
 | `ProactiveAgent` | agent | Three detectors — conflict (via `nexus_knowledge`), workload (open `action_items` per assignee), missing-stakeholder (org-graph) — output on `notifications`. (P11) | — |
+| `MeetingAgent` | agent | One per meeting (not per participant), only when the meeting has an agenda; tracks agenda items and nudges the host. Emits at most one `meeting_update` per meeting per window on `agent-results` (`user_id` = the host); never writes Postgres. Fast tier. ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D7) | added (SaaS) |
 
 ---
 
@@ -96,11 +97,11 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
 | `organizations` | entity | The tenant root (`id` = `org_id`); `clerk_org_id`, name, slug, plan_id, `status` (active/suspended). Never partitioned away; deletion cascades a right-to-be-forgotten workflow. Not a tenant-scoped row and deliberately **not** `tenant_isolation`-policied (it carries no `org_id` column). Owned by `identity-tenant-service`. | — |
-| `users` | entity | Org member: `clerk_user_id`, `email`, `role`, `skills text[]`, `bio`, `avatar_url`. RLS by `org_id`. Owned by `identity-tenant-service`. | — |
+| `users` | entity | Org member: `clerk_user_id`, `email`, `role`, `skills text[]`, `bio`, `avatar_url`, plus the working profile (`listen_for`, `ignore_topics`) and the agent persona (`agent_name`, `agent_avatar_seed`, `agent_personality`, `agent_instructions`), added by [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md). RLS by `org_id`. Owned by `identity-tenant-service`. | — |
 | `teams` | entity | Named team within a department. RLS by `org_id`. Owned by `identity-tenant-service`. | — |
 | `team_members` | entity | Join table `(team_id, user_id)` with role. Owned by `identity-tenant-service`. | — |
 | `departments` | entity | Self-referential org tree (`parent_id`). Owned by `identity-tenant-service`. | — |
-| `meetings` | entity | A meeting: title, scheduled_start/end, `livekit_room`, status, created_by. Monthly range-partition candidate. Owned by `core-api`. | — |
+| `meetings` | entity | A meeting: title, scheduled_start/end, `livekit_room`, status, created_by, and `previous_meeting_id` (the follow-up link, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)). The host is the one participant with `role_in_meeting = 'host'`. Monthly range-partition candidate. Owned by `core-api`. | — |
 | `meeting_participants` | entity | Join table `(meeting_id, user_id)` with `role_in_meeting`; drives `get_user_context`. Also carries `consented_at timestamptz NULL` / `consent_version text NULL`, the recording/transcription consent acknowledgment ([ADR-0018](adr/0018-consent-entity-behind-flag.md)); both NULL until enforcement is enabled and a participant consents. Owned by `core-api`. | — |
 | `pii_tokens` | entity | The per-tenant reversible PII token vault ([ADR-0020](adr/0020-pii-token-vault-and-ner-placement.md)): `token`, `entity_type`, `value_ciphertext` (envelope-encrypted), `value_hmac` (keyed, never a plain digest), `dek_id`. UNIQUE `(org_id, token)` and `(org_id, entity_type, value_hmac)`, the latter being what makes one raw value mint one token across all three redaction boundaries. Owned and written only by `identity-tenant-service`; the redaction boundaries call its mint/resolve API. Ratified but **not yet migrated** - ADR-0020 blocks it on key custody. | — |
 | `meeting_rooms` | entity | The LiveKit room ↔ meeting map ([ADR-0003](adr/0003-meeting-sdk-livekit.md)): `livekit_room`, `status` (pending/active/ended), `egress_id`, `recording_ref`, `livekit_metadata_synced_at`. UNIQUE `(org_id, meeting_id)` and `(org_id, livekit_room)`; RLS `FORCE`. One row per meeting. Owned by `meeting-service`: here the catalog service and the data model's `meeting-service` label agree, unlike the split described in §10. | — |
@@ -119,10 +120,11 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `ops_audit_log` | entity | Append-only record of every internal-ops console call. Owned by `admin-ops-service`. | - |
 | `support_grants` | entity | Time-boxed, tenant-granted support access. Owned by `admin-ops-service`. | - |
 | `context_fill` | event kind | `AgentResult.kind` for `ContextGapAgent`: the window's A2A collaboration entries plus the optional fill ([ADR-0035](adr/0035-plan-10-context-gap-agent-and-a2a-build.md)). | - |
+| `meeting_update` | event kind | `AgentResult.kind` for `MeetingAgent`: one record per meeting per window batching the agenda `updates` (`item_id`, `status`, `note`) and an optional host `nudge` (`off_agenda`/`over_time`/`unaddressed`). `core-api` applies the updates to `meeting_agenda_items`; `realtime-gateway` splits the record into `agent-agenda` and `agent-nudge` ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D7 to D9). | added (SaaS) |
 | `chat_messages` | entity | In-meeting chat (non-AV via Socket.io). Range-partition by `created_at`. Owned by `core-api`. | — |
 | `document_chunks` | entity | unstructured.io typed elements: document_id, element_id, element_type, text, position. Mirrors the Qdrant `document_chunks` payload. Owned by `rag-service`. | — |
 
-### 4.2 SaaS-scale entities (11, wholly added vs PDF)
+### 4.2 SaaS-scale entities (12, wholly added vs PDF)
 
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
@@ -137,6 +139,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `data_residency` | entity | Pins a tenant to region/cell (us/eu/ap), db_cell, qdrant_region, object_bucket_region; immutable after `locked_at`. Owned by `identity-tenant-service` (data-model labels this `tenant-service` — see §10). | added (SaaS) |
 | `agent_budgets` | entity | Per (tenant, month) token budget: token_quota, tokens_consumed, hard_cap, 80/95% alert flags, state (ok/throttled/blocked). `token_quota` = the plan's per-tenant `included_agent_tokens`. Enforces R4 budgets. Owned by `billing-metering-service` (data-model labels this `budget-service` — see §10). | added (SaaS) |
 | `rbac_grants` | entity | The authorization store: `tier` (owner/admin/member) per (org_id, user_id), plus `granted_by`. The **only** thing the authz middleware reads. Strictly distinct from `users.role`, which is a job/domain attribute with no permission meaning. Owned by `identity-tenant-service`. | added (SaaS) |
+| `meeting_agenda_items` | entity | A meeting's agenda, at most 20 items: `position`, `title`, `owner_user_id`, `duration_minutes`, `status` (`pending`/`in_progress`/`covered`/`skipped`), `status_source` (`agent`/`host`), `agent_note`. RLS by `org_id`. Owned by `core-api` (the data model labels it `meeting-service`, like `meetings`; see §10) ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D5). | added (SaaS) |
 
 ---
 
@@ -244,13 +247,18 @@ Cross-cutting concepts referenced across the set. PDF-original concepts are dash
 |---|---|---|---|
 | `nexus_knowledge` | concept | The single Apache AGE graph (Cypher-over-Postgres), org-partitioned. | — |
 | Cloudflare R2 | concept | The object store behind every `nexus-*` bucket ([ADR-0023](adr/0023-object-storage-cloudflare-r2.md)), addressed over its S3-compatible API, so the "S3-compatible" contract stated throughout the set stays literally true. Chosen for zero egress fees on a read-heavy recordings workload, from a vendor already terminating every request. Residency caveat: R2's **EU jurisdiction** is a hard placement guarantee while `us`/`ap` are location hints, so an `ap` blob pin is best-effort. | — · added (SaaS) |
-| `get_user_context(user_id)` | concept | Utility returning role/skills/team/recent meetings/topics; Redis-cached 5-min TTL; per-user personalization source. | — |
+| `get_user_context(user_id)` | concept | Utility returning role/skills/team/recent meetings/topics, plus `listen_for`, `ignore_topics`, `agent_name`, `agent_personality`, `agent_instructions` ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D4); Redis-cached 5-min TTL; per-user personalization source. | — |
 | `clerk_org_id` | concept | The unique, immutable mapping from a Clerk organization to our tenant root, held on `organizations`. The edge resolves the token's native Clerk organization claim through it, and that resolution is the authorization checkpoint where org-exists, not-suspended, and not-soft-deleted are enforced. Our `org_id` is never written into Clerk metadata. | added (SaaS) |
 | `mytheus_app` / `mytheus_relay` / `mytheus_admin` | concept | The three PostgreSQL roles this program creates. None holds `BYPASSRLS`. `mytheus_app` is the request path; `mytheus_relay` drains `outbox` across tenants through one permissive policy on that one table; `mytheus_admin` owns the tables and runs migrations and RTBF purges, unreachable from request handlers. These three are not the only roles in the database: the `supabase/postgres` image ships `anon`, `authenticated`, `service_role`, `authenticator` and `supabase_admin`, none of which this program uses and one of which (`service_role`) holds `rolbypassrls`. The isolation rule is therefore stated over roles, not over this list ([ADR-0021](adr/0021-explicit-grants-no-schema-wide-default-privileges.md)). | added (SaaS) |
 | Tenant-root exemption | concept | `organizations` and `plans` are the two un-tenanted tables. Because `organizations` has no `org_id` column, the canonical RLS policy is not expressible on it and it is deliberately unpolicied, which makes the rule "every table with an `org_id` column carries `tenant_isolation`" exceptionless and machine-checkable in CI. | added (SaaS) |
 | RRF (Reciprocal Rank Fusion) | concept | The fusion method combining Qdrant vector + Postgres FTS + AGE topic-relation results in the `RAGService` hybrid retrieval. | — |
 | `RAGService` | concept | The fixed five-stage retrieval pipeline expand → retrieve → rerank → assemble → cite. | — |
-| `BaseAgent` | concept | Shared LangGraph lifecycle (spawn/process/terminate) for all six agents. | — |
+| `BaseAgent` | concept | Shared LangGraph lifecycle (spawn/process/terminate) for all seven agents. | — |
+| Agent persona | concept | A person's agent's display name (`agent_name`), doodle face (`agent_avatar_seed`), personality preset (`agent_personality`: `balanced`/`concise`/`detailed`/`direct`/`friendly`) and free-text instructions (`agent_instructions`). Changes only how notes and suggestions are worded; a display label, never an agent class or an event identifier ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D2). | added (SaaS) |
+| Working profile | concept | `role`, "what you work on" (`bio`), focus areas (`skills`), listen for (`listen_for`) and ignore (`ignore_topics`): what a person's `PersonalListenerAgent` listens for. Asked during onboarding ("About you") ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D1). | added (SaaS) |
+| Host | concept | The one participant with `meeting_participants.role_in_meeting = 'host'`; default the creator. Edits the agenda, overrides agent statuses, and alone receives `MeetingAgent` nudges ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D5). | added (SaaS) |
+| Follow-up link / carry-forward | concept | `meetings.previous_meeting_id` links a meeting to the one it follows up; carry-forward is what that meeting left open (confirmed decisions, open actions, the caller's saved questions), served by `GET /api/v1/meetings/{id}/carry-forward`. No recurring-series entity ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D5, D6). | added (SaaS) |
+| `agent-agenda` / `agent-nudge` | concept | The Socket.io events `realtime-gateway` derives from a `meeting_update`: each agenda update to every socket on the meeting channel, a nudge to the host's sockets only; nudges are not replayed ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D9). | added (SaaS) |
 | `AgentState` | concept | Shared dataclass carried through an agent graph (meeting_id, user_id, chunk window, context, retrieved_facts + SaaS tenant/authz/budget fields). | — |
 | Confidence thresholds | concept | Surfacing policy: `> 0.7` surface · `0.4–0.7` silent-log to `worklogs` · `< 0.4` drop. | — |
 | Windowed batching | concept | Agents run on 30-second speaker-merged windows (`A17`), not per raw `transcript_chunks` row — the core R4 cost fix. | added (SaaS) |
@@ -286,7 +294,7 @@ These are **not PDF renames** — they are reconciliations between the informal 
 | `identity-service` | `identity-tenant-service` | Identity + tenancy control plane folded into one catalog service. |
 | `identity-service` (data model: `teams`/`team_members`/`departments`) | `core-api` | Per [`_canon/01-service-catalog.md`](_canon/01-service-catalog.md), `core-api` owns `teams`, `team_members`, and `departments` CRUD and their `/teams` / `/departments` prefixes. `identity-tenant-service` retains the identity and tenancy surface (`organizations`, `users`, RBAC, SSO/SCIM) and does not write these three tables. |
 | `tenant-service` | `identity-tenant-service` | `tenant_settings` / `data_residency` are owned by the identity/tenancy control plane. |
-| `meeting-service` (data model: meetings/participants/speakers/chat) | `core-api` (meetings, participants, chat, `meeting_speakers`) + `transcription-service` (`transcript_chunks`) + `meeting-service` (LiveKit transport adapter only) | The catalog splits the data-model "meeting-service" across three services; `meeting_speakers` is in `core-api`'s owned-data list and `meeting-service` proper is the LiveKit adapter. |
+| `meeting-service` (data model: meetings/participants/speakers/chat/agenda) | `core-api` (meetings, participants, chat, `meeting_speakers`, `meeting_agenda_items`) + `transcription-service` (`transcript_chunks`) + `meeting-service` (LiveKit transport adapter only) | The catalog splits the data-model "meeting-service" across three services; `meeting_speakers` is in `core-api`'s owned-data list and `meeting-service` proper is the LiveKit adapter. |
 | `agent-service` | `core-api` | `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations` are owned by `core-api`; `agent-runtime-service` owns no tables. |
 | `rag-service` (data model) | `rag-service` | Same name; `document_chunks` ownership matches. |
 | `graph-service` | `knowledge-graph-service` | Owns `nexus_knowledge`. |

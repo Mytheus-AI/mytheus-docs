@@ -9,7 +9,7 @@ A single-diagram, system-boundary view of NEXUS — every human/machine actor, e
 - [Data Architecture](../05-data-architecture.md) — store selection, residency, retention, backups/PITR.
 - [Multi-Tenancy](../06-multi-tenancy.md) — pooled + RLS for the long tail, cell isolation for enterprise, `org_id` injection.
 - [Event Architecture](../07-event-architecture.md) — Redpanda topics, Avro subjects, outbox/inbox, DLQs.
-- [AI Agent Architecture](../08-ai-agent-architecture.md) — the six LangGraph agents, ContextGapAgent collaboration.
+- [AI Agent Architecture](../08-ai-agent-architecture.md) — the seven LangGraph agents, ContextGapAgent collaboration.
 - [RAG & Inference Serving](../09-rag-and-inference-serving.md) — embedding/reranker inference tier, cost-controlled LLM pipeline.
 - [Security Architecture](../11-security-architecture.md) — Clerk, RBAC, agent-to-agent authz, edge security.
 - [SaaS Business Architecture](../18-saas-business-architecture.md) — Stripe billing, usage metering, plans/tiers.
@@ -41,7 +41,7 @@ C4Context
     System_Ext(cloudflare, "Cloudflare", "CDN + WAF + DDoS + global rate limiting. TLS termination at the edge.")
 
     System_Boundary(nexus_b, "NEXUS Platform (multi-tenant SaaS, org_id-isolated at every layer)") {
-      System(nexus, "NEXUS", "Per-participant AI meeting intelligence: live transcription, six LangGraph agents, decisions/actions, RAG, knowledge graph, cross-meeting agent collaboration.")
+      System(nexus, "NEXUS", "Per-participant AI meeting intelligence: live transcription, seven LangGraph agents, decisions/actions, RAG, knowledge graph, cross-meeting agent collaboration.")
     }
   }
 
@@ -101,7 +101,7 @@ flowchart TB
       DATA["core-api · transcript_chunks · nexus_knowledge<br/>per-tenant Qdrant collections · namespaced Redis"]
     end
     subgraph agents["Agent boundary: deny-by-default agent-to-agent authz (own org_id only)"]
-      AG["agent-runtime-service<br/>(six LangGraph agents)"]
+      AG["agent-runtime-service<br/>(seven LangGraph agents)"]
     end
   end
 
@@ -142,7 +142,7 @@ flowchart TB
 
 - **Human ingress is single-boundary.** Every end user, tenant admin, and operator reaches NEXUS only through `Cloudflare -> api-gateway`. The gateway pre-validates the Clerk JWT, extracts `org_id`, and injects it into request context so the Postgres RLS policy `USING (org_id = current_setting('app.current_org')::uuid)` is the fail-closed backstop. See [Security Architecture](../11-security-architecture.md).
 - **The audio path keeps keys server-side.** LiveKit captures meeting audio via a server-side room hook; NEXUS proxies one diarized Deepgram WebSocket stream **per meeting** (not per participant — a 6x cost lever per [Capacity & Scaling Math §7](../_canon/05-capacity-math.md)), persisting only finals to `transcript_chunks` and emitting the `transcript-chunks` topic. See [RAG & Inference Serving](../09-rag-and-inference-serving.md) and [Event Architecture](../07-event-architecture.md).
-- **LLM inference leaves the boundary as derived prompts only.** The six agents (PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent) route through LiteLLM to Anthropic under the cost-controlled pipeline (relevance pre-gating → windowed batching → tiered Haiku/Sonnet/Opus routing → caching → per-tenant token budgets). Raw audio never crosses to the LLM subprocessor. See [AI Agent Architecture](../08-ai-agent-architecture.md).
+- **LLM inference leaves the boundary as derived prompts only.** The seven agents (PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent, MeetingAgent) route through LiteLLM to Anthropic under the cost-controlled pipeline (relevance pre-gating → windowed batching → tiered Haiku/Sonnet/Opus routing → caching → per-tenant token budgets). Raw audio never crosses to the LLM subprocessor. See [AI Agent Architecture](../08-ai-agent-architecture.md).
 - **Identity is brokered by Clerk, never owned by NEXUS.** Clerk is the source of truth; NEXUS verifies JWTs inbound and syncs users via the `/clerk/webhook` receiver hardened with outbox + reconciliation (Clerk authoritative). SSO/SAML/SCIM for Enterprise tenants ride the same boundary.
 - **Confirmed knowledge flows outward to PM and Slack.** On user confirmation (no silent commits), `decisions`/`actions` create `nexus_knowledge` graph edges (`PRODUCED`, `ASSIGNED_TO`) and the `integration-service` syncs actions bidirectionally to Jira/Linear; Slack receives Block Kit prep briefs, summaries, and day-10 escalation DMs via the Temporal `ActionFollowUpWorkflow`. See [Integration Architecture](../21-integration-architecture.md).
 - **The operator path is the highest-risk line.** The NEXUS operator's cross-tenant reach (ops console, suspend/migrate, audit access) is deny-by-default and every action lands in append-only `audit_logs` — the only routine path that legitimately spans the tenant boundary. See [Multi-Tenancy](../06-multi-tenancy.md) and [SaaS Business Architecture](../18-saas-business-architecture.md).

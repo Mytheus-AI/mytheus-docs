@@ -5,7 +5,7 @@ The single hot-path trace of how a spoken utterance becomes a transcript chunk, 
 ## Related documents
 
 - [Event-Driven Architecture](../07-event-architecture.md) — topic catalog, Avro envelope, outbox/inbox, DLQs, the system-level flow this diagram zooms into.
-- [AI Agent Architecture](../08-ai-agent-architecture.md) — the six agents, BaseAgent lifecycle, the cost-controlled pipeline, no-silent-commits.
+- [AI Agent Architecture](../08-ai-agent-architecture.md) — the seven agents, BaseAgent lifecycle, the cost-controlled pipeline, no-silent-commits.
 - [Real-time & Transcription](../10-realtime-and-transcription.md) — LiveKit transport, Deepgram WS proxy, `realtime-gateway`, the latency budget.
 - [RAG & Inference Serving](../09-rag-and-inference-serving.md) — the dedicated embedding/reranker inference tier.
 - [Data Architecture](../05-data-architecture.md) — `transcript_chunks` storage, Qdrant collections, AGE `nexus_knowledge`.
@@ -155,7 +155,7 @@ Each row names the producing/consuming service from the [Service Catalog](../04-
 | 1 | Audio capture | `meeting-service` (LiveKit adapter) → server-side hook | LiveKit room audio | Internal WS to `transcription-service` | 1 diarized stream/meeting |
 | 2 | Transcribe | `transcription-service` (Deepgram WS proxy) | audio frames | `transcript_chunks` (finals only) + `transcript-chunks` topic | **360 finals** (T2) |
 | 3a | Embed | `embedding-service` | `transcript-chunks` | Qdrant `transcript_chunks__{org_id}` | **~62.5 vectors** (V2) |
-| 3b | Reason | `agent-runtime-service` (6 agents) | `transcript-chunks` → 30 s windows | `agent-results`, `agent-stream`, `usage-events`, `notifications` | **~90 windows**, ~35% gate-pass → **756 agent-results** (E3); **~1,260 stream deltas** (E8) |
+| 3b | Reason | `agent-runtime-service` (7 agents) | `transcript-chunks` → 30 s windows | `agent-results`, `agent-stream`, `usage-events`, `notifications` | **~90 windows**, ~35% gate-pass → **756 agent-results** (E3); **~1,260 stream deltas** (E8) |
 | 4 | Deliver | `realtime-gateway` | `agent-results`, `agent-stream`, `notifications` | Socket.io / WSS to `web-app`, room = `meeting_id` | per gate-passing window |
 | 5 | Confirm | `core-api` (outbox) | user confirmation from sidebar | `decisions`, `actions` topics | **3 decisions, 5 actions** (E4, E5) |
 | 6 | Graph | `knowledge-graph-service` | `decisions`, `actions` (on confirm) | AGE `nexus_knowledge` edges | `PRODUCED`, `ASSIGNED_TO` edges |

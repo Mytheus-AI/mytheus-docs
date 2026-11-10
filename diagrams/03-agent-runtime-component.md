@@ -1,10 +1,10 @@
 # Agent Runtime Components (C4 L3)
 
-A C4 Level 3 component view of the internals of `agent-runtime-service`: the LangGraph `BaseAgent` lifecycle, the six agents, the relevance gate, the windowing batcher, the tiered LLM router, the versioned prompt loader, and the collaboration client.
+A C4 Level 3 component view of the internals of `agent-runtime-service`: the LangGraph `BaseAgent` lifecycle, the seven agents, the relevance gate, the windowing batcher, the tiered LLM router, the versioned prompt loader, and the collaboration client.
 
 ## Related documents
 
-- [AI Agent Architecture](../08-ai-agent-architecture.md) — the authoritative narrative for the six agents, `BaseAgent`/`AgentState`, the cost-controlled pipeline, and the collaboration protocol. This diagram doc decomposes that service into components.
+- [AI Agent Architecture](../08-ai-agent-architecture.md) — the authoritative narrative for the seven agents, `BaseAgent`/`AgentState`, the cost-controlled pipeline, and the collaboration protocol. This diagram doc decomposes that service into components.
 - [Container Architecture (C4 L2)](../03-container-architecture.md) — the L2 container view that places `agent-runtime-service` in the AI/inference tier.
 - [Service Catalog](../04-service-catalog.md) — the canonical service table, event ownership, and scaling families.
 - [Event Architecture](../07-event-architecture.md) — Avro schemas for `transcript-chunks`, `agent-results`, `agent-requests`, `agent-responses`, `agent-stream`, and outbox/inbox delivery.
@@ -63,6 +63,7 @@ flowchart TB
       QST["QuestionAgent"]
       CGA["ContextGapAgent"]
       PRO["ProactiveAgent"]
+      MTG["MeetingAgent<br/>(one per meeting, agenda only)"]
     end
 
     PLOAD["Prompt Loader<br/>({prompt_key}@{version}, per-tenant pin)"]
@@ -121,7 +122,7 @@ Each box in §2 is named once here. No other doc may introduce an alternative na
 | Windowing Batcher | Merges Deepgram utterances by speaker turn into **30s windows** (`A17`); 90 windows/meeting vs 360 raw `transcript_chunks` (`T2`). Builds `AgentState.chunk` (a `TranscriptWindow`, not a raw row). | In-memory window buffers | [Capacity §8.2](../_canon/05-capacity-math.md) |
 | Context Resolver | Calls `get_user_context(user_id)` → role/skills/team/recent meetings/topics; Redis-cached `nexus:{org_id}:user_ctx:{user_id}` (TTL 5 min). Populates `AgentState.context`. | `identity-tenant-service` `/context/{user_id}` | [Locked Tech §2.6](../_canon/06-tech-decisions.md) |
 | Relevance Gate | One cheap **Haiku** triage call per window per participant; ~35% pass (gate-pass 0.35). Failing 65% are logged and dropped — no extraction call made. Distinct from confidence surfacing. | Calls Tiered LLM Router (Haiku) | [Capacity §8.2](../_canon/05-capacity-math.md) |
-| LangGraph agents (×6) | `PersonalListenerAgent`, `DecisionAgent`, `ActionAgent`, `QuestionAgent`, `ContextGapAgent`, `ProactiveAgent`, each a LangGraph graph on shared `BaseAgent`. | Produce `AgentResult` | [Locked Tech §2.6](../_canon/06-tech-decisions.md) |
+| LangGraph agents (×7) | `PersonalListenerAgent`, `DecisionAgent`, `ActionAgent`, `QuestionAgent`, `ContextGapAgent`, `ProactiveAgent`, and `MeetingAgent` (SaaS-add, one per meeting, runs only when the meeting has an agenda; one `meeting_update` per window, [ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)), each a LangGraph graph on shared `BaseAgent`. | Produce `AgentResult` | [Locked Tech §2.6](../_canon/06-tech-decisions.md) |
 | Prompt Loader | Resolves `{prompt_key}@{version}` per tenant (`org_id` pin overrides global default) for staged rollout. Version-controlled templates. | Reads template store | [AI Agent Architecture §3.3](../08-ai-agent-architecture.md) |
 | Tiered LLM Router | LiteLLM: Haiku triage/score, Sonnet extract, Opus high-stakes. Per-user rate limits, token tracking. Picks the cheapest model that can do the job. | Anthropic via LiteLLM | [Locked Tech §2.5](../_canon/06-tech-decisions.md) |
 | Prompt Cache Layer | Anthropic prefix cache for stable prompt prefixes (role taxonomy, system prompt, prior-window context) + semantic cache for near-duplicate windows. | Applied after tiering | [AI Agent Architecture §4.1](../08-ai-agent-architecture.md) |

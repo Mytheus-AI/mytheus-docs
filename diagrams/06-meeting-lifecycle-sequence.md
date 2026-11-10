@@ -6,7 +6,7 @@ The single end-to-end sequence view of one NEXUS meeting — from a Google Calen
 
 - [Service Catalog](../04-service-catalog.md) — the canonical service names and ownership used in every lane below.
 - [Real-time & Transcription](../10-realtime-and-transcription.md) — the live path (token mint, Deepgram proxy, captions, fan-out) this diagram sequences.
-- [AI Agent Architecture](../08-ai-agent-architecture.md) — the six LangGraph agents, windowed batching, confidence thresholds.
+- [AI Agent Architecture](../08-ai-agent-architecture.md) — the seven LangGraph agents, windowed batching, confidence thresholds.
 - [RAG & Inference Serving](../09-rag-and-inference-serving.md) — the `RAGService` pipeline reused for prep briefs and summaries.
 - [Integration Architecture](../21-integration-architecture.md) — Calendar auto-create, Slack prep brief / summary, Jira/Linear action sync, `ActionFollowUpWorkflow`.
 - [Event-Driven Architecture](../07-event-architecture.md) — Avro schemas, outbox/inbox, idempotency, DLQs for every arrow here.
@@ -150,7 +150,7 @@ The `transcript-chunks` topic fans to two consumers: `embedding-service` (embed-
 
 > [SaaS-scale adjustment] `agent-runtime-service` does **not** run an agent per raw chunk (the PDF R4 cost bomb). It runs the locked cost-controlled pipeline: **30 s windowed batching → relevance pre-gating (Haiku) → tiered extraction (Sonnet) → high-stakes reasoning (Opus) → prompt caching → per-tenant token budgets**. This is an **86% LLM-call reduction** vs naive per-chunk ([Capacity §8](../_canon/05-capacity-math.md)). Streamed output rides `agent-stream` (token deltas) to `realtime-gateway`; durable agent output rides `agent-results`. End-to-end speech → first sidebar token is budgeted **p50 < 2 s, p95 < 4 s** (PDF R5).
 
-The six agents act here: **PersonalListenerAgent** writes per-user `worklogs`; **DecisionAgent** / **ActionAgent** surface decisions/actions as confirm/edit/dismiss cards; **QuestionAgent** emits `agent_suggestions` (priority 1–3); **ContextGapAgent** fills cross-meeting context over `agent-requests`/`agent-responses`; **ProactiveAgent** raises conflict/workload/stakeholder alerts. On user **confirmation**, `core-api` emits `decisions`/`actions` through its outbox, and `knowledge-graph-service` creates the `PRODUCED` (Decision/Action→Meeting) and `ASSIGNED_TO` (Action→Person) edges in `nexus_knowledge`. Every LLM call emits `usage-events` for metering.
+The seven agents act here: **PersonalListenerAgent** writes per-user `worklogs`; **DecisionAgent** / **ActionAgent** surface decisions/actions as confirm/edit/dismiss cards; **QuestionAgent** emits `agent_suggestions` (priority 1–3); **ContextGapAgent** fills cross-meeting context over `agent-requests`/`agent-responses`; **ProactiveAgent** raises conflict/workload/stakeholder alerts; **MeetingAgent** (one per meeting, only with an agenda) updates agenda item statuses for everyone and nudges the host ([ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)). On user **confirmation**, `core-api` emits `decisions`/`actions` through its outbox, and `knowledge-graph-service` creates the `PRODUCED` (Decision/Action→Meeting) and `ASSIGNED_TO` (Action→Person) edges in `nexus_knowledge`. Every LLM call emits `usage-events` for metering.
 
 ### 3.4 P4 — End & summarize
 
