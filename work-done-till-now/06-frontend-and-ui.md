@@ -370,7 +370,7 @@ All checks below ran in this session on 2026-11-10:
 
 The owner reviewed the first pass and found it too empty: a small scene in a mostly bare peach panel. A version wrapped in a white product window was then rejected, because the box boundary looked bad. What shipped:
 - **Size and frame:** the room is bigger, up to 620px wide, and has no frame; it sits straight on the peach stage.
-- **Above the room:** the meeting's name, when it is, and a running Live timer, as plain text.
+- **Above the room:** the meeting's name and when it is, as plain text. A running Live timer was tried and removed at the owner's request (`mytheus-ui` commit after `e3eafaa`).
 - **The room:**
   - A whiteboard on the wall behind the back row, and a soft floor shadow under the table.
   - Each bubble names its speaker. Who speaks is scripted per line (`Line.who`), so owners in the kept items match the speaker.
