@@ -329,3 +329,39 @@ All observed in this session on 2026-11-10.
 - `oasdiff breaking --fail-on ERR` (`tufin/oasdiff:latest`) for `bff.yaml` and `core-api.yaml` against `origin/main`: "No breaking changes to report", exit 0.
 - `mytheus-ui`: `npx tsc --noEmit` and `npx next lint` clean; `npm run generate:api:check` matches the branch's specs; `npm test` 60 pass, 0 fail (new `tests/dashboard-format.test.ts`); `npx next build` succeeds (51 static pages) with the test Clerk publishable key, on Node 25 locally (CI builds the Docker image on Node 20).
 
+
+## 9. The doodle meeting back on the auth pages, in the one-line style (2026-11-10)
+
+The one-line redesign (`mytheus-ui` `fab728d`, then `a9ffe5a` and `f46aec9`) replaced the auth sketchbook of section 7.3 with a coral "memory line" drawing on a peach brand panel, now on the right of the form. The doodle meeting scene (table, people, speech bubbles, the agent's note) and the SSO page's magnifying glass were gone. This pass puts them back, redrawn to the rules in `mytheus-ui/docs/DESIGN-ONELINE.md`. Commit: `mytheus-ui` `220d9ee`.
+
+### 9.1 What changed
+
+- `src/components/auth/AuthRoom.tsx` (new) is the brand-panel scene on every auth page: sign-in, email code, two-step, forgot password, sign-up (start, verify, continue) and workspace onboarding.
+  - Five doodle people sit around a table and take turns talking. A decision line is kept on a card by the agent.
+  - The visitor gets a seat on sign-up and onboarding: a dashed open seat first, then their doodle with a "You" chip.
+  - During onboarding, the workspace name is written on the table top.
+  - Each page passes its own lines and note through `AuthShell`'s new `scene` prop, which replaces `art` / `artLabel`.
+- Below `lg`, the slim band above the form shows a row of the doodle faces ("your team, remembered", or "and you" once the visitor has a doodle). It replaces the short line drawing there.
+- `SsoCallback` shows a doodle drawing itself in under a sweeping magnifying glass. This replaces the looping logo mark. The status copy and the `#clerk-captcha` card are unchanged.
+- `AuthArt.tsx` (the memory-line drawings) is deleted, because nothing imports it any more. Git history keeps it.
+
+### 9.2 How it blends with the one-line language, and why
+
+- **The coral line:** the only line in the scene is the coral table top, drawn once on arrival. The coral line also loops round the decided words on the agent's card, the way it circles the hero's key phrase on the marketing site. This keeps to "one bold line, everything else quiet".
+- **Styling:** bubbles and the agent's card are white `rounded-card` surfaces with `shadow-warm-*` and hairline rings. The decision bubble uses `signal-soft` / `signal-ink`. Cups and the pad use `--tint-*` fills. There are no raw hex values, and only the 20px and full radii are used.
+- **Type:** speech is in Hanken and the kept note is in Newsreader. The Caveat handwriting face and its tilts were dropped, because the redesign retired it.
+- **People:** the five people are the sample team (Maya, Raj, Priya, Sarah, Diego), drawn through `defaultDoodleSeed`, so they have the same faces `Avatar` gives them elsewhere.
+- **Motion:** the old talking bob and wobble loops are gone; the speaker leans in and their ring turns coral. The rotating conversation is the view's one orchestrated moment. With reduced motion, the scene holds on its decision line with the kept card already showing.
+
+### 9.3 Verification
+
+All checks below ran in this session on 2026-11-10:
+- `npx tsc --noEmit -p .` was clean.
+- `npx next lint` was clean on the six changed auth files.
+- The dev server was run on :3000 and pages were checked in the browser at 1440x900:
+  - `/sign-in`, `/sign-up` and `/sign-in/forgot-password` rendered the scene.
+  - Measured bubble placement clears the speaker's face.
+  - The decision bubble and kept card appear.
+- `/sso-callback` rendered the doodle and glass before Clerk redirected (no real OAuth handshake locally).
+- At 375px, the sign-up band showed the crowd with the visitor's doodle. There was no horizontal scroll and no console errors.
+- Not checked live: `/onboarding/organization` needs a signed-in session, so the table-top workspace label was not seen in the browser.
