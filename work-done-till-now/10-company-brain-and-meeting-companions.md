@@ -14,7 +14,7 @@ The owner asked for an organisation setup that gives every agent the company's c
 
 ### mytheus-backend (one branch, both halves merged)
 
-- Migrations `c1a2b3d4e5f6` (company brain, identity) and `d2b3c4d5e6f7` (meetings, core-api), built in parallel off `0b91a00079a7` and joined by the empty merge revision `e3c4d5e6f7a8`.
+- Migrations `c1a2b3d4e5f6` (company brain, identity) then `d2b3c4d5e6f7` (meetings, core-api). They were built in parallel off `0b91a00079a7` and first joined by an empty merge revision; CI's upgrade, downgrade -1, upgrade check cannot step down from a merge ("Ambiguous walk"), and neither was deployed, so the core-api revision was re-parented onto the identity one and the merge revision removed.
 - `identity-tenant-service`: `org_profiles`, `org_glossary_terms` (with an upserting import), `topic_owners`, `org_goals`, `topic_watches`, `tenant_settings.never_record_topics`; `/api/v1/org/*` and `/api/v1/users/me/topic-watches`; readiness and welcome reads; gRPC `GetOrgContext`, cached at `nexus:{org_id}:org_ctx` for five minutes and evicted by every write.
 - `core-api`: `meeting_templates`, `meetings.confidential` and `template_id`, `meeting_agenda_items.goal_id`, attendance and proxy fields on `meeting_participants`, `commitments`, `action_status_requests`; the drafted agenda, attendance, promises and status request routes; the confidential rules in carry-forward, the drafted agenda, the brief and the `related_meeting` hop; the consumer writes commitments and stores a suggested owner as a proposed action's assignee.
 - `bff`: the brief, health and catch-up screens.
@@ -76,7 +76,7 @@ The owner asked for an organisation setup that gives every agent the company's c
 
 ## 6. Verification
 
-- mytheus-backend (merged branch, a fresh `supabase/postgres:15.8.1.060` on a throwaway port): `alembic heads` shows a single head `e3c4d5e6f7a8`; ruff, black, mypy (183 files) and `scripts.emit_openapi --check` clean; `uv run pytest -x --ignore=tests/test_relay.py`: 1090 passed. `test_relay.py` was left out because the shared local Redpanda refuses new partitions (memory limit); each builder saw only that failure in a full run.
+- mytheus-backend (merged branch, a fresh `supabase/postgres:15.8.1.060` on a throwaway port): `alembic heads` shows a single head `d2b3c4d5e6f7`; upgrade, downgrade -1, upgrade passes; ruff, black, mypy (183 files), `scripts.emit_openapi --check` and `scripts/check_authz.py` clean (the authz gate needed a router-level `Depends(verify_token)` on the company brain routes, found by CI); `uv run pytest -x --ignore=tests/test_relay.py`: 1090 passed. `test_relay.py` was left out because the shared local Redpanda refuses new partitions (memory limit); each builder saw only that failure in a full run.
 - mytheus-intelligence: ruff, black, mypy clean; non-database pytest 585 passed, 24 skipped, 1 failed (`test_context_gap_bus_live`, needs a live Redpanda, fails the same on main).
 - mytheus-realtime: transcription-service 131 passed, 1 skipped; realtime-gateway lint, typecheck and build clean, 104 of 105 (the Kafka test that fails on main too).
 - mytheus-ui: `tsc` clean, `next lint` clean on changed files, `npm test` 202 of 202, `next build` succeeds with every new route. The readiness meter, vocabulary table with import, promises page and health card were looked at in a browser at 1440 px through a temporary, uncommitted preview route with sample data.
