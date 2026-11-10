@@ -50,7 +50,7 @@ The persona changes how the agent words what it writes for its person (notes, su
 
 ### D3. Profile API
 
-- `GET /api/v1/users/me` (new): the caller's own `UserProfile`.
+- `GET /api/v1/users/me`: the caller's own `UserProfile`. Doc 19 has listed it since the PDF; it is first built here. The PDF's `PUT /api/v1/users/:id/profile` stays documented but unbuilt; `PATCH /api/v1/users/{user_id}` is the edit route.
 - `PATCH /api/v1/users/{user_id}` accepts, in addition to `role`, `skills`, `bio`: `listen_for`, `ignore_topics`, `agent_name`, `agent_avatar_seed`, `agent_personality`, `agent_instructions`. The existing rule stands for profile fields (self, or admin and above). The `agent_*` fields are **self only**: anyone else gets 403. An empty string for `agent_name` / `agent_instructions` / `agent_avatar_seed` stores NULL. Validation failures are 422 naming the field.
 - `UserProfile` gains all six fields. `GET /api/v1/users` (`MemberList` items) gains `agent_name` and `agent_avatar_seed` so a meeting room can label everyone's agent.
 - Any change evicts `nexus:{org_id}:user_ctx:{user_id}`, as today.
