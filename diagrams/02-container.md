@@ -127,6 +127,7 @@ flowchart TB
   BILL -.->|subscriptions / webhook| STRIPE
   MEET -.->|room token / webhook| LIVEKIT
   IDENT -->|cache get_user_context| RD
+  IDENT -->|"cache GetOrgContext (org_ctx)"| RD
 
   %% ---- Real-time tier ----
   MEET -->|LiveKit audio hook| TRANS

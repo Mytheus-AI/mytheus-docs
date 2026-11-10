@@ -42,7 +42,7 @@ flowchart TB
   RTGW["realtime-gateway<br/>(WebSocket fan-out)"]
   CORE["core-api<br/>(worklogs / decisions / actions outbox)"]
   RAGSVC["rag-service<br/>(expand→retrieve→rerank→cite)"]
-  IDENT["identity-tenant-service<br/>(get_user_context, A2A grants)"]
+  IDENT["identity-tenant-service<br/>(get_user_context, GetOrgContext, A2A grants)"]
   BILL["billing-metering-service"]
   REDIS[("Redis<br/>nexus:{org_id}:budget / dedupe / queue")]
   PG[("Postgres (RLS)<br/>agent_budgets · agent_collaborations")]
@@ -52,7 +52,7 @@ flowchart TB
 
     CONS["Avro Consumer + Inbox<br/>(AvroDeserializer, dedupe on idempotency_key)"]
     BATCH["Windowing Batcher<br/>(30s speaker-turn windows · A17)"]
-    CTX["Context Resolver<br/>(get_user_context cache client)"]
+    CTX["Context Resolver<br/>(get_user_context + GetOrgContext cache client)"]
     GATE{"Relevance Gate<br/>(Haiku triage · ~35% pass)"}
 
     subgraph AGENTS["LangGraph agents on BaseAgent (spawn/process/terminate)"]
@@ -81,6 +81,7 @@ flowchart TB
   BATCH --> CTX
   CTX -->|"role/skills/topics"| GATE
   IDENT -->|"/context/{user_id}"| CTX
+  IDENT -->|"gRPC GetOrgContext"| CTX
   GATE -->|"drop 65% (logged)"| CTX
   GATE -->|"pass 35%"| AGENTS
 
@@ -120,7 +121,7 @@ Each box in §2 is named once here. No other doc may introduce an alternative na
 |---|---|---|---|
 | Avro Consumer + Inbox | Base consumer (AvroDeserializer, offset commit, retry). Dedupes on `idempotency_key` via Redis `nexus:{org_id}:dedupe:{topic}:{key}` inbox; poison messages → per-topic DLQ. | Consumes `transcript-chunks`, `document-chunks` | [Locked Tech §2.4](../_canon/06-tech-decisions.md) |
 | Windowing Batcher | Merges Deepgram utterances by speaker turn into **30s windows** (`A17`); 90 windows/meeting vs 360 raw `transcript_chunks` (`T2`). Builds `AgentState.chunk` (a `TranscriptWindow`, not a raw row). | In-memory window buffers | [Capacity §8.2](../_canon/05-capacity-math.md) |
-| Context Resolver | Calls `get_user_context(user_id)` → role/skills/team/recent meetings/topics; Redis-cached `nexus:{org_id}:user_ctx:{user_id}` (TTL 5 min). Populates `AgentState.context`. | `identity-tenant-service` `/context/{user_id}` | [Locked Tech §2.6](../_canon/06-tech-decisions.md) |
+| Context Resolver | Calls `get_user_context(user_id)` → role/skills/team/recent meetings/topics; Redis-cached `nexus:{org_id}:user_ctx:{user_id}` (TTL 5 min). Populates `AgentState.context`. Also calls gRPC `GetOrgContext` (company profile, vocabulary, topic owners, active goals, never-record topics, topic watches; cached `nexus:{org_id}:org_ctx`, TTL 5 min) for the company block, the never-record gate, ActionAgent's suggested owner and ProactiveAgent's topic-watch check ([ADR-0039](../adr/0039-company-brain-and-meeting-companions.md)). | `identity-tenant-service` `/context/{user_id}` | [Locked Tech §2.6](../_canon/06-tech-decisions.md) |
 | Relevance Gate | One cheap **Haiku** triage call per window per participant; ~35% pass (gate-pass 0.35). Failing 65% are logged and dropped — no extraction call made. Distinct from confidence surfacing. | Calls Tiered LLM Router (Haiku) | [Capacity §8.2](../_canon/05-capacity-math.md) |
 | LangGraph agents (×7) | `PersonalListenerAgent`, `DecisionAgent`, `ActionAgent`, `QuestionAgent`, `ContextGapAgent`, `ProactiveAgent`, and `MeetingAgent` (SaaS-add, one per meeting, runs only when the meeting has an agenda; one `meeting_update` per window, [ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)), each a LangGraph graph on shared `BaseAgent`. | Produce `AgentResult` | [Locked Tech §2.6](../_canon/06-tech-decisions.md) |
 | Prompt Loader | Resolves `{prompt_key}@{version}` per tenant (`org_id` pin overrides global default) for staged rollout. Version-controlled templates. | Reads template store | [AI Agent Architecture §3.3](../08-ai-agent-architecture.md) |

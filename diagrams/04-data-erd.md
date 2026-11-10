@@ -374,6 +374,113 @@ erDiagram
 - **Compliance & integration edges.** `audit_logs` is append-only and references both `organizations` and the acting `users`; `integration_connections` (Calendar/Slack/Jira/Linear, guardrail R8) secures credentials in `oauth_tokens` via 1:many envelope-encrypted rows. See [Compliance & Privacy](../12-compliance-and-privacy.md).
 - **Citation contract.** `transcript_chunks` (`meeting_id` + `chunk_id` + `speaker`) and `document_chunks` (`document_id` + `element_id`) carry the frozen payload shape that mirrors into Qdrant so every RAG passage is traceable. See [RAG & Inference Serving](../09-rag-and-inference-serving.md).
 
+
+### 3.3 Company brain and meeting companions (ADR-0039)
+
+Eight later tables and the new columns on existing ones, kept in their own diagram so the twenty-six-entity master above stays the PDF-plus-SaaS baseline. Names and limits are from [the data-model canon](../_canon/02-data-model.md) §2.1, §2.2 and """+A+""". `goal_id` and `action_id` reference rows owned by other services and carry no FK; they are drawn dotted.
+
+```mermaid
+erDiagram
+  organizations ||--o| org_profiles : "described by"
+  organizations ||--o{ org_glossary_terms : "vocabulary"
+  organizations ||--o{ topic_owners : "who owns what"
+  users ||--o{ topic_owners : "owns topic"
+  organizations ||--o{ org_goals : "goals"
+  users ||--o{ topic_watches : "watches"
+  organizations ||--o{ meeting_templates : "meeting types"
+  meeting_templates |o..o{ meetings : "template_id"
+  meetings ||--o{ meeting_participants : "attendance live or agent"
+  org_goals |o..o{ meeting_agenda_items : "goal_id"
+  meetings ||--o{ meeting_agenda_items : "agenda"
+  users ||--o{ commitments : "promised"
+  meetings ||--o{ commitments : "said in"
+  action_items |o..o{ action_status_requests : "action_id"
+  meetings ||--o{ action_status_requests : "asked before"
+  users ||--o{ action_status_requests : "assignee"
+  org_profiles {
+    uuid org_id PK
+    text description
+    text industry
+    text_array products
+    text_array customers
+  }
+  org_glossary_terms {
+    uuid id PK
+    uuid org_id FK
+    text term "unique per org, case-insensitive"
+    text kind
+    text definition
+    text_array aliases
+  }
+  topic_owners {
+    uuid id PK
+    uuid org_id FK
+    text topic
+    uuid owner_user_id FK
+  }
+  org_goals {
+    uuid id PK
+    uuid org_id FK
+    text title
+    text period
+    text status
+  }
+  topic_watches {
+    uuid id PK
+    uuid org_id FK
+    uuid user_id FK
+    text topic
+  }
+  meeting_templates {
+    uuid id PK
+    uuid org_id FK
+    text name
+    int default_duration_minutes
+    jsonb agenda
+    bool confidential
+  }
+  meetings {
+    uuid id PK
+    uuid template_id
+    bool confidential
+  }
+  meeting_participants {
+    uuid meeting_id PK
+    uuid user_id PK
+    text attendance "live or agent"
+    text proxy_update
+    text_array proxy_questions
+  }
+  meeting_agenda_items {
+    uuid id PK
+    uuid meeting_id FK
+    uuid goal_id
+  }
+  commitments {
+    uuid id PK
+    uuid org_id FK
+    uuid user_id FK
+    uuid meeting_id FK
+    text content
+    text due_hint
+    text status
+    text source_window_id
+  }
+  action_status_requests {
+    uuid id PK
+    uuid org_id FK
+    uuid action_id
+    uuid user_id FK
+    uuid meeting_id FK
+    text state
+    text status_text
+  }
+```
+
+`tenant_settings` also gains `never_record_topics text[]` (the ground rules). The company-brain tables and `topic_watches` are owned by `identity-tenant-service`; `meeting_templates`, `commitments` and `action_status_requests` by `core-api` ([Glossary §10](../24-glossary-and-naming.md) maps the data-model labels).
+
+> [SaaS-scale adjustment] All eight tables and every new column here are net-new relative to the PDF, whose agents knew nothing about the company and whose meetings had no types, confidentiality, proxies, promises or status requests. Each is tenant-scoped with `org_id` and the `tenant_isolation` policy.
+
 ---
 
 ## 4. Tenant-key view: `organizations` as the root
