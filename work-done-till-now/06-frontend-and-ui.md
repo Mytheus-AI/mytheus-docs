@@ -1,6 +1,6 @@
 # Frontend and UI
 
-Status: IN PROGRESS. Last verified 2026-11-07 (section 6); sections 1 to 5 last verified 2026-08-08.
+Status: IN PROGRESS. Last verified 2026-11-10 (section 8); section 6 on 2026-11-07; sections 1 to 5 last verified 2026-08-08.
 
 Written because "which repo is the actual product" was a live question, and the answer was not
 recorded anywhere. Two repositories hold a Next.js application and only one of them is the
@@ -268,3 +268,64 @@ Joining an existing workspace is the path that works end to end today. A self-cr
   - Tasks, Decisions, Search and the command palette, rendered with mock data on a temporary page that has since been deleted.
 - Not viewed: the onboarding page, which needs a pending session, and the SSO callback past its first frame, because Clerk redirects without an OAuth handshake.
 - The meetings and call surfaces were not modified. `/meetings/[id]/collaborations` renders through the shared `Avatar`, so it shows doodles.
+
+## 8. Every authenticated screen on real data (2026-11-10)
+
+Goal: no authenticated screen in `mytheus-ui` shows invented data. Before this pass the dashboard's tasks, decisions, recent meetings and "Needs you" panels, the decision log, billing, the workspace admin overview, integrations, the platform ops consoles, and parts of the settings screens read `src/lib/mock/data.ts` or hard-coded sample rows; Tasks, Usage and decision lineage fell back to sample data whenever no gateway was configured. Branches: `mytheus-backend` `feat/real-data-endpoints`, `mytheus-ui` `feat/real-data-everywhere`, this file on `docs/real-data-everywhere`. Not merged, not deployed.
+
+### 8.1 What landed in `mytheus-backend`
+
+- `GET /api/v1/decisions` (`core-api`, new module `services/core_api/routes/decision_log.py`, RBAC `member`). Confirmed and superseded decisions from meetings the caller is a participant of, newest first, each with its meeting's title and start, `supersedes`, and `superseded_by` (the decision that replaced it). `proposed` and `dismissed` rows never appear. The prefix was already `core-api`'s in `_canon/01-service-catalog.md` and already routed by `api-gateway`, so no canon or gateway change. `org_id` comes only from the edge; RLS hides other tenants, so the route has no tenant parameter.
+- `GET /bff/dashboard`: every arm is now real. `action_items` (the caller's open confirmed tasks, same rows and order as `GET /api/v1/actions?assignee_id=me`) and `decisions` (recent confirmed decisions from the caller's meetings) replace the open-map `UnbuiltArm`; two arms are added: `recent_meetings` (the caller's ended meetings with participant, confirmed-decision and confirmed-or-done-task counts) and `needs_review` (proposed candidates in the caller's meetings above the tenant's per-agent surface threshold, the same rule `GET /meetings/:id/candidates` applies). The arms share one `AsyncSession`, so each query now takes an `asyncio.Lock`; the arms are still gathered for per-arm timeout and failure isolation.
+- Tests: `tests/test_decision_log.py` (4: confirmed-only and newest first, superseded linkage, cross-tenant invisibility, a colleague sees only shared meetings) and 6 new cases in `tests/test_bff_dashboard.py` (each new arm, all six arms `ok` together, cross-tenant invisibility of tasks, decisions and candidates). `tests/test_openapi_contract.py` now asserts every arm has a typed item and that `UnbuiltArm` is gone, replacing the two tests that asserted the placeholder.
+- `design/openapi/bff.yaml` and `core-api.yaml` regenerated. `oasdiff breaking --fail-on ERR` against `origin/main` reports no breaking change for either.
+
+### 8.2 What landed in `mytheus-ui`, screen by screen
+
+| Screen | Now reads | Before |
+|---|---|---|
+| `/dashboard` header and hero | `/bff/dashboard` `upcoming_meetings`; header counts from `action_items` and `needs_review`, a dash when that arm failed | counts from mock tasks and a hard-coded conflict |
+| `/dashboard` Needs you | `needs_review`, with Confirm and Dismiss through the existing `confirmCandidate` / `dismissCandidate` Server Actions, then a refresh | one hard-coded "pricing vs launch" conflict |
+| `/dashboard` Your tasks | `action_items`; due labels against the request's clock | `mockActions` against a fixed 2026-07-01 "now" |
+| `/dashboard` Recent decisions | `decisions`, each linking to its lineage page | `mockDecisions` |
+| `/dashboard` Recent meetings | `recent_meetings` with real counts | `mockMeetings` |
+| `/dashboard` My notes | `worklogs` (unchanged, already real) | |
+| `/decisions` | `GET /api/v1/decisions`; filters by status (in force, replaced) and meeting; lineage hops resolved within the log | `mockDecisions` with an invented priority |
+| `/meetings/[id]/decisions/[decisionId]` | `bff` lineage (unchanged); with no gateway it now says history is unavailable | a sample chain of one |
+| `/tasks` | `GET /api/v1/actions` (unchanged); the no-gateway sample mode is removed | `mockActions` when no gateway |
+| `/tenant/usage` | `GET /usage`; the sample view and its invented daily chart are removed, no gateway says unavailable | `mockUsage` when no gateway |
+| `/billing` | `GET /usage` plan (name, seat price, inclusions) and `GET /users` member count; Payments says not connected, no invoices | `mockBilling` invoices, seats and next charge |
+| `/tenant` (workspace admin) | members and invites (unchanged), plan from `GET /usage`; Integrations and the export and erasure requests say not available yet | `mockBilling` seats and plan, `mockIntegrations` |
+| `/settings/integrations` | static list of the four supported integrations, all "Not available yet", Connect disabled | three shown as connected to sample accounts, toggles that saved nothing |
+| `/settings` | workspace rename saved to the Clerk organization by `renameWorkspace` (admins only, `orgTag` revalidated); plan row links to Billing; Notifications says not available yet | local-only save, a hard-coded "Starter plan" badge, three toggles that saved nothing |
+| `/settings/profile` | name saved to Clerk; role and focus areas read from `GET /context/{id}` and saved by `saveAgentProfile` through `PATCH /users/{id}` | hard-coded "Founder" and three sample focus areas, local-only save |
+| App sidebar workspace chip | the caller's access ("Workspace admin" or "Member") | "starter plan" for every workspace |
+| `/admin`, `/ops` (platform staff) | no data; a "not available yet" page | `mockTenants`, `mockTenantOps`, and `mockOrgContext` in the layout |
+
+Already real before this pass and untouched: meetings hub, detail, transcript, room and join, collaborations, Ask, org chart, people, the agent admin tab.
+
+Structural changes: `src/lib/mock/data.ts` holds no data any more, only type re-exports for three meeting-room files that the Phase 11 session is editing (`components/sidebar/AgentSidebar.tsx`, `components/meeting/MeetingRoom.tsx`, `components/room/ChatPanel.tsx`); shared view types moved to `src/lib/types.ts`; the public marketing vignettes' copy moved to `components/landing/sample-content.ts`. `OrgContextValue` lost its `org.plan` field, which was always `"starter"`; the `OrgProvider` default is a blank value instead of a sample person. Removed as unused: `components/app/dashboard/data.ts`, `components/billing/SeatMeter.tsx`, `components/settings/Toggle.tsx`.
+
+### 8.3 Deviations and decisions, with reasons
+
+- Decision visibility is participant-scoped (log and dashboard), not org-wide. It is the rule `core-api` already applies to candidates and that ADR-0033 D1 applies to RAG citations; an org-wide log would have been a new, wider visibility rule decided in a UI pass.
+- "Needs you" shows unconfirmed candidates, not cross-meeting conflicts. Conflict detection belongs to `ProactiveAgent` (Phase 11, being built in parallel); the candidates queue is real today and acting on it is the confirmation rule the product is built around.
+- No `confirmed_at` column exists on `decisions`, so the log dates entries by `created_at` and labels it "Recorded", not "Confirmed".
+- Billing shows the plan from `subscriptions` but no seat meter: `subscriptions.seats` defaults to 1 until the Stripe band sets it, so a seat meter would present a placeholder as a measurement.
+- Integrations, payments, notification preferences, data-rights requests and the platform consoles show a not-available state rather than a new endpoint, because their owning services (`integration-service`, the Stripe part of `billing-metering-service`, `notification-service`, `admin-ops-service`) are unbuilt bands, and `notification-service` is Phase 11's.
+- The plan is fetched where it is shown (`GET /usage`, admin) instead of being put back into the session context; a non-admin sees "only admins can see the plan".
+
+### 8.4 Open gaps
+
+- `components/sidebar/AgentSidebar.tsx` still labels a saved context card "Context from Sarah's agent". It is a Phase 11 file, so it was left alone; the Phase 11 session should use the real source name.
+- Once Phase 11 lands, point the three remaining `@/lib/mock/data` type imports at `@/lib/types` and delete the file.
+- No live browser check: the authenticated screens need a signed-in Clerk session and a gateway running this branch's backend. Reading the running local stack's environment to wire one was refused by the permission system and not pursued.
+
+### 8.5 Verification
+
+All observed in this session on 2026-11-10.
+
+- `mytheus-backend`, throwaway `postgres:15` and `redis:7-alpine` containers, `MYTHEUS_REQUIRE_DB=1`: `make proto`, `uv run ruff check .`, `uv run black --check .`, `uv run mypy .` and `uv run python -m scripts.emit_openapi --check` clean; `uv run pytest -q`: 799 passed, 1 skipped, 0 failed.
+- `oasdiff breaking --fail-on ERR` (`tufin/oasdiff:latest`) for `bff.yaml` and `core-api.yaml` against `origin/main`: "No breaking changes to report", exit 0.
+- `mytheus-ui`: `npx tsc --noEmit` and `npx next lint` clean; `npm run generate:api:check` matches the branch's specs; `npm test` 60 pass, 0 fail (new `tests/dashboard-format.test.ts`); `npx next build` succeeds (51 static pages) with the test Clerk publishable key, on Node 25 locally (CI builds the Docker image on Node 20).
+
