@@ -177,7 +177,7 @@ A read-only review of the four code PRs found RLS, owner-only routes, caller tok
 
 ## 3. Phase P12: External Integrations, follow-ups and the admin consoles (2026-11-10)
 
-**Status:** P12 built, tested per repo with each CI mirrored locally, security-reviewed and fixed after review; in PRs awaiting merge. Live connections need each provider's app registered (3.5 item 1).
+**Status:** P12 DONE WITH GAPS: built, tested per repo with each CI mirrored locally, security-reviewed, fixed after review, merged and deployed on 2026-11-10 (3.7). Live connections need each provider's app registered (3.5 item 1).
 
 Build decisions: [ADR-0037](../adr/0037-plan-12-integrations-follow-ups-and-consoles-build.md) (D1 to D8). Canon first: `_canon/02-data-model.md` (`integration_id_map`, `integration_cursors`, `integration_webhook_inbox`, `feature_flags`, `ops_audit_log`, `support_grants`, `meetings.calendar_event_id`).
 
@@ -238,3 +238,7 @@ A read-only review found ten issues, all addressed before merge: gateway dot-seg
 - `mytheus-backend` #16: pytest 853 passed, 1 skipped locally with #17's migration copied in (the 3 failures were #17's schema against pre-#17 code and a known timing-dependent dashboard test); all other gates clean. GitHub CI fails until #17 merges (its migration's parent is #17's).
 - `mytheus-ui` #35: `npm test` 105 passed; `tsc`, `next lint`, `next build` clean. GitHub CI green.
 - `mytheus-platform` #10: `bash -n`, `docker compose config -q`. GitHub CI green.
+
+### 3.7 Merge and deploy (2026-11-10)
+
+Merged in order with each main build and deploy watched to completion: `mytheus-backend` #17 (deploy `healthz OK` 09:47 UTC); #16 after merging main into it (an `.env.example` conflict kept both sides, the `admin-ops-service` OpenAPI spec re-emitted, the migration chain `d4b8e2f61a37` <- `7c3e9a1f5b20` <- `e2b6c4a8f913` confirmed; deploy `healthz OK` 09:57 UTC); `mytheus-ui` #35 with the generated types re-run against the merged backend; `mytheus-platform` #10; this docs PR. `scripts/enable-tiers.sh` is re-run on the server afterwards to write the P12 secrets and start `integration-worker` and `integration-consumer`.
