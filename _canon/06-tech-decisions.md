@@ -53,7 +53,7 @@ flowchart TB
         EMB["BGE-small embeddings (Ray Serve)"]
         RR["BGE-reranker cross-encoder (Ray Serve)"]
         LLM["LiteLLM tiered routing<br/>Haiku → Sonnet → Opus"]
-        LG["LangGraph agents (6)"]
+        LG["LangGraph agents (7)"]
     end
     subgraph Data["Data & state"]
         PG["PostgreSQL (Supabase) + RLS<br/>+ Apache AGE (nexus_knowledge)"]
@@ -206,8 +206,9 @@ flowchart LR
 
 | Concern | Decision | Status | Origin | Rationale |
 | --- | --- | --- | --- | --- |
-| Agent framework | LangGraph; `BaseAgent` lifecycle (spawn/process/terminate), shared `AgentState` dataclass, versioned prompt-template loader | locked | PDF | One lifecycle and state contract for all six agents; prompts are versioned artifacts. |
+| Agent framework | LangGraph; `BaseAgent` lifecycle (spawn/process/terminate), shared `AgentState` dataclass, versioned prompt-template loader | locked | PDF | One lifecycle and state contract for every agent in the roster; prompts are versioned artifacts. |
 | Agent roster | PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent | locked | PDF | The six agents, names verbatim; one personal agent per participant plus cross-meeting collaboration. |
+| Meeting-wide agent | MeetingAgent: the seventh agent, one per meeting (not per participant), in `agent-runtime-service`; runs on the same 30 s windows only when the meeting has at least one agenda item; fast tier (Haiku), budget-metered; emits at most one `meeting_update` record per meeting per window on `agent-results` (agenda updates plus an optional host nudge) and never writes Postgres | locked | SaaS-add | Tracks a meeting's agenda as a whole, which no per-participant agent does ([ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D7). |
 | Confidence thresholds | >0.7 surface; 0.4–0.7 silent log; <0.4 drop | locked | PDF | Uniform surfacing policy; no silent commits — decisions/actions require user confirmation. |
 | Multi-agent collaboration | ContextGapAgent over `agent-requests` / `agent-responses` with correlation IDs, deadline, fall-through; fallback chain peer-agents → related-meeting agents → RAG → silent | locked | PDF | The novel cross-meeting context fill (R6); pre-authorized descope to RAG-only if needed. |
 | Agent-to-agent authz | Deny-by-default, org/role scope checks, audited | locked | SaaS-add | An agent may only query peers within its own tenant and authorized scope; every call is logged. |
@@ -215,6 +216,8 @@ flowchart LR
 | Role taxonomy | Role→topics taxonomy, version-controlled (YAML/JSON) | locked | PDF | Deterministic role-relevance filtering, reviewable in PRs. |
 
 > [SaaS-scale adjustment] Agent-to-agent authorization (deny-by-default, org/role scope, audit) is wholly added. In the PDF, agents requested context freely; at SaaS scale a personal agent must be cryptographically and authorization-bound to its tenant so `agent-requests` can never cross org boundaries.
+
+> [SaaS-scale adjustment] The roster is seven agents: the six PDF agents, names verbatim and unchanged, plus `MeetingAgent`, which is net-new relative to the PDF. The PDF had no agenda and no meeting-wide agent. A person's agent persona (`users.agent_name` and siblings) is a display label over `PersonalListenerAgent` output, never an agent class, and never appears in events, logs or metrics as an agent identifier ([ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D2).
 
 ### 2.7 Real-time meeting & transcription
 
@@ -340,7 +343,7 @@ Other documents and ADRs **must** use these exact strings. This list is the nami
 - **Graph:** `nexus_knowledge` (Apache AGE)
 - **Node labels:** Person, Meeting, Decision, Action, Topic
 - **Edge labels:** ATTENDED, PRODUCED, ASSIGNED_TO, RELATES_TO, FOLLOWS_FROM
-- **Agents:** PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent
+- **Agents:** PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent, MeetingAgent (the seventh, SaaS-add, [ADR-0038](../adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md))
 - **Core tables:** `users`, `organizations`, `teams`, `team_members`, `departments`, `meetings`, `meeting_participants`, `transcript_chunks`, `meeting_speakers`, `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `chat_messages`, `document_chunks`
 - **Topics:** `transcript-chunks`, `document-chunks`, `agent-results`, `decisions`, `actions`, `notifications`, `agent-requests`, `agent-responses`, `agent-stream`
 - **Avro schemas:** TranscriptChunk, AgentResult, Decision, Action, Notification, AgentRequest, AgentResponse
