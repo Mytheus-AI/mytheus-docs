@@ -47,7 +47,7 @@ Read top-to-bottom for the narrative; the rest is reference you dip into.
 | 05 | [Data Architecture](05-data-architecture.md) | Store selection, partitioning, retention, backups/PITR, read replicas, and regional placement across Postgres/Qdrant/AGE/Redis/Object. |
 | 06 | [Multi-Tenancy & Tenant Isolation](06-multi-tenancy.md) | Pooled + RLS for the long tail, cell-based isolation for enterprise, and `org_id` injection at every layer. |
 | 07 | [Event-Driven Architecture](07-event-architecture.md) | Redpanda topics, Avro + Schema Registry, tenant partitioning, and the outbox/inbox + DLQ delivery contract. |
-| 08 | [AI Agent Architecture](08-ai-agent-architecture.md) | The six LangGraph agents, `BaseAgent` lifecycle, confidence thresholds, and the cost-controlled LLM pipeline. |
+| 08 | [AI Agent Architecture](08-ai-agent-architecture.md) | The seven LangGraph agents, `BaseAgent` lifecycle, confidence thresholds, and the cost-controlled LLM pipeline. |
 | 09 | [RAG Pipeline & Inference Serving](09-rag-and-inference-serving.md) | `RAGService` expand→retrieve→rerank→assemble→cite, hybrid retrieval, and dedicated GPU embedding/reranker serving. |
 | 10 | [Real-time & Transcription](10-realtime-and-transcription.md) | LiveKit transport, Deepgram WS proxy, `transcript_chunks`, live captions, and Socket.io fan-out. |
 | 11 | [Security Architecture](11-security-architecture.md) | Shift-left security, API gateway + WAF, RBAC, agent-to-agent authz, and secrets handling. |
@@ -127,6 +127,7 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0035](adr/0035-plan-10-context-gap-agent-and-a2a-build.md) | Plan 10 ContextGapAgent and A2A build decisions: a signed agent identity, `grantee_role` is the RBAC tier, the PDP on identity gRPC, one agent per participant with one gate per window, the peer/related-meeting/RAG/silent chain inside 1.5 s, `context_fill` on `agent-results`, `agent_collaborations` as the fill's home. |
 | [ADR-0036](adr/0036-plan-11-proactive-agent-and-delivery-build.md) | Plan 11 build decisions: `ProactiveAgent` consumes confirmed `decisions`/`actions`, conflict is a judged contradiction over the graph lineage plus `decisions__{org_id}` (graph optional), workload and dependency are deterministic, one alert per recipient, alerts are `notification_log` rows read and dismissed through `notification-service`, the per-user priority queue, skipped channels emit receipts, a deployment override for the Enterprise gate. |
 | [ADR-0037](adr/0037-plan-12-integrations-follow-ups-and-consoles-build.md) | Plan 12 build decisions: Jira is the one PM connector, Jira status enters through a `core-api` internal route (never `actions`), unconfigured providers cannot connect, OAuth callbacks and webhooks are public paths with their own proof, staff by allowlist with every ops call logged, best-effort escalation. |
+| [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) | Every person's agent gets a persona (name, doodle face, personality, instructions) and a working profile (`listen_for`, `ignore_topics`); meetings gain an explicit host, a follow-up link, an agenda (`meeting_agenda_items`) and carry-forward; a seventh agent, `MeetingAgent`, one per meeting, tracks the agenda via one `meeting_update` record per window. |
 
 ---
 

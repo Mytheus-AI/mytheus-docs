@@ -12,7 +12,7 @@ The single authority for how NEXUS authenticates and authorizes every actor, har
 - [Data Architecture](05-data-architecture.md) — store selection, PII redaction, right-to-be-forgotten, backups/PITR, regional placement.
 - [Event-Driven Architecture](07-event-architecture.md) — transactional outbox/inbox, idempotency keys, DLQs (the substrate the hardened user-sync rides on).
 - [Container Architecture](03-container-architecture.md) — C4 L2 container view that this document overlays trust boundaries onto.
-- [AI Agent Architecture](08-ai-agent-architecture.md) — the six LangGraph agents and `ContextGapAgent` collaboration (forward reference; the load-bearing agent-authz lock lives in [Tech Decisions §2.6](_canon/06-tech-decisions.md)).
+- [AI Agent Architecture](08-ai-agent-architecture.md) — the seven LangGraph agents and `ContextGapAgent` collaboration (forward reference; the load-bearing agent-authz lock lives in [Tech Decisions §2.6](_canon/06-tech-decisions.md)).
 
 > [SaaS-scale adjustment] The original PDF treated security as **Phase 13** — a single audit batched at the end of a 13-phase, 36-week plan. This document specifies the locked **shift-left** replacement ([Tech Decisions §2.11](_canon/06-tech-decisions.md)): a threat model in Phase 1, an authorization check reviewed in every PR, dependency + secret scanning from day one, and compliance designed in rather than bolted on. The PDF's auth primitives (Clerk, JWT verification, webhook user-sync) survive verbatim; everything around them — enterprise identity, RBAC tiers, edge WAF, secrets rotation, encryption posture, and the STRIDE model — is added for production multi-tenant scale.
 

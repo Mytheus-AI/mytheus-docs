@@ -38,7 +38,7 @@ A traceability matrix exists to make two failure modes impossible: **silent omis
 Two conventions are load-bearing:
 
 1. **Owning ≠ mentioning.** Most artifacts are referenced in a dozen documents. The owner is the one document that would be wrong to change without re-reviewing the artifact. A reference elsewhere is not ownership.
-2. **Names are frozen.** Service names, table names, topic names, node/edge labels, endpoint paths, and the six agent names are reproduced **verbatim** from the canon ([Tech Decisions §4](_canon/06-tech-decisions.md), [Service Catalog](_canon/01-service-catalog.md), [Data Model](_canon/02-data-model.md)). The intentionally mixed endpoint styles — `:id` colon path params alongside `{user_id}` brace params — are preserved, not normalized.
+2. **Names are frozen.** Service names, table names, topic names, node/edge labels, endpoint paths, and the agent names (the six PDF agents plus `MeetingAgent`) are reproduced **verbatim** from the canon ([Tech Decisions §4](_canon/06-tech-decisions.md), [Service Catalog](_canon/01-service-catalog.md), [Data Model](_canon/02-data-model.md)). The intentionally mixed endpoint styles — `:id` colon path params alongside `{user_id}` brace params — are preserved, not normalized.
 
 > [SaaS-scale adjustment] The PDF was a 13-phase, 36-week execution plan for a 4-person team with no document set, no service decomposition, and no risk-to-owner mapping. This matrix is wholly new: it is the audit artifact that proves the production multi-tenant architecture absorbs 100% of the original plan while folding in the SaaS-scale additions (multi-tenancy, billing/metering, compliance, hardened event delivery). It is also the conformance gate — a PR that introduces a new topic, agent, endpoint, or graph label must add a row here naming its owner.
 
@@ -143,9 +143,9 @@ flowchart LR
 
 ---
 
-## 4. Table 3 — The six agents → owning doc
+## 4. Table 3 — The seven agents → owning doc
 
-All six LangGraph agents share the `BaseAgent` lifecycle (spawn/process/terminate), the `AgentState` dataclass, and the versioned prompt-template loader; they are hosted in `agent-runtime-service` and authoritatively specified in the [AI Agent Architecture](08-ai-agent-architecture.md). Names are verbatim from [Tech Decisions §4](_canon/06-tech-decisions.md).
+All seven LangGraph agents (the six PDF agents plus the SaaS-added `MeetingAgent`) share the `BaseAgent` lifecycle (spawn/process/terminate), the `AgentState` dataclass, and the versioned prompt-template loader; they are hosted in `agent-runtime-service` and authoritatively specified in the [AI Agent Architecture](08-ai-agent-architecture.md). Names are verbatim from [Tech Decisions §4](_canon/06-tech-decisions.md).
 
 | Agent (verbatim) | PDF phase | Responsibility (canon) | Confidence policy | Owning doc |
 |---|---|---|---|---|
@@ -155,6 +155,7 @@ All six LangGraph agents share the `BaseAgent` lifecycle (spawn/process/terminat
 | **QuestionAgent** | P9 | Detects context gaps in live conversation, proposes role-specific questions, priority 1–3, Ask/Dismiss/Save-for-later | priority strip, persisted to `agent_suggestions` | [08-ai-agent-architecture.md](08-ai-agent-architecture.md) |
 | **ContextGapAgent** | P10 | Multi-agent collaboration over `agent-requests`/`agent-responses` (correlation IDs, deadline, fall-through); fallback chain peer-agents → related-meeting agents → RAG → silent | deadline before fall-through (R6) | [08-ai-agent-architecture.md](08-ai-agent-architecture.md) |
 | **ProactiveAgent** | P11 | Conflict detection (AGE graph query), workload (sum open actions per assignee, flag at 80/95% capacity), missing-stakeholder (org-graph traversal) | high-stakes routing to Opus | [08-ai-agent-architecture.md](08-ai-agent-architecture.md) |
+| **MeetingAgent** | SaaS-add ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)) | One per meeting, only with an agenda: tracks agenda items (`in_progress`/`covered`) and nudges the host (`off_agenda`/`over_time`/`unaddressed`) in one `meeting_update` record per window; never writes Postgres | `off_agenda` needs at least 0.75; at most one nudge per 5 minutes; host-set status wins | [08-ai-agent-architecture.md](08-ai-agent-architecture.md) |
 
 > [SaaS-scale adjustment] The agents are unchanged in name and behavior, but their *invocation model* moved: the PDF ran a personal agent on **every raw `transcript_chunks` message**; production runs them on **30s windowed batches behind a Haiku relevance pre-gate** with **tiered routing (Haiku→Sonnet→Opus)** and **per-tenant token budgets**. The cost mechanics are owned by [09-rag-and-inference-serving.md](09-rag-and-inference-serving.md) and [17-cost-and-finops.md](17-cost-and-finops.md); the agent *contracts* remain owned by [08-ai-agent-architecture.md](08-ai-agent-architecture.md). Agent-to-agent authorization (deny-by-default, org/role scope, audited) is added by [11-security-architecture.md](11-security-architecture.md).
 
@@ -196,8 +197,10 @@ The **API contract** itself — versioning, pagination, the typed error model, i
 |---|---|---|---|
 | `POST /clerk/webhook` | `identity-tenant-service` | [19-api-architecture.md](19-api-architecture.md) | [04-service-catalog.md](04-service-catalog.md), [11-security-architecture.md](11-security-architecture.md) |
 | `GET/POST /orgs`, `/rbac/*`, `/scim/v2/*` | `identity-tenant-service` | [19-api-architecture.md](19-api-architecture.md) | [04-service-catalog.md](04-service-catalog.md), [06-multi-tenancy.md](06-multi-tenancy.md) |
+| `GET /users/me`, `GET /users`, `PATCH /users/{user_id}` (working profile, agent persona; [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)) | `identity-tenant-service` | [19-api-architecture.md](19-api-architecture.md) | [08-ai-agent-architecture.md](08-ai-agent-architecture.md), [20-frontend-architecture.md](20-frontend-architecture.md) |
 | `GET /context/{user_id}` | `identity-tenant-service` | [19-api-architecture.md](19-api-architecture.md) | [04-service-catalog.md](04-service-catalog.md), [08-ai-agent-architecture.md](08-ai-agent-architecture.md) |
 | `/meetings`, `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/chat` | `core-api` | [19-api-architecture.md](19-api-architecture.md) | [04-service-catalog.md](04-service-catalog.md), [05-data-architecture.md](05-data-architecture.md) |
+| `PUT /meetings/{id}/agenda`, `PATCH /meetings/{id}/agenda/{item_id}`, `GET /meetings/{id}/carry-forward`, internal `GET /internal/meetings/{id}/agenda` ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)) | `core-api` | [19-api-architecture.md](19-api-architecture.md) | [08-ai-agent-architecture.md](08-ai-agent-architecture.md), [20-frontend-architecture.md](20-frontend-architecture.md) |
 | `POST /api/meetings/:id/token` | `meeting-service` | [19-api-architecture.md](19-api-architecture.md) | [04-service-catalog.md](04-service-catalog.md), [10-realtime-and-transcription.md](10-realtime-and-transcription.md) |
 | `POST /livekit/webhook` | `meeting-service` | [19-api-architecture.md](19-api-architecture.md) | [04-service-catalog.md](04-service-catalog.md), [10-realtime-and-transcription.md](10-realtime-and-transcription.md) |
 | Socket.io / WSS meeting rooms, live caption + agent output channels | `realtime-gateway` | [19-api-architecture.md](19-api-architecture.md) | [04-service-catalog.md](04-service-catalog.md), [10-realtime-and-transcription.md](10-realtime-and-transcription.md) |
@@ -324,6 +327,7 @@ Everything in this table is wholly added or hardened relative to the PDF. Each a
 | Structured observability: Prometheus/Grafana SLOs, consumer-lag + quota dashboards, tenant-tagged JSON logs | PDF listed tooling but no SLO/dashboard ownership | [15-observability-and-sre.md](15-observability-and-sre.md) |
 | Composite `{org_id}:{meeting_id}` partition key for `transcript-chunks` and `agent-stream` only (19 other topics stay `org_id`-only) | PDF had no tenant concept and no partition key strategy of any kind | [07-event-architecture.md](07-event-architecture.md) ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) |
 | Consent entity landed schema-first, defaulted off: `meeting_participants.consented_at`/`consent_version`, `tenant_settings.consent_required` | PDF had no consent concept and no data-subject/consent capture | [12-compliance-and-privacy.md](12-compliance-and-privacy.md) ([ADR-0018](adr/0018-consent-entity-behind-flag.md)) |
+| Agent personas and working profile on `users`, explicit host, follow-up link (`meetings.previous_meeting_id`), `meeting_agenda_items`, carry-forward, and the seventh agent `MeetingAgent` with the `meeting_update` kind ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)) | PDF agents had no person-facing identity; PDF meetings had no agenda, no explicit host and no follow-up link | [08-ai-agent-architecture.md](08-ai-agent-architecture.md) · [19-api-architecture.md](19-api-architecture.md) · [20-frontend-architecture.md](20-frontend-architecture.md) |
 
 ---
 
@@ -350,7 +354,7 @@ Every PDF artifact resolves to exactly one authoritative owner that exists on di
 
 - **13 / 13 phases** mapped (Table 1) — primary owner + supporting docs, with [22-roadmap-and-phasing.md](22-roadmap-and-phasing.md) as co-primary owner of the phase→architecture mapping; no phase orphaned.
 - **9 / 9 PDF topics** (+ 12 SaaS topics) → [07-event-architecture.md](07-event-architecture.md) (Table 2).
-- **6 / 6 agents** → [08-ai-agent-architecture.md](08-ai-agent-architecture.md) (Table 3).
+- **6 / 6 PDF agents** (+ 1 SaaS agent, `MeetingAgent`) → [08-ai-agent-architecture.md](08-ai-agent-architecture.md) (Table 3).
 - **5 node + 5 edge labels** → [05-data-architecture.md](05-data-architecture.md) (Table 4).
 - **All canon endpoints** → [19-api-architecture.md](19-api-architecture.md) as API-contract owner, [04-service-catalog.md](04-service-catalog.md) as service/ownership reference, domain doc for in-depth behavior (Table 5).
 - **23 / 23 risks** → [23-risk-register.md](23-risk-register.md) consolidated authoritative owner; 8 PDF risks R1–R8 (§7.1) + 15 SaaS-scale risks R9–R23 (§7.2), each with a mitigation/design owner. No documented risk is silently omitted.

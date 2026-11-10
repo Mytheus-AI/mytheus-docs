@@ -4,7 +4,7 @@ The end-to-end sequence by which a participant's `ContextGapAgent` detects a con
 
 ## Related documents
 
-- [AI Agent Architecture](../08-ai-agent-architecture.md) — the six agents, the `BaseAgent`/`AgentState` contract, the collaboration protocol prose this diagram realizes.
+- [AI Agent Architecture](../08-ai-agent-architecture.md) — the seven agents, the `BaseAgent`/`AgentState` contract, the collaboration protocol prose this diagram realizes.
 - [Event Architecture](../07-event-architecture.md) — `agent-requests` / `agent-responses` Avro envelopes, tenant partitioning, outbox/inbox/DLQ delivery.
 - [Security Architecture](../11-security-architecture.md) — agent-to-agent authorization, RBAC grants, `audit_logs`.
 - [RAG Pipeline & Inference Serving](../09-rag-and-inference-serving.md) — the `rag-service` pipeline the fallback chain terminates in.

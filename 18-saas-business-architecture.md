@@ -308,7 +308,7 @@ Enforcement is **deny-by-default and fail-closed** ([Security §1](11-security-a
 
 | `agent_budgets.state` | Trigger | Agent-tier behavior |
 |---|---|---|
-| `ok` | `tokens_consumed < 80% × token_quota` | All six agents run normally |
+| `ok` | `tokens_consumed < 80% × token_quota` | All seven agents run normally |
 | `ok` + `alert_80_sent` | crosses 80% | `billing-events {quota approaching}` → notify owner/admin; no behavior change |
 | `throttled` | crosses 95%, or dunning day-14 | Route **all** windows to Haiku triage only; suspend Sonnet/Opus extraction and `ProactiveAgent`; `ContextGapAgent` falls through to RAG-only (the PDF-authorized R6 descope) |
 | `blocked` | `tokens_consumed ≥ hard_cap` (overage disabled, e.g. Free) | Agent spawns denied; transcription + captions continue (durable facts never dropped); UI surfaces an upgrade prompt |

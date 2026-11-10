@@ -17,7 +17,7 @@ flowchart TB
   end
 
   subgraph Z2["Zone 2: NEXUS platform trust boundary"]
-    NEXUS["Mytheus (NEXUS)<br/>Multi-tenant meeting intelligence.<br/>Transcribes live, six agents propose,<br/>users confirm, core-api commits."]
+    NEXUS["Mytheus (NEXUS)<br/>Multi-tenant meeting intelligence.<br/>Transcribes live, seven agents propose,<br/>users confirm, core-api commits."]
   end
 
   subgraph Z3["Zone 3: Per-tenant data boundary (org_id)"]

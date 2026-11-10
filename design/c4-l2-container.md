@@ -27,7 +27,7 @@ flowchart TB
   end
 
   subgraph AI["AI / inference (scales on GPU util and token throughput)"]
-    AGENT["agent-runtime-service<br/>the six LangGraph agents"]
+    AGENT["agent-runtime-service<br/>the seven LangGraph agents"]
     RAG["rag-service"]
     EMB["embedding-service"]
     RERANK["reranker-service"]

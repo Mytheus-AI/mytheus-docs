@@ -27,6 +27,7 @@ This exists because progress was previously scattered across four repos in three
 | `07-plan-7-9-agents-and-monetization.md` | Plan 7-9 (`plan/plan-7-9-agents-and-monetization.md`): the ADR-0029 and ADR-0030 decisions, then P7 one work item at a time. Items 1 to 4 are built and verified on the local stack with a faked model; the real-model check, a browser check, mobile and deployment remain. Then P8 (both parts), the P9 RAG track (section 11, with its ablation) and the P9 `QuestionAgent` track (section 12). |
 | `06-frontend-and-ui.md` | Which frontend repo is the product and which is a draft, what `mytheus-ui` already has, the API contract it expects, the open frontend items, the 2026-11-07 custom auth flows, missing screens and dev-server speed fix, and the 2026-11-10 pass that put every authenticated screen on real data. |
 | `08-plan-10-13-collab-integrations-ga.md` | Plan 10-13 (`plan/plan-10-13-collab-integrations-ga.md`): P10 `ContextGapAgent`, the A2A PEP/PDP and `agent_authz_scopes`, `agent_collaborations` and its log UI, the real `MeetingLifecycleWorkflow` activities, the security review and its fixes (section 1). |
+| `09-agent-personas-profiles-and-agendas.md` | ADR-0038, not a plan band: working profiles and onboarding, agent personas, meeting host, follow-up link and agendas, and the seventh agent `MeetingAgent`, across all six code repos. |
 
 ## How to write a band file
 

@@ -26,7 +26,7 @@ Two things distinguish NEXUS from every "AI meeting summarizer":
 1. **Personalized per-participant intelligence** — *not one shared note-taker*. Each participant's agent filters the live transcript through that user's role/skills via `get_user_context(user_id)`, scores relevance, and writes only what matters to *that person* into their `worklogs`.
 2. **Agent-to-agent collaboration across meetings** — when a conversation references context a participant lacks, the `ContextGapAgent` queries *other users' agents* over the `agent-requests` / `agent-responses` topics (correlation IDs, deadlines, fall-through), with a fallback chain of peer-agents → related-meeting agents → RAG → silent.
 
-The six agents — **PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent** — share one LangGraph `BaseAgent` lifecycle (spawn/process/terminate), one `AgentState` dataclass, and a versioned prompt-template loader. Confidence thresholds are uniform and frozen: **>0.7 surface, 0.4–0.7 silent log, <0.4 drop**, with no silent commits — decisions and actions always require user confirmation.
+The seven agents — **PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent, MeetingAgent** — share one LangGraph `BaseAgent` lifecycle (spawn/process/terminate), one `AgentState` dataclass, and a versioned prompt-template loader. Confidence thresholds are uniform and frozen: **>0.7 surface, 0.4–0.7 silent log, <0.4 drop**, with no silent commits — decisions and actions always require user confirmation.
 
 ### 1.2 The SaaS target
 
@@ -132,7 +132,7 @@ The authoritative decision register is [Tech & Architecture Decisions](_canon/06
 | LLM cost pipeline | Relevance pre-gating → windowed batching → tiered routing (Haiku/Sonnet/Opus) → prompt caching → per-tenant token budgets & hard quotas | PDF→SaaS |
 | Meeting SDK | LiveKit (self-hostable SFU) behind a transport adapter | PDF→SaaS |
 | Transcription | Deepgram (WebSocket, diarization, interim + final; only finals persisted) | PDF |
-| Agent framework | LangGraph `BaseAgent` + `AgentState` + versioned prompt loader; the six agents | PDF |
+| Agent framework | LangGraph `BaseAgent` + `AgentState` + versioned prompt loader; the six PDF agents (the seventh, `MeetingAgent`, is a SaaS addition, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)) | PDF |
 | Identity | Clerk (JWT verification, webhook user sync) + enterprise SSO/SAML/SCIM | PDF→SaaS |
 | Security process | Shift-left: threat model in Phase 1, authz in every PR, dependency + secret scanning from day one | PDF→SaaS |
 | Compliance | GDPR/CCPA, subprocessor DPAs + SCCs, data residency, PII redaction, RTBF, audit logging, SOC2 readiness | SaaS-add |
@@ -191,7 +191,7 @@ sequenceDiagram
 The original tech stack and domain model survive intact. These names are frozen and used verbatim everywhere in this set — see [Tech & Architecture Decisions](_canon/06-tech-decisions.md) §4 for the full naming authority:
 
 - **Graph:** `nexus_knowledge` (Apache AGE). **Node labels:** Person, Meeting, Decision, Action, Topic. **Edge labels:** `ATTENDED`, `PRODUCED`, `ASSIGNED_TO`, `RELATES_TO`, `FOLLOWS_FROM`.
-- **Agents:** PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent.
+- **Agents:** PersonalListenerAgent, DecisionAgent, ActionAgent, QuestionAgent, ContextGapAgent, ProactiveAgent, MeetingAgent (the seventh, SaaS-add, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)).
 - **Core tables:** `users`, `organizations`, `teams`, `team_members`, `departments`, `meetings`, `meeting_participants`, `transcript_chunks`, `meeting_speakers`, `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `chat_messages`, `document_chunks`.
 - **Topics:** `transcript-chunks`, `document-chunks`, `agent-results`, `decisions`, `actions`, `notifications`, `agent-requests`, `agent-responses`, `agent-stream`.
 - **Utilities:** `get_user_context(user_id)`. **Workflows:** `MeetingLifecycleWorkflow`, `ActionFollowUpWorkflow`.

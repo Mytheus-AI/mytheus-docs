@@ -12,7 +12,7 @@ How NEXUS instruments, alerts on, and operates a multi-tenant SaaS at the frozen
 - [Data Architecture](05-data-architecture.md) — store-level health (Postgres PITR, Qdrant quantization, AGE), retention, regional placement.
 - [Multi-Tenancy & Tenant Isolation](06-multi-tenancy.md) — `org_id` injection, the chokepoint every metric/log/span inherits its tenant tag from.
 - [Event-Driven Architecture](07-event-architecture.md) — consumer-lag monitoring, DLQ rate, backpressure (§10) jointly owned with this document.
-- [AI Agent Architecture](08-ai-agent-architecture.md) — the six agents, windowed batching, tiered routing, the agent latency budget instrumented here.
+- [AI Agent Architecture](08-ai-agent-architecture.md) — the seven agents, windowed batching, tiered routing, the agent latency budget instrumented here.
 - [RAG Pipeline & Inference Serving](09-rag-and-inference-serving.md) — per-stage RAG metrics and the embedding/reranker GPU tier SLOs.
 
 ---

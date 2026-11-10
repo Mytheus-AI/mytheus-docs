@@ -32,7 +32,7 @@ The set has a strict authority order. Higher levels bind lower levels.
 - No document or code repo may introduce an **alternative name** for anything defined in `_canon/`.
 - If a name, number, or decision must change, it changes in **`_canon/` first**, then propagates outward to the reader docs, ADRs, Glossary, and finally the implementation repos.
 - Reader docs and ADRs **cite canon, never the reverse.** Canon does not reference reader docs as authority.
-- The frozen identifiers are kept verbatim and are never renamed to "mytheus": the AGE graph `nexus_knowledge`, the table `transcript_chunks`, the Redis prefix `nexus:{org_id}:`, the Redpanda topic names, the six agent class names, and the AGE edge labels (`ATTENDED` / `PRODUCED` / `ASSIGNED_TO` / `RELATES_TO` / `FOLLOWS_FROM`). These constitute the frozen naming contract; renaming them would break the canon and every dependent repo.
+- The frozen identifiers are kept verbatim and are never renamed to "mytheus": the AGE graph `nexus_knowledge`, the table `transcript_chunks`, the Redis prefix `nexus:{org_id}:`, the Redpanda topic names, the agent class names (the six PDF agents plus `MeetingAgent`, the seventh, per ADR-0038), and the AGE edge labels (`ATTENDED` / `PRODUCED` / `ASSIGNED_TO` / `RELATES_TO` / `FOLLOWS_FROM`). These constitute the frozen naming contract; renaming them would break the canon and every dependent repo.
 - **The `[SaaS-scale adjustment]` callout convention:** anything these documents add or change relative to the original execution plan (the PDF) to make the product a production multi-tenant SaaS is flagged inline with a blockquote in this exact form:
   > [SaaS-scale adjustment] &lt;what changed relative to the PDF, and why&gt;
 

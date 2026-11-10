@@ -11,7 +11,7 @@ The frozen contract for every NEXUS Redpanda topic, its Avro envelope and Schema
 - [Multi-Tenancy & Isolation](06-multi-tenancy.md) — tenant partition keys, RLS, cell isolation.
 - [Data Architecture](05-data-architecture.md) — store selection, partitioning, retention enforcement.
 - [Inference & LLM Pipeline](09-rag-and-inference-serving.md) — embedding consumer, windowed batching, tiered routing.
-- [Agent Runtime & LangGraph](08-ai-agent-architecture.md) — the six agents, confirmation rule, A2A collaboration.
+- [Agent Runtime & LangGraph](08-ai-agent-architecture.md) — the seven agents, confirmation rule, A2A collaboration.
 - Glossary — canonical terms and any recorded `old → new` rename. (No glossary file exists in this set; renames are recorded in the canon docs and superseding ADRs.)
 
 ---
@@ -42,7 +42,7 @@ All topics are listed once here; the [Service Catalog](_canon/01-service-catalog
 |---|---|---|---|---|
 | `transcript-chunks` | `TranscriptChunk` | Finalized diarized utterances from the live meeting | `transcription-service` | `embedding-service`, `agent-runtime-service`, `search-service` |
 | `document-chunks` | `DocumentChunk` † (chunk envelope) | Typed, split document elements from ingestion | `ingestion-service` | `embedding-service`, `agent-runtime-service` |
-| `agent-results` | `AgentResult` | Agent output (notes, scores, suggestions) | `agent-runtime-service` | `core-api`, `realtime-gateway`, `notification-service` |
+| `agent-results` | `AgentResult` | Agent output (notes, scores, suggestions, and `MeetingAgent` `meeting_update` agenda records, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md)) | `agent-runtime-service` | `core-api`, `realtime-gateway`, `notification-service` |
 | `decisions` | `Decision` | Confirmed decisions only | `core-api` (outbox, on confirm) | `knowledge-graph-service`, `notification-service` |
 | `actions` | `Action` | Confirmed action items only | `core-api` (outbox, on confirm) | `knowledge-graph-service`, `workflow-service`, `integration-service` |
 | `notifications` | `Notification` | Cross-channel notification intents | multiple | `notification-service`, `realtime-gateway` |
@@ -402,7 +402,7 @@ The key must be **stable across producer retries of the same logical fact** and 
 |---|---|---|
 | `transcript-chunks` | `chunk:{chunk_id}` | One row per finalized utterance |
 | `document-chunks` | `docchunk:{document_id}:{element_id}` | One chunk per element |
-| `agent-results` | `agentresult:{meeting_id}:{window_id}:{user_id}:{agent}` | One result per agent per window per participant |
+| `agent-results` | `agentresult:{meeting_id}:{window_id}:{user_id}:{agent}` | One result per agent per window per participant; `MeetingAgent` batches a window's agenda updates and optional nudge into one `meeting_update` record keyed by the host, so it never emits two records per window ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D7) |
 | `decisions` | `decision:{decision_id}:confirmed` | **One confirmation per decision** (see §9) |
 | `actions` | `action:{action_id}:confirmed` | One confirmation per action |
 | `usage-events` | `usage:{org_id}:{event_type}:{occurred_at}:{source_id}` | Matches `usage_events.idempotency_key` in the [Data Model §2.2](_canon/02-data-model.md) |
