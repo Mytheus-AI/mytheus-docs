@@ -42,6 +42,12 @@ Plan 10-13 phase P11 builds `ProactiveAgent`, the `realtime-gateway` per-user pr
 
 **D8. The plan gate has a deployment override.** `ProactiveAgent` runs when the tenant's plan enables `proactive_agent` or when `PROACTIVE_AGENT_ALL_PLANS=1` is set on `agent-runtime`. The budget gate applies either way: `throttled` or `blocked` suspends the agent. The production MVP sets the override because Mytheus has no paying tenants yet; it is removed when plan enforcement matters.
 
+**D9. An alert never shows a recipient more than they could already see.** Conflict candidates come from an unscoped graph lineage and from one user's retrieval, so a prior decision's text, and the people and decisions behind a missing-stakeholder alert, are included for a recipient only if that recipient attended the meeting they came from (checked through the `core-api` participants route). A recipient who did not gets no such detail. Model rationale and body text are stripped of URLs before they are emitted, and the UI renders an alert link only for known in-app paths.
+
+**D10. Email is opt-in.** With no stored preference only in-app delivers; a user turns email on in settings.
+
+**D11. An alert is delivered in its own meeting.** The gateway drains a queued alert only into the room of the meeting it concerns, so the meeting-scoped rehydrate after a reconnect always finds it; the per-user queue keeps at most about 100 items and nothing older than 24 hours.
+
 ## Consequences
 
 - Conflict detection works without the graph, at lower recall, and improves when the `kg` profile runs.
