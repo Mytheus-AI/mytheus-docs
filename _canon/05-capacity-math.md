@@ -53,7 +53,7 @@ These are the only free parameters. Everything else is derived.
 | A14 | LangChain split | **chunk_size 600 / overlap 60** | Carried over verbatim from PDF; effective advance 540 chars |
 | A15 | Document attach rate | **30% of meetings** | Avg attached doc ~15,000 chars (post unstructured.io) |
 | A16 | Embedding model / dim | **BGE-small-en / 384-dim** | float32 raw = 1,536 bytes/vector |
-| A17 | Windowed batching window | **30 s** | Agents run per window, NOT per raw chunk (see §8) |
+| A17 | Windowed batching window | **30 s** | Agents run per window, NOT per raw chunk (see §8). Since [ADR-0040](../adr/0040-polish-program.md) a window closes on a cue, a turn end or a 10 to 15 s cap (at least 4 s apart) and PersonalListener notes run on at least 30 s of meeting time, so 30 s remains the sizing figure for the per-participant cost; recomputing the model for the shorter candidate windows from production telemetry is an open follow-up of that ADR |
 | A18 | Qdrant hot retention | **13 months** | Governs the live vector stock |
 
 > [SaaS-scale adjustment] A4, A8, A10, A11, A15, A17, and A18 are introduced for SaaS-scale sizing and are not present in the PDF. A17 (30s windowed batching) and A18 (13-month hot retention) are the two most load-bearing additions: A17 is the lever that defeats the R4 LLM cost bomb; A18 converts the unbounded vector flow into a bounded, billable stock.
