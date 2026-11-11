@@ -124,7 +124,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `chat_messages` | entity | In-meeting chat (non-AV via Socket.io). Range-partition by `created_at`. Owned by `core-api`. | — |
 | `document_chunks` | entity | unstructured.io typed elements: document_id, element_id, element_type, text, position. Mirrors the Qdrant `document_chunks` payload. Owned by `rag-service`. | — |
 
-### 4.2 SaaS-scale entities (36, wholly added vs PDF)
+### 4.2 SaaS-scale entities (38, wholly added vs PDF)
 
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
@@ -163,6 +163,8 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `delegated_answer_log` | entity | Every answer, or refusal, that person's agent gave in the meeting. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 | `promise_drift_nudges` | entity | Nudges about a promise whose Jira issue is still open after its due date: owner first, host two days later. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 | `weekly_digests` | entity | One "what changed for you" digest per person per week. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `meeting_recordings` | entity | One row per LiveKit egress segment of a meeting's recording: `status`, `object_key` (never a URL), timing on the meeting clock. Owned by `meeting-service` ([ADR-0040](adr/0040-polish-program.md) C5). | added (SaaS) |
+| `meeting_clips` | entity | A named span of a meeting (at most 10 minutes) on its clock, made by a participant; shareable as a `meeting_clip` link. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md) C5). | added (SaaS) |
 | `digest_preferences` | entity | The weekly digest toggle and its email opt-in, per person. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 
 ---
@@ -323,6 +325,7 @@ Cross-cutting concepts referenced across the set. PDF-original concepts are dash
 | Promise drift | concept | A promise whose Jira issue is still open after its due date; the owner is nudged first, the host two days later ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 | Weekly digest | concept | One "what changed for you" summary per person per week (`weekly_digests`) ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 | Should this be a meeting? (precheck) | concept | `POST /bff/meetings/precheck`: already-decided matches and status updates that would cover the agenda, shown while scheduling ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Recording playback / clips | concept | Transcript-synced playback of a meeting's recording through 600-second presigned URLs, and clips that can be shared with their own cut video ([ADR-0040](adr/0040-polish-program.md) C5). | added (SaaS) |
 | Live translation | concept | Caption finals translated on the triage tier into the languages a meeting's viewers chose, on `agent-stream` as `caption_translation` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 | Not connected | concept | A feature built end to end that stays visibly off until its credential exists (an OAuth app, an email or push provider), the ADR-0037 D3 pattern ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 | `AgentState` | concept | Shared dataclass carried through an agent graph (meeting_id, user_id, chunk window, context, retrieved_facts + SaaS tenant/authz/budget fields). | — |
