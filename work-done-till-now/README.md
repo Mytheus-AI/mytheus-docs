@@ -31,6 +31,7 @@ This exists because progress was previously scattered across four repos in three
 | `10-company-brain-and-meeting-companions.md` | ADR-0039, not a plan band: the company brain (profile, vocabulary, owners, goals, ground rules, readiness, welcome) and ten features on it (drafted agendas, briefs, send your agent, topic watch, already decided, promises, status requests, health, catch-up, vocabulary in captions), across all seven repos. |
 | `11-polish-program.md` | ADR-0040, not a plan band: the polish program in three waves plus recording playback, across all seven code repos, with every PR, the gates, the live eval before and after the fixes, the held-notes bug, the deviations, what ships not connected, and the owner steps still blocked. |
 | `12-beyond-the-meeting-checkpoint.md` | Checkpoint, not a finished band: the beyond-the-meeting program paused on 2026-11-11. Waves A and B live in production (11 features), wave C partly built on local branches, wave D not started, plus the owner steps and how to resume. |
+| `13-people-structure.md` | ADR-0041, not a plan band: departments and teams that say what they do, can be edited, moved and deleted, people moved between teams, and the structure in every participant's company block, across backend, intelligence and UI. |
 
 ## How to write a band file
 
