@@ -243,7 +243,7 @@ flowchart LR
 
 ### 4.2 Token minting and join
 
-The client mints a LiveKit room token via the Next.js route handler `app/api/livekit-token/route.ts`, which proxies `POST /api/meetings/:id/token` (owned by `meeting-service`, [Service Catalog §6](_canon/01-service-catalog.md)). The route handler never holds LiveKit credentials — those are server-side in `meeting-service`. On reconnect, the client re-mints ([Real-time §4](10-realtime-and-transcription.md)).
+The client mints a LiveKit room token via the Next.js route handler `app/api/livekit-token/route.ts`, which proxies `POST /api/meetings/:id/token` (owned by `meeting-service`, [Service Catalog §6](_canon/01-service-catalog.md)). The route handler never holds LiveKit credentials — those are server-side in `meeting-service`. On reconnect, the client re-mints ([Real-time §4](10-realtime-and-transcription.md)). Since [ADR-0040](adr/0040-polish-program.md) A7 the pre-join reads `GET /api/meetings/{id}/session`, asks for consent only when it has not been given for this meeting, and sends `consent: {version}` with the token request; the socket fetches a fresh token on every connect, and the room shows one honest connection state.
 
 
 ### 4.3 Agent personas, the live agenda and nudges
@@ -266,6 +266,20 @@ Additions from [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part
 - **Topic watch alerts** reach watchers who are not in the meeting, so they appear in the notification surfaces (`GET /api/v1/notifications`), not in a room sidebar.
 
 > [SaaS-scale adjustment] Proxied attendance, the `proxy_update` nudge and the already-decided card are net-new relative to the PDF, whose room assumed every participant attends live.
+
+### 4.5 The calm room
+
+Additions from [ADR-0040](adr/0040-polish-program.md), again without changing the frozen sidebar order (§5.1):
+
+- **Shared cards.** A confirm, edit or dismiss is broadcast to the room after `realtime-gateway` re-reads the stored row ("Confirmed by Maya"); a card being edited is locked for others; a dismiss is personal unless the host dismisses for everyone.
+- **One card per moment.** Every card shows the quote, the speaker and the meeting time, opens the live transcript there, and carries a "why you're seeing this" line; a note, a promise, a decision and an action about the same words are one card.
+- **A Now slot.** "Needs you" is pinned on top, notes fold under the current agenda item, suggestions wait while you are speaking, saved questions show as a count; Notes mode keeps "Needs you" and alerts visible.
+- **The stage bar.** Everyone sees the current item, elapsed versus planned (`extended_minutes` included), the next item and its owner; the host extends and starts the next item inline, and the change is broadcast.
+- **Ask your agent.** A private ask box answers with citations (`POST /api/v1/ask`) that open the moment or the document.
+- **Stand-ins, wrap-up and catch-up.** A proxied person's update sits on their tile and their questions are raised when their item starts, with "Ask Sarah's agent"; "End for everyone" opens a 60-second wrap-up for the host; a late joiner gets a summary since the start.
+- **Off the record and live translation.** The host pauses the record for a stretch and anyone can ask them to; `/meetings/[id]/record` shows the person's consent receipt and every gap. A viewer picks a caption language and receives translated finals.
+
+> [SaaS-scale adjustment] The calm room, off the record and live translation are net-new relative to the PDF, whose room had one stack of per-agent sections and no shared state between participants.
 
 ---
 
@@ -464,27 +478,34 @@ Every screen, its route, render mode, primary data source, and the agents/entiti
 
 | Screen | Route | Mode | Primary source(s) | Surfaces |
 | --- | --- | --- | --- | --- |
-| Dashboard | `/dashboard` | RSC | `bff` aggregate | upcoming meetings, open `action_items`, recent `worklogs`; open promises, pending status requests answered inline, and the new joiner brief offer for 14 days after joining ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) |
+| Home | `/dashboard` | RSC | `bff` aggregate | upcoming meetings, open `action_items`, recent `worklogs`; open promises, pending status requests answered inline, and the new joiner brief offer for 14 days after joining ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) |
 | Meeting list | `/meetings` | RSC | `core-api` `/meetings` | `meetings` (status, schedule) |
 | New meeting | meeting scheduling form | client + Server Action | `core-api` `POST /api/v1/meetings`, `GET /api/v1/meeting-templates`, `POST /api/v1/meetings/agenda-draft` | A meeting type picker (fills length, agenda and confidential), a confidential toggle, "Draft the agenda" for a follow-up, a goal on each agenda item (`goal_id`) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)); "Follow-up to" a recent meeting (`previous_meeting_id`), host (`host_user_id`), and an agenda editor (title, owner, minutes; add, remove, reorder; at most 20) |
 | Meeting detail | `/meetings/[id]` | RSC | `core-api` `GET /api/v1/meetings/{id}`, `/carry-forward`, `PUT /api/v1/meetings/{id}/attendance`; `bff` `/bff/meetings/{id}/brief`, `/bff/meetings/{id}/health` | host, follow-up link, the agenda with statuses and agent notes, and what was carried forward from the previous meeting with each open action's latest status; "Send my agent instead" (an update and up to 5 questions); your brief (`#brief`); the health card after it ends ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) |
 | Meeting room | `/meetings/[id]/room` | client | `meeting-service` token, `realtime-gateway`, LiveKit | video, captions, chat, **agent sidebar** (headed by your agent's face and name), shared live agenda panel, host-only nudges (§4.3), agent tiles for proxied participants, the `proxy_update` nudge and the already-decided card (§4.4) |
 | Transcript view | `/meetings/[id]/transcript` | RSC | `search-service` FTS over `transcript_chunks` | colored speaker labels (`meeting_speakers`), click-to-jump, in-page search |
 | Decision history & lineage | `/decisions` | RSC | `core-api` + `knowledge-graph-service` templates | `decisions`, `FOLLOWS_FROM` lineage |
-| My Tasks | `/tasks` | RSC | `core-api` `/actions` | `action_items` assigned to me (`ASSIGNED_TO`) |
-| Org chart | `/org` | RSC | `core-api` `/teams`, `/departments` | `departments`/`teams` hierarchy |
+| My work: Tasks | `/work/tasks` (`/tasks` redirects) | RSC | `core-api` `GET /api/v1/actions/mine`, `POST /api/v1/actions`, `POST /api/v1/actions/{id}/reopen` | `action_items` assigned to me, including tasks with no meeting; marking one done can be undone ([ADR-0040](adr/0040-polish-program.md)) |
+| Inbox | `/inbox` | RSC | `notification-service`, `core-api` | notifications, the updates I owe and my agents' detections to review, in one list; `/notifications` redirects here ([ADR-0040](adr/0040-polish-program.md)) |
+| Weekly digest | `/digest` | RSC + Server Action | `core-api` `/api/v1/digests` | what changed for me this week, filtered by listen-for topics; digest preferences ([ADR-0040](adr/0040-polish-program.md)) |
+| Public recap | `/s/[token]` | RSC, no sign-in | `core-api` `GET /api/v1/public/shares/{token}` | a meeting recap from the shared minutes, or a decision record ([ADR-0040](adr/0040-polish-program.md)) |
+| Meeting record | `/meetings/[id]/record` | RSC | `meeting-service` consent receipt, `core-api` off-record segments | my consent receipt and every stretch that was off the record ([ADR-0040](adr/0040-polish-program.md)) |
+| Capture | `/capture`, `/capture/connect` | client | the app's capture-session route, `transcription-service` `/capture/audio` | the Chrome extension's install and connect flow for Meet, Teams and Zoom ([ADR-0040](adr/0040-polish-program.md)) |
+| People and org chart | `/people`, `/people/[id]` (`/org` redirects) | RSC | `core-api` `/teams`, `/departments` | `departments`/`teams` hierarchy |
 | Search | `/search` | client | `rag-service` `POST /api/rag/query` + `search-service` | RAG passages + **citations** |
 | Onboarding: About you, Meet your agent | after the workspace is chosen, before the dashboard | client + Server Action | `identity-tenant-service` `PATCH /api/v1/users/{user_id}` | "About you" asks `role`, "what you work on" (`bio`, at least 20 chars), focus areas (`skills`), listen for, ignore; "Meet your agent" sets name, doodle face, personality preset and optional instructions, skippable with defaults. A signed-in person with no `role` sees a dashboard prompt that opens "About you" ([ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md) D11) |
 | Profile / settings | `/settings/profile` | RSC + Server Action | `identity-tenant-service` | `users` role/skills/bio/avatar, plus "what you work on" (`bio`), listen for (`listen_for`) and ignore (`ignore_topics`) |
 | Your agent (settings) | settings, "Your agent" page | RSC + Server Action | `identity-tenant-service` `PATCH /api/v1/users/{user_id}` (self only) | `agent_name`, `agent_avatar_seed`, `agent_personality`, `agent_instructions`; topic watch (`GET/POST/DELETE /api/v1/users/me/topic-watches`, up to 20 topics, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) A6) |
-| Company brain | Workspace admin: About, Vocabulary, Who owns what, Goals, Meeting types, Ground rules | RSC + Server Action (owner/admin) | `identity-tenant-service` `/api/v1/org/*`, `core-api` `/api/v1/meeting-templates` | `org_profiles`, `org_glossary_terms` (with paste-a-list import), `topic_owners`, `org_goals`, `meeting_templates`, `tenant_settings.never_record_topics` (the UI says never-record is a model instruction, not a guarantee), and a readiness meter from `GET /api/v1/org/readiness`; a first-run setup for the admin who creates a workspace ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part E) |
+| Company brain | `/workspace/brain/*`: About, Vocabulary, Who owns what, Goals, Meeting types, Ground rules | RSC + Server Action (owner/admin) | `identity-tenant-service` `/api/v1/org/*`, `core-api` `/api/v1/meeting-templates` | `org_profiles`, `org_glossary_terms` (with paste-a-list import), `topic_owners`, `org_goals`, `meeting_templates`, `tenant_settings.never_record_topics` (the UI says never-record is a model instruction, not a guarantee), and a readiness meter from `GET /api/v1/org/readiness`; a first-run setup for the admin who creates a workspace ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) Part E) |
 | New joiner brief | `/welcome` | RSC | `identity-tenant-service` `GET /api/v1/org/welcome` | company profile, active goals, who owns what, the first 40 vocabulary terms, your team mates; offered on the dashboard for 14 days after joining ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) |
-| Promises | `/promises` (and on the dashboard) | RSC + Server Action | `core-api` `GET/PATCH /api/v1/commitments` | the caller's own `commitments` (open, done, dismissed) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B6) |
-| Status requests | `/status-requests` (and answered inline on the dashboard) | client + Server Action | `core-api` `GET /api/v1/status-requests`, `POST .../answer` | the caller's pending `action_status_requests` ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B7) |
+| My work: Promises | `/work/promises` (and on Home; `/promises` redirects) | RSC + Server Action | `core-api` `GET/PATCH /api/v1/commitments` | the caller's own `commitments` (open, done, dismissed) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B6) |
+| My work: Updates I owe | `/work/updates` (and answered inline on Home; `/status-requests` redirects) | client + Server Action | `core-api` `GET /api/v1/status-requests`, `POST .../answer` | the caller's pending `action_status_requests` ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B7) |
 | Meeting catch-up | `/meetings/[id]/catch-up` | RSC | `bff` `GET /bff/meetings/{id}/catch-up` | agenda statuses and agent notes, decisions, what was assigned to me, my notes, my questions ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B8) |
-| Integrations | `/settings/integrations` | RSC + Server Action | `integration-service` `/oauth/{provider}` | `integration_connections` (Calendar/Slack/Jira\|Linear, R8) |
-| Billing | `/settings/billing` | RSC | `billing-metering-service` `/billing`, `/usage` | plan/tier, seats, `usage_events`, `invoices` |
-| Tenant admin console | `/tenant` | RSC (RBAC) | `admin-ops-service` `/admin/tenant/*` | members, plan, integrations, data export/erasure |
+| Integrations | `/settings/integrations` | RSC + Server Action | `integration-service` `/oauth/{provider}` | `integration_connections` (Calendar/Slack/Jira\|Linear, R8; HubSpot, Notion and Confluence cards show "not connected" until their OAuth apps exist, [ADR-0040](adr/0040-polish-program.md)) |
+| API and MCP | `/settings/api` | RSC + Server Action | `identity-tenant-service` `/api/v1/api-tokens` | personal access tokens (shown once) and the MCP server address ([ADR-0040](adr/0040-polish-program.md)) |
+| What your agent remembers | `/settings/memory` | RSC + Server Action | `core-api` `GET/PATCH/DELETE /api/v1/me/memory` | `person_memory` topics and questions, mute and pin, learning on or off, forget ([ADR-0040](adr/0040-polish-program.md)) |
+| Billing | `/workspace/billing` (admins) | RSC | `billing-metering-service` `/billing`, `/usage` | plan/tier, seats, `usage_events`, `invoices` |
+| Workspace console | `/workspace` (members, company brain, usage and billing, data; `/tenant` redirects) | RSC (RBAC) | `admin-ops-service` `/admin/tenant/*` | members, plan, integrations, data export, and erasure of one person or meeting with a per-store checklist (`/admin/tenant/erasures`, [ADR-0040](adr/0040-polish-program.md)) |
 | Internal ops console | `/ops` | RSC (RBAC, flagged) | `admin-ops-service` `/admin/ops/*` | cross-tenant support, flags, lag/cost dashboards |
 
 ### 7.1 RAG context panel and citations

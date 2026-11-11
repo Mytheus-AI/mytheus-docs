@@ -129,7 +129,7 @@ Three rules, all enforced in the `agent-runtime-service` authz middleware agains
 2. **Role scope.** The requester's role — from `get_user_context(user_id)` — must hold an authorization grant for the target's scope. Grants are stored as agent-authz scopes in `identity-tenant-service` and are **deny-by-default**: no grant means deny.
 3. **Audit.** Every grant and every denial is appended to `audit_logs` (`actor_type = 'agent'`, append-only, tamper-evident) and reflected in `agent_collaborations.success`.
 
-Because every topic is tenant-partitioned - `agent-requests`/`agent-responses` by `org_id` alone, like 19 of the 21 topics ([Event Architecture](../07-event-architecture.md)) - a request is physically constrained to its own tenant's partitions; the authz check is defense-in-depth on top of that partitioning.
+Because every topic is tenant-partitioned - `agent-requests`/`agent-responses` by `org_id` alone, like 20 of the 22 topics ([Event Architecture](../07-event-architecture.md)) - a request is physically constrained to its own tenant's partitions; the authz check is defense-in-depth on top of that partitioning.
 
 ---
 
