@@ -29,6 +29,7 @@ This exists because progress was previously scattered across four repos in three
 | `08-plan-10-13-collab-integrations-ga.md` | Plan 10-13 (`plan/plan-10-13-collab-integrations-ga.md`): P10 `ContextGapAgent`, the A2A PEP/PDP and `agent_authz_scopes`, `agent_collaborations` and its log UI, the real `MeetingLifecycleWorkflow` activities, the security review and its fixes (section 1). |
 | `09-agent-personas-profiles-and-agendas.md` | ADR-0038, not a plan band: working profiles and onboarding, agent personas, meeting host, follow-up link and agendas, and the seventh agent `MeetingAgent`, across all six code repos. |
 | `10-company-brain-and-meeting-companions.md` | ADR-0039, not a plan band: the company brain (profile, vocabulary, owners, goals, ground rules, readiness, welcome) and ten features on it (drafted agendas, briefs, send your agent, topic watch, already decided, promises, status requests, health, catch-up, vocabulary in captions), across all seven repos. |
+| `11-polish-program.md` | ADR-0040, not a plan band: the polish program in three waves plus recording playback, across all seven code repos, with every PR, the gates, the live eval before and after the fixes, the held-notes bug, the deviations, what ships not connected, and the owner steps still blocked. |
 
 ## How to write a band file
 
