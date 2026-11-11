@@ -224,7 +224,7 @@ All topics are tenant-partitioned; the partition **key** and **count** are autho
 | `usage-events` | 48 | `org_id` | 7 days | Metering; aggregated nightly |
 | control-plane topics | 6–24 | `org_id` | varies | Per-tenant lifecycle ordering |
 
-Partition counts are sized from `E12` ~17,900 events/sec peak with headroom for replay and consumer parallelism (one partition feeds at most one consumer in a group). `agent-stream` dominates event **count** but carries the lowest value (1-hour retention); `transcript-chunks` dominates durable **volume**. See [Event Architecture §4.2](07-event-architecture.md) for all 21 topics and their DLQs.
+Partition counts are sized from `E12` ~17,900 events/sec peak with headroom for replay and consumer parallelism (one partition feeds at most one consumer in a group). `agent-stream` dominates event **count** but carries the lowest value (1-hour retention); `transcript-chunks` dominates durable **volume**. See [Event Architecture §4.2](07-event-architecture.md) for all 22 topics and their DLQs.
 
 > [SaaS-scale adjustment] The PDF ran on the Redpanda Serverless 30-day trial with no partition counts and no per-topic retention. Production runs a BYOC/dedicated multi-AZ Redpanda cluster with the partition counts above, sized from the frozen `E12` peak — see [Capacity §6](_canon/05-capacity-math.md).
 

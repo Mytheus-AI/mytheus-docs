@@ -124,7 +124,7 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `chat_messages` | entity | In-meeting chat (non-AV via Socket.io). Range-partition by `created_at`. Owned by `core-api`. | — |
 | `document_chunks` | entity | unstructured.io typed elements: document_id, element_id, element_type, text, position. Mirrors the Qdrant `document_chunks` payload. Owned by `rag-service`. | — |
 
-### 4.2 SaaS-scale entities (20, wholly added vs PDF)
+### 4.2 SaaS-scale entities (38, wholly added vs PDF)
 
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
@@ -148,12 +148,30 @@ PDF-original tables (names verbatim) appear first, then the SaaS-scale additions
 | `meeting_templates` | entity | Meeting types: `name`, `description`, `default_duration_minutes`, `agenda jsonb`, `confidential`; at most 50 per org. Owned by `core-api` (the data model labels it `meeting-service`; see §10) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B1). | added (SaaS) |
 | `commitments` | entity | Promises: what a participant said they would do (`content`, `due_hint`, `status` `open`/`done`/`dismissed`), from `PersonalListenerAgent` `payload_json.commitments`, private to the person. Owned by `core-api` (data-model label `agent-service`) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B6). | added (SaaS) |
 | `action_status_requests` | entity | Status requests: one per open confirmed action of the previous meeting, asked of the assignee 60 minutes before the follow-up (`state` `pending`/`answered`/`expired`, `status_text`). Owned by `core-api` (data-model label `agent-service`) ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B7). | added (SaaS) |
+| `api_tokens` | entity | Personal access tokens for the public API and the MCP server: `name`, `token_hash` (SHA-256), `token_hint`, `scope` (`read`/`read_write`), mandatory `expires_at`. Owned by `identity-tenant-service` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `share_links` | entity | Signed, expiring, revocable public links to a meeting recap or a decision record, with a view count. Owned by `core-api` (data-model label `meeting-service`) ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `meeting_followups` | entity | The host's follow-up email for a meeting: guests who are not users, the recap link, the last dispatch, and `awaiting_minutes_since`. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `email_deliveries` | entity | One row per email `notification-service` sent (`meeting_followup`, `weekly_digest`), unique per idempotency key. Owned by `notification-service` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `push_devices` | entity | Expo push tokens of signed-in phones. Owned by `notification-service` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `agent_feedback` | entity | A person's confirm, dismiss, edit, ask or save of something an agent proposed; written with the `agent-feedback` outbox row. Owned by `core-api` (data-model label `agent-service`) ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `agent_calibration` | entity | Decayed confirm and dismiss counts per agent, per workspace and per person, from which the surface threshold is computed (bounded 0.6 to 0.85). Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `person_memory` | entity | What a person cares about across meetings: weighted topics, recurring questions, muted topics and `learning_enabled`; private to the person. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `meeting_minutes` | entity | Minutes after a meeting: one private row per participant and one shared row (`user_id` NULL). Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `meeting_off_record_segments` | entity | The stretches of a meeting that were off the record. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `decision_reversals` | entity | An open action whose decision was superseded, and its owner's choice (`kept`/`rescoped`/`closed`). Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `delegated_answer_statements` | entity | Answers a person who sent their agent pre-approved for one meeting (at most 10, each up to 300 chars). Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `delegated_answer_log` | entity | Every answer, or refusal, that person's agent gave in the meeting. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `promise_drift_nudges` | entity | Nudges about a promise whose Jira issue is still open after its due date: owner first, host two days later. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `weekly_digests` | entity | One "what changed for you" digest per person per week. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| `meeting_recordings` | entity | One row per LiveKit egress segment of a meeting's recording: `status`, `object_key` (never a URL), timing on the meeting clock. Owned by `meeting-service` ([ADR-0040](adr/0040-polish-program.md) C5). | added (SaaS) |
+| `meeting_clips` | entity | A named span of a meeting (at most 10 minutes) on its clock, made by a participant; shareable as a `meeting_clip` link. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md) C5). | added (SaaS) |
+| `digest_preferences` | entity | The weekly digest toggle and its email opt-in, per person. Owned by `core-api` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 
 ---
 
 ## 5. Redpanda topics
 
-Kebab-case, Avro + Schema Registry (`{topic}-value`, BACKWARD). 9 PDF-original + 12 SaaS-added = 21. Partitioned by `org_id` alone on 19 of 21 topics; `transcript-chunks` and `agent-stream` use the composite `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). Source: [Event Architecture §2](07-event-architecture.md), [`_canon/01` §5](_canon/01-service-catalog.md), [`_canon/03`](_canon/03-event-taxonomy.md).
+Kebab-case, Avro + Schema Registry (`{topic}-value`, BACKWARD). 9 PDF-original + 13 SaaS-added = 22. Partitioned by `org_id` alone on 20 of 22 topics; `transcript-chunks` and `agent-stream` use the composite `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). Source: [Event Architecture §2](07-event-architecture.md), [`_canon/01` §5](_canon/01-service-catalog.md), [`_canon/03`](_canon/03-event-taxonomy.md).
 
 ### 5.1 PDF-original topics (9, names verbatim)
 
@@ -167,9 +185,9 @@ Kebab-case, Avro + Schema Registry (`{topic}-value`, BACKWARD). 9 PDF-original +
 | `notifications` | topic | Cross-channel notification intents. Multiple producers. | — |
 | `agent-requests` | topic | A2A context-fill requests (ContextGapAgent). | — |
 | `agent-responses` | topic | A2A context-fill responses. | — |
-| `agent-stream` | topic | Streamed LLM token deltas to the UI. Partition key `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). | — |
+| `agent-stream` | topic | Streamed LLM token deltas to the UI, and live caption translations (`kind` `caption_translation`, [ADR-0040](adr/0040-polish-program.md)). Partition key `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)). | — |
 
-### 5.2 SaaS-scale topics (12, added vs PDF)
+### 5.2 SaaS-scale topics (13, added vs PDF)
 
 | Canonical name | Type | Definition | Renamed-from-PDF? |
 |---|---|---|---|
@@ -184,7 +202,8 @@ Kebab-case, Avro + Schema Registry (`{topic}-value`, BACKWARD). 9 PDF-original +
 | `presence-events` | topic | Socket.io presence join/leave. Producer `realtime-gateway`. | added (SaaS) |
 | `notification-delivery-events` | topic | Delivery receipts. Producer `notification-service`. | added (SaaS) |
 | `user-sync-events` | topic | Clerk webhook user-sync inbox. Producer `identity-tenant-service`. | added (SaaS) |
-| `admin-events` | topic | Flag changed / tenant suspended / erasure requested. Producer `admin-ops-service`. Log-compacted. | added (SaaS) |
+| `admin-events` | topic | Flag changed / tenant suspended / erasure requested / erasure completed (one per store, from `transcription-service`, `embedding-service`, `search-service`, `knowledge-graph-service`). Producer `admin-ops-service`. Retained 365 days with delete cleanup since [ADR-0040](adr/0040-polish-program.md) (was log-compacted). | added (SaaS) |
+| `agent-feedback` | topic | A person's confirm / dismiss / edit / ask / save of something an agent proposed. Producer `core-api` (outbox); consumers `agent-runtime-service`, `core-api`. 12 partitions, 7 days ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 
 ---
 
@@ -204,6 +223,7 @@ Only **seven** schema names are frozen canon ([Tech Decisions §2.4/§4](_canon/
 | `EventEnvelopeHeader` | Avro-schema | Shared header on every event value (event_id, idempotency_key, org_id, schema_version, producer, occurred_at, correlation_id, causation_id). | added (SaaS) — not frozen canon (introduced in 07) |
 | `DocumentChunk` | Avro-schema | Value of `document-chunks` (the PDF's "chunk envelope"). | added — not frozen canon (introduced in 07) |
 | `AgentStreamDelta` | Avro-schema | Value of `agent-stream` (the PDF's "token-delta envelope"). | added — not frozen canon (introduced in 07) |
+| `AgentFeedback` | Avro-schema | Value of `agent-feedback` ({A}). | added — not frozen canon |
 | `TenantEvent` · `MeetingEvent` · `MeetingRoomEvent` · `IntegrationEvent` · `UsageEvent` · `BillingEvent` · `GraphEvent` · `EmbeddingEvent` · `PresenceEvent` · `NotificationDeliveryEvent` · `UserSyncEvent` · `AdminEvent` | Avro-schema | Values of the 12 SaaS-scale topics in §5.2, in order. | added (SaaS) — not frozen canon (introduced in 07) |
 | `DlqEnvelope` | Avro-schema | Wraps a failed message with replay metadata (original topic/partition/offset, failure_class, raw_value_b64) for every `<topic>.dlq`. | added (SaaS) — not frozen canon (introduced in 07) |
 
@@ -286,9 +306,31 @@ Cross-cutting concepts referenced across the set. PDF-original concepts are dash
 | Health card | concept | `GET /bff/meetings/{id}/health` after a meeting ends: duration, people-hours, agenda coverage, decisions, actions, talk balance (null when no speaker timing is stored), an async suggestion and a trend over up to 6 earlier meetings in the follow-up chain. Not a service health check ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B8). | added (SaaS) |
 | Catch-up | concept | `GET /bff/meetings/{id}/catch-up` and `/meetings/{id}/catch-up`: what an absent or proxied participant missed (agenda, decisions, what was assigned to them, their notes, their questions); reminded 5 minutes after the end ([ADR-0039](adr/0039-company-brain-and-meeting-companions.md) B8, B9). | added (SaaS) |
 | `already_decided` / `topic_watch` | concept | The two `ProactiveAgent` alert types added by [ADR-0039](adr/0039-company-brain-and-meeting-companions.md) C7, carried in its existing `kind = alert` `payload_json` (no Avro change). | added (SaaS) |
+| Moment (`moment_id`) | concept | The words a card is about: `uuid5` over the meeting and the quoted transcript final's `chunk_id`, shared by every agent's item about the same words, so one sentence is one card ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| In-meeting ledger | concept | `nexus:{org_id}:meeting-ledger:{meeting_id}`: the open candidates and the room's confirmations, edits and dismissals the agents read, so they update a card instead of repeating it ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Shared candidate ledger | concept | A confirm, edit or dismiss broadcast to the whole room by `realtime-gateway` after it re-reads the stored row, with a 90-second edit lock; a dismiss is personal unless the host's ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| One threshold source | concept | `GET /internal/agent-policy`: the thresholds and calibration that both the agent runtime and `core-api` reloads use, so live and reload agree ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Calibration | concept | A per-workspace and per-person surface threshold from recent confirms and dismisses, bounded 0.6 to 0.85 ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Person memory / learning | concept | What a person's agent remembers across meetings (`person_memory`), shown under "What your agent remembers"; learning can be turned off or forgotten ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Budget unit | concept | One budget unit is the list price of one uncached Sonnet input token; usage is weighed by tier price, cache writes 1.25x, reads 0.1x. The names `agent_token`, `tokens_consumed` are unchanged ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Minutes | concept | After a meeting, one private set per participant and one shared set (`meeting_minutes`), produced by `MeetingAgent` as `agent-results` kind `minutes` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Recap / share link | concept | A public, signed, expiring page of the shared minutes or a decision record at `/s/{token}` (`share_links`) ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Personal access token (PAT) | concept | `mytheus_pat_<org hex>_<secret>`: a bearer for the public API and the MCP server (`api_tokens`) ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| MCP server | concept | `POST /mcp` on `bff`: tools that ask and act through the public API as the caller ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Capture | concept | Audio from a Meet, Teams or Zoom tab (the Chrome extension) or a phone in a room, streamed to `transcription-service` `/capture/audio`; the meeting's `source` says where it came from ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Off the record | concept | A stretch of a meeting with no transcript, no agents and no index, enforced by `transcription-service`, `agent-runtime-service`, `embedding-service` and `search-service` (`meeting_off_record_segments`) ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Consent receipt | concept | `GET /api/meetings/{id}/consent-receipt`: what a person agreed to for a meeting, clause by clause ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Delegated answers | concept | An absent person's agent answering in the room only from statements they pre-approved, logged for them ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Decision reversal | concept | When a decision is superseded, the owner of each linked open action is asked to keep, re-scope or close it ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Promise drift | concept | A promise whose Jira issue is still open after its due date; the owner is nudged first, the host two days later ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Weekly digest | concept | One "what changed for you" summary per person per week (`weekly_digests`) ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Should this be a meeting? (precheck) | concept | `POST /bff/meetings/precheck`: already-decided matches and status updates that would cover the agenda, shown while scheduling ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Recording playback / clips | concept | Transcript-synced playback of a meeting's recording through 600-second presigned URLs, and clips that can be shared with their own cut video ([ADR-0040](adr/0040-polish-program.md) C5). | added (SaaS) |
+| Live translation | concept | Caption finals translated on the triage tier into the languages a meeting's viewers chose, on `agent-stream` as `caption_translation` ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
+| Not connected | concept | A feature built end to end that stays visibly off until its credential exists (an OAuth app, an email or push provider), the ADR-0037 D3 pattern ([ADR-0040](adr/0040-polish-program.md)). | added (SaaS) |
 | `AgentState` | concept | Shared dataclass carried through an agent graph (meeting_id, user_id, chunk window, context, retrieved_facts + SaaS tenant/authz/budget fields). | — |
 | Confidence thresholds | concept | Surfacing policy: `> 0.7` surface · `0.4–0.7` silent-log to `worklogs` · `< 0.4` drop. | — |
-| Windowed batching | concept | Agents run on 30-second speaker-merged windows (`A17`), not per raw `transcript_chunks` row — the core R4 cost fix. | added (SaaS) |
+| Windowed batching | concept | Agents run on speaker-merged windows, not per raw `transcript_chunks` row. Since [ADR-0040](adr/0040-polish-program.md) a window closes on a cue phrase, a turn end or a 10 to 15 s cap (at least 4 s apart); notes keep at least 30 s and suggestions 20 s; `A17` = 30 s remains the sizing figure. | added (SaaS) |
 | Relevance pre-gating | concept | A cheap Haiku triage call per window scoring relevance; ~35% pass, the rest dropped before any extraction call. | added (SaaS) |
 | Tiered routing (LiteLLM) | concept | Cheapest-capable model routing: Haiku triage/score → Sonnet extract → Opus high-stakes, via the LiteLLM router. Provider is Anthropic only ([ADR-0027](adr/0027-anthropic-only-llm-provider.md)); fast-response tier is Haiku 5.5 (`claude-haiku-5-5`); extraction tier is Sonnet 5.5 (`claude-sonnet-5-5`, [ADR-0029](adr/0029-plan-7-budget-scope-tier-mapping-and-metering-ownership.md)); high-stakes tier mapping to be set. | — (LiteLLM is PDF; per-tier mix is hardened) |
 | LLM response cache | concept | Exact-match completion cache at `nexus:{org_id}:llmcache:{prompt_ref}:{input_hash}` (1h): a hit calls no model and meters nothing. The P7 form of the pipeline's semantic cache ([ADR-0030](adr/0030-plan-7-llm-response-cache-and-personal-listener-gating.md)). | added (SaaS) |

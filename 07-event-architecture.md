@@ -23,7 +23,7 @@ NEXUS is **event-driven microservices with an explicit modular-monolith → serv
 Five invariants bind every topic and every arrow in the system:
 
 1. **One bus, Kafka API.** Redpanda (Kafka API compatible), Avro values, Redpanda Schema Registry. One subject per topic, named `{topic}-value`, **BACKWARD** compatibility (carried verbatim from the PDF).
-2. **Partition key = tenant (with two named exceptions).** 19 of 21 topics are partitioned by `org_id` alone: per-tenant ordering, isolation, replay, and throughput control, so a noisy tenant cannot starve or reorder another's stream. `transcript-chunks` and `agent-stream` are partitioned by the composite `{org_id}:{meeting_id}` (§4.1, [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) so a hot enterprise tenant spreads across partitions while ordering within a meeting is preserved. `org_id` is present and non-nullable in the envelope header on every topic regardless.
+2. **Partition key = tenant (with two named exceptions).** 20 of 22 topics are partitioned by `org_id` alone: per-tenant ordering, isolation, replay, and throughput control, so a noisy tenant cannot starve or reorder another's stream. `transcript-chunks` and `agent-stream` are partitioned by the composite `{org_id}:{meeting_id}` (§4.1, [ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) so a hot enterprise tenant spreads across partitions while ordering within a meeting is preserved. `org_id` is present and non-nullable in the envelope header on every topic regardless.
 3. **At-least-once, idempotent in effect.** Producers write through a **transactional outbox** in the same DB transaction as their state change. Consumers dedupe through an **inbox** table plus a Redis dedupe cache keyed by `idempotency_key`. Net effect is exactly-once application of every event.
 4. **Poison messages quarantine, never block.** Every topic has a paired **DLQ** with a bounded retry policy; a single bad message never wedges a partition.
 5. **No silent commits.** `decisions` and `actions` are emitted **only on user confirmation**, matching the PDF agent rule. The graph and downstream read models mirror confirmed truth only.
@@ -42,19 +42,19 @@ All topics are listed once here; the [Service Catalog](_canon/01-service-catalog
 |---|---|---|---|---|
 | `transcript-chunks` | `TranscriptChunk` | Finalized diarized utterances from the live meeting | `transcription-service` | `embedding-service`, `agent-runtime-service`, `search-service` |
 | `document-chunks` | `DocumentChunk` † (chunk envelope) | Typed, split document elements from ingestion | `ingestion-service` | `embedding-service`, `agent-runtime-service` |
-| `agent-results` | `AgentResult` | Agent output (notes, scores, suggestions, and `MeetingAgent` `meeting_update` agenda records, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md); `PersonalListenerAgent` `payload_json.commitments`, the `ProactiveAgent` alert types `already_decided` and `topic_watch`, and the `proxy_update` nudge, all inside `payload_json` with no schema change, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md)) | `agent-runtime-service` | `core-api`, `realtime-gateway`, `notification-service` |
+| `agent-results` | `AgentResult` | Agent output (notes, scores, suggestions, and `MeetingAgent` `meeting_update` agenda records, [ADR-0038](adr/0038-agent-personas-profiles-agendas-and-meeting-agent.md); `PersonalListenerAgent` `payload_json.commitments`, the `ProactiveAgent` alert types `already_decided` and `topic_watch`, and the `proxy_update` nudge, all inside `payload_json` with no schema change, [ADR-0039](adr/0039-company-brain-and-meeting-companions.md); the optional moment fields and the `minutes` kind, [ADR-0040](adr/0040-polish-program.md)) | `agent-runtime-service` | `core-api`, `realtime-gateway`, `notification-service` |
 | `decisions` | `Decision` | Confirmed decisions only | `core-api` (outbox, on confirm) | `knowledge-graph-service`, `notification-service` |
 | `actions` | `Action` | Confirmed action items only | `core-api` (outbox, on confirm) | `knowledge-graph-service`, `workflow-service`, `integration-service` |
 | `notifications` | `Notification` | Cross-channel notification intents | multiple | `notification-service`, `realtime-gateway` |
 | `agent-requests` | `AgentRequest` | A2A context-fill requests (ContextGapAgent) | `agent-runtime-service` | `agent-runtime-service` (peer agents) |
 | `agent-responses` | `AgentResponse` | A2A context-fill responses | `agent-runtime-service` | `agent-runtime-service` (requester) |
-| `agent-stream` | `AgentStreamDelta` † (token-delta envelope) | Streamed LLM token deltas to the UI | `agent-runtime-service` (LiteLLM stream bridge) | `realtime-gateway` → WebSocket |
+| `agent-stream` | `AgentStreamDelta` † (token-delta envelope) | Streamed LLM token deltas to the UI, and live caption translations (`kind` `caption_translation`, [ADR-0040](adr/0040-polish-program.md)) | `agent-runtime-service` (LiteLLM stream bridge) | `realtime-gateway` → WebSocket |
 
 > **† Net-new schema names.** Canon ([Tech Decisions §4](_canon/06-tech-decisions.md) and its topic table) freezes only **seven** Avro schema names — `TranscriptChunk`, `AgentResult`, `Decision`, `Action`, `Notification`, `AgentRequest`, `AgentResponse` — and deliberately leaves `document-chunks` as a "(chunk envelope)" and `agent-stream` as a "(token-delta envelope)". `DocumentChunk` and `AgentStreamDelta` are **net-new concrete names introduced by this document** for those two envelopes; they are not frozen canon. The `TenantEvent`/`MeetingEvent`/… names for the SaaS-scale topics in §2.2 are likewise net-new, but acceptable since canon names no schemas for those topics. Any of these names that becomes load-bearing must be ratified back into [Tech Decisions §4](_canon/06-tech-decisions.md).
 
 ### 2.2 SaaS-scale topics (added vs PDF)
 
-> [SaaS-scale adjustment] The following twelve topics are **added** for SaaS scale and are not in the PDF. They carry control-plane, metering, lifecycle, and delivery-receipt signals that the original single-team phasing handled in-process. They are listed in the [Service Catalog §5](_canon/01-service-catalog.md); this table is the canonical schema/retention authority for them.
+> [SaaS-scale adjustment] The following thirteen topics are **added** for SaaS scale and are not in the PDF. They carry control-plane, metering, lifecycle, and delivery-receipt signals that the original single-team phasing handled in-process. They are listed in the [Service Catalog §5](_canon/01-service-catalog.md); this table is the canonical schema/retention authority for them.
 
 | Topic | Avro value schema | Purpose | Primary producer | Primary consumers |
 |---|---|---|---|---|
@@ -69,7 +69,8 @@ All topics are listed once here; the [Service Catalog](_canon/01-service-catalog
 | `presence-events` | `PresenceEvent` | Socket.io presence join/leave | `realtime-gateway` | `core-api` (analytics) |
 | `notification-delivery-events` | `NotificationDeliveryEvent` | Delivery receipts | `notification-service` | `admin-ops-service`, `core-api` |
 | `user-sync-events` | `UserSyncEvent` | Clerk webhook user-sync inbox | `identity-tenant-service` (Clerk inbox) | `identity-tenant-service` |
-| `admin-events` | `AdminEvent` | Flag changed / tenant suspended / erasure requested | `admin-ops-service` | `workflow-service`, `admin-ops-service` (audit-log write) |
+| `admin-events` | `AdminEvent` | Flag changed / tenant suspended / erasure requested / erasure completed (one per store) | `admin-ops-service`; `transcription-service`, `embedding-service`, `search-service`, `knowledge-graph-service` (`erasure_completed`) | `workflow-service`, `admin-ops-service` (audit-log write, erasure status), the four stores' erasure groups |
+| `agent-feedback` | `AgentFeedback` | A person's confirm / dismiss / edit / ask / save of something an agent proposed ([ADR-0040](adr/0040-polish-program.md)) | `core-api` (outbox) | `agent-runtime-service`, `core-api` (person memory) |
 
 > **Producer/consumer notes (reconciled to the [Service Catalog](_canon/01-service-catalog.md), the single source of truth for service names):**
 > - **`usage-events` producers are `agent-runtime-service` and `rag-service` only** (Service Catalog §5; transcription-service's `Produces` column lists only `transcript-chunks`). The `transcription_second` metered unit in the [Data Model §2.2](_canon/02-data-model.md) is **not** emitted by `transcription-service` to this topic; transcription minutes are metered by `billing-metering-service`, which aggregates meeting minutes (`meetings.scheduled_start`/`scheduled_end` and `transcript_chunks` durations) into `usage_aggregates`. Should direct emission from `transcription-service` ever be required, it must first be added to the Service Catalog §3/§5 producer map.
@@ -81,7 +82,7 @@ All topics are listed once here; the [Service Catalog](_canon/01-service-catalog
 
 ### 3.1 Standard envelope
 
-Every event value, regardless of topic, opens with the same **header block** and then carries a topic-specific `payload`. The header is what idempotency, tenancy, tracing, and schema evolution all key off. This is locked across all 21 topics.
+Every event value, regardless of topic, opens with the same **header block** and then carries a topic-specific `payload`. The header is what idempotency, tenancy, tracing, and schema evolution all key off. This is locked across all 22 topics.
 
 > [SaaS-scale adjustment] The PDF defined per-topic Avro schemas (`TranscriptChunk`, `AgentResult`, …) but no shared header. The envelope header below — `org_id`, `idempotency_key`, `correlation_id`, `causation_id`, `schema_version`, `producer`, `occurred_at` — is added so tenant partitioning, dedupe, distributed tracing, and outbox correlation work uniformly on every topic.
 
@@ -166,7 +167,7 @@ The Confluent wire format prepends a magic byte + 4-byte schema id to every valu
 
 ### 4.1 Partition key = tenant, with two composite exceptions
 
-The partition key for 19 of the 21 topics is the `org_id` UUID (the same value carried in the envelope header). Consequences, all intentional:
+The partition key for 20 of the 22 topics is the `org_id` UUID (the same value carried in the envelope header). Consequences, all intentional:
 
 - **Per-tenant ordering.** All events for one tenant on one topic land on one partition and are consumed in offset order.
 - **Per-tenant replay.** Reprocessing one tenant means replaying its partition slice, not the whole topic.
@@ -214,11 +215,12 @@ Partition counts are sized from peak throughput (Capacity [§6, E12 ~17,900 even
 | `presence-events` | 12 | 1 hour | delete | Ephemeral presence |
 | `notification-delivery-events` | 6 | 30 days | delete | Delivery audit |
 | `user-sync-events` | 6 | 7 days | delete | Clerk inbox; reconciliation backstops drops |
-| `admin-events` | 6 | retain (compacted) | compact | Latest flag/state per key; also mirrored to `audit_logs` |
+| `admin-events` | 6 | 365 days | delete | Erasure requests must outlive the slowest store; compaction would keep one record per key and drop a request a store has not applied yet ([ADR-0040](adr/0040-polish-program.md)); also mirrored to `audit_logs` |
+| `agent-feedback` | 12 | 7 days | delete | Durable in `agent_feedback`; the bus only wakes caches and the person-memory consumer ([ADR-0040](adr/0040-polish-program.md)) |
 
-A paired **`<topic>.dlq`** exists for every topic above (**21 in total** — one per topic), each with **14-day** retention so a human has time to triage and replay. DLQs are single-partition unless volume demands more.
+A paired **`<topic>.dlq`** exists for every topic above (**22 in total** — one per topic), each with **14-day** retention so a human has time to triage and replay. DLQs are single-partition unless volume demands more.
 
-> [SaaS-scale adjustment] The PDF specified topics but no partition counts, no per-topic retention, and no DLQ topics — it ran on the Redpanda Serverless 30-day trial. Production runs a **BYOC/dedicated multi-AZ Redpanda cluster** ([Capacity §6](_canon/05-capacity-math.md)); the counts and retentions above are sized from the frozen capacity numbers. `tenant-events` and `admin-events` use **log compaction** (keyed latest-state) rather than time retention.
+> [SaaS-scale adjustment] The PDF specified topics but no partition counts, no per-topic retention, and no DLQ topics — it ran on the Redpanda Serverless 30-day trial. Production runs a **BYOC/dedicated multi-AZ Redpanda cluster** ([Capacity §6](_canon/05-capacity-math.md)); the counts and retentions above are sized from the frozen capacity numbers. `tenant-events` uses **log compaction** (keyed latest-state) rather than time retention; `admin-events` did too until [ADR-0040](adr/0040-polish-program.md) moved it to 365-day delete retention.
 
 ---
 
@@ -281,7 +283,7 @@ flowchart TB
 
 Two facts in this diagram are load-bearing and frozen elsewhere:
 
-1. **Agents consume `transcript-chunks` but do not run per chunk.** The `agent-runtime-service` applies **windowed batching (30s windows, Capacity A17)** and **relevance pre-gating** before any LLM call — the fix for the R4 cost bomb (see [Inference & LLM Pipeline](09-rag-and-inference-serving.md), [Capacity §8](_canon/05-capacity-math.md)). The bus delivers 360 chunks/meeting; the pipeline collapses that to ~90 windows and ~35% gate-pass.
+1. **Agents consume `transcript-chunks` but do not run per chunk.** The `agent-runtime-service` applies **windowed batching** (event-driven windows of 10 to 15 s that close on a cue, a turn end or a time cap, with notes held to at least 30 s, [ADR-0040](adr/0040-polish-program.md); Capacity A17 keeps 30 s as the sizing figure) and **relevance pre-gating** before any LLM call — the fix for the R4 cost bomb (see [Inference & LLM Pipeline](09-rag-and-inference-serving.md), [Capacity §8](_canon/05-capacity-math.md)). The bus delivers 360 chunks/meeting; the pipeline collapses that to ~90 windows and ~35% gate-pass.
 2. **`decisions`/`actions` are emitted by `core-api`, not the agent.** The agent surfaces a candidate via `agent-results`; only after the user confirms in the sidebar does `core-api` write the row **and** the outbox record in one transaction, which relays to the `decisions`/`actions` topics. This is the structural enforcement of the PDF "no silent commits" rule and the anchor of the duplicate-decision fix in §9.
 
 ---
@@ -408,6 +410,9 @@ The key must be **stable across producer retries of the same logical fact** and 
 | `usage-events` | `usage:{org_id}:{event_type}:{occurred_at}:{source_id}` | Matches `usage_events.idempotency_key` in the [Data Model §2.2](_canon/02-data-model.md) |
 | `agent-requests` | `areq:{correlation_id}` | One request per correlation id |
 | `notifications` | `notif:{source_event_id}:{channel}:{user_id}` | One delivery intent per source per channel per user |
+| `agent-feedback` | `feedback:{feedback_id}` | One event per `agent_feedback` row ([ADR-0040](adr/0040-polish-program.md)) |
+| `admin-events` (`erasure_completed`) | `erasure_completed:{erasure_id}:{store}` | One completion per store per erasure ([ADR-0040](adr/0040-polish-program.md)) |
+| `agent-stream` (`caption_translation`) | `caption:{chunk_id}:{language}` | One translation per caption final per language ([ADR-0040](adr/0040-polish-program.md)) |
 
 ```mermaid
 sequenceDiagram
@@ -662,13 +667,13 @@ The ordering of what we shed is deliberate and maps to the retention/value table
 | Concern | Locked value |
 |---|---|
 | Bus | Redpanda (Kafka API), Avro values, Schema Registry, subject `{topic}-value`, **BACKWARD** compat |
-| Partition key | `org_id` on 19 of 21 topics (locked tenant partitioning); `transcript-chunks` and `agent-stream` use the ratified composite `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) — see §4.1. |
+| Partition key | `org_id` on 20 of 22 topics (locked tenant partitioning); `transcript-chunks` and `agent-stream` use the ratified composite `{org_id}:{meeting_id}` ([ADR-0017](adr/0017-transcript-chunks-composite-partition-key.md)) — see §4.1. |
 | Delivery | At-least-once + idempotency keys; **exactly-once in effect** |
 | Producer | Transactional **outbox** + relay; `NexusProducer` (confluent-kafka-python + AvroSerializer, `acks=all`, idempotent) |
 | Consumer | `BaseConsumer` (AvroDeserializer, manual offset commit after effect) + **inbox** + Redis dedupe `nexus:{org_id}:dedupe:{topic}:{key}` (24h) |
 | Failure | Per-topic `<topic>.dlq`, 5-attempt exponential backoff + jitter, idempotency-preserving replay |
 | Duplicate decisions | Four guards: stable key → outbox-unique index → inbox/dedupe → `MERGE` Cypher |
-| Topics | 9 PDF + 12 SaaS-added, all tenant-partitioned, per-topic retention (§4.2) |
+| Topics | 9 PDF + 13 SaaS-added (`agent-feedback`, [ADR-0040](adr/0040-polish-program.md)), all tenant-partitioned, per-topic retention (§4.2) |
 | Volume | ~11.58B events/mo, ~17,900 ev/s peak, ~13.9 TB/mo ([Capacity §6](_canon/05-capacity-math.md)) |
 | SLOs | embedding lag < 5s, DLQ < 0.1%, dup-rate ~0, agent e2e p50 < 2s / p95 < 4s |
 

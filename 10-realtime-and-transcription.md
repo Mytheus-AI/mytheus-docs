@@ -257,7 +257,7 @@ This is why `realtime-gateway` is in the stateless-services-durable-stores invar
 
 | Concern | Mechanism |
 |---|---|
-| Reconnect | Socket.io auto-reconnect with exponential backoff; on reconnect the client re-mints its LiveKit token (§2.3) and re-joins the `meeting_id` room. Caption/agent history is re-hydrated from `core-api` (finals are durable), so a dropped socket never loses transcript or confirmed agent output. The Deepgram WS proxy targets **reconnect success > 99.9% within 2 s** ([Capacity §11.3](_canon/05-capacity-math.md)). |
+| Reconnect | Socket.io auto-reconnect with exponential backoff; on reconnect the client re-mints its LiveKit token (§2.3), fetches a fresh socket token on every connect (and sends `reauth` before it expires, [ADR-0040](adr/0040-polish-program.md) A6), re-joins the `meeting_id` room and receives `room-state` (edit locks, raised hands) and the off-the-record state. Caption/agent history is re-hydrated from `core-api` (finals are durable), so a dropped socket never loses transcript or confirmed agent output. The Deepgram WS proxy targets **reconnect success > 99.9% within 2 s** ([Capacity §11.3](_canon/05-capacity-math.md)). |
 | Per-connection backpressure | Each socket has a bounded outbound buffer. Under client slow-consume, **`agent-stream` token deltas are dropped first** (1h retention, throwaway — the UI still receives the final `agent-results` message); captions and confirmed agent outputs are preserved. This mirrors the bus-level load-shedding order in [Event-Driven Architecture §8](07-event-architecture.md). |
 | Priority pre-emption | The per-user queue `nexus:{org_id}:queue:agent:{user_id}` lets urgent alerts (conflict banner, workload warning) pre-empt routine note deltas on a congested connection — the PDF Phase 11 priority queue. |
 
@@ -304,7 +304,7 @@ The PDF stated a single end-to-end target of "under 2s." That number is fragile 
 - The **interactive agent** path includes an LLM first-token and is network- and model-bound.
 - The **join (token-mint)** path is a single DB read.
 - The **agent-to-agent** path is a cross-agent round-trip with its own deadline.
-- And critically, **batched extraction** (worklog notes, decisions, actions) runs on **30-second windows** (Capacity `A17`, `§8`), not per utterance — so it *cannot* be a sub-2s live number, by construction.
+- And critically, **batched extraction** (worklog notes, decisions, actions) runs on windows (Capacity `A17`, `§8`), not per utterance, so it *cannot* be a sub-2s live number, by construction. Since [ADR-0040](adr/0040-polish-program.md) A1 a window closes on a cue phrase or a turn end (10 to 15 s, at least 4 s apart), so a decision or action card can follow its words within seconds; notes keep at least a 30 s span and suggestions 20 s.
 
 A single threshold either over-promises on the batched path or under-utilizes the windowing that defeats the R4 cost bomb. The realistic budget is **per-path**, and it distinguishes *latency* (how fast a triggered response renders) from *freshness cadence* (how often a windowed pipeline emits).
 
@@ -335,9 +335,9 @@ This is the distinction the flat 2s hid, and it is the load-bearing part of "rea
 | Class | Examples | Trigger | Contract | Number |
 |---|---|---|---|---|
 | **Interactive** | live caption, streamed suggestion/alert tokens, conflict/workload alert | event-triggered (a final utterance, a detected conflict) | **Latency SLO** measured from speech → first meaningful sidebar token | p50 < 2s, p95 < 4s |
-| **Batched extraction** | worklog notes, decisions, actions, role-relevance scoring | **30s windowed batching** (Capacity `A17`/`§8` L2) — agents run per window, not per chunk | **Freshness cadence**: window cadence (≤30 s) + processing, NOT the live latency SLO | window-fire + agent processing |
+| **Batched extraction** | worklog notes, decisions, actions, role-relevance scoring | **Windowed batching** (Capacity `A17`/`§8` L2; event-driven windows since [ADR-0040](adr/0040-polish-program.md)): agents run per window, not per chunk | **Freshness cadence**: window cadence (candidates 10 to 15 s or a cue, notes at least 30 s) + processing, NOT the live latency SLO | window-fire + agent processing |
 
-The reconciliation: **"speech → sidebar p95 < 4s" is measured from window-fire, not from the utterance that first opened the window.** An utterance may wait up to ~30 s for its window to close; the sub-4s budget then governs the interval from the window firing to the sidebar render. Batched extraction is therefore held to a *freshness* target (a note appears within roughly one window cadence of the speech that triggered it), explicitly **not** the sub-4s live latency budget. Interactive surfaces — captions and the streamed tokens of a triggered suggestion or alert — are the ones held to the sub-2s/sub-4s SLO.
+The reconciliation: **"speech → sidebar p95 < 4s" is measured from window-fire, not from the utterance that first opened the window.** An utterance may wait up to about 15 s for its window to close (up to 30 s for a note; before [ADR-0040](adr/0040-polish-program.md) every window waited about 30 s); the sub-4s budget then governs the interval from the window firing to the sidebar render. Batched extraction is therefore held to a *freshness* target (a note appears within roughly one window cadence of the speech that triggered it), explicitly **not** the sub-4s live latency budget. Interactive surfaces — captions and the streamed tokens of a triggered suggestion or alert — are the ones held to the sub-2s/sub-4s SLO.
 
 > [SaaS-scale adjustment] The PDF's per-participant agents "processed every transcript chunk," which made a flat speech→sidebar 2s superficially coherent. Production runs windowed batching + relevance pre-gating ([Capacity §8](_canon/05-capacity-math.md), [Tech Decisions §2.5](_canon/06-tech-decisions.md)) — the R4 fix — which means the *batched* class trades sub-2s-per-utterance latency for a ≤30s cadence and an 86% LLM call-volume reduction. Stating the latency-vs-cadence split is what makes the budget honest; a single number cannot describe both classes.
 
@@ -393,11 +393,11 @@ sequenceDiagram
     DG-->>TR: interim (caption) + final (persist)
     TR-->>RT: interim caption (WebSocket, p95 < 2s)
     TR->>RP: transcript-chunks (finals only, Avro)
-    RP->>AG: transcript-chunks (windowed 30s, pre-gated)
+    RP->>AG: transcript-chunks (event-driven windows, pre-gated)
     AG->>RP: agent-stream (token deltas) + agent-results (final)
     RP->>RT: agent-stream / agent-results
     RT-->>U: live captions + streamed agent sidebar output
-    Note over U,RT: interactive p50 < 2s / p95 < 4s; batched extraction on ≤30s cadence
+    Note over U,RT: interactive p50 < 2s / p95 < 4s; batched extraction on window cadence
     LK->>MEET: webhook recording.ready
     MEET->>MEET: persist egress ref → meeting_rooms; object → mytheus-recordings/{org_id}/{meeting_id}/
 ```

@@ -100,7 +100,7 @@ The defining property: **RLS stays ON even inside a cell.** A cell shrinks blast
 | `app.current_org` | The transaction-local Postgres session GUC RLS reads; set per request from the injected `org_id`. |
 | `transcript_chunks__{org_id}` / `document_chunks__{org_id}` | Physical per-tenant Qdrant collections (logical names `transcript_chunks` / `document_chunks`); a mandatory `org_id` payload filter is the second line of defense. |
 | `nexus_knowledge` | The org-partitioned Apache AGE graph; every node carries `org_id` and every Cypher template is parameterized by `$org_id`. |
-| Tenant-keyed partitions | Every Redpanda topic is tenant-partitioned. 19 of 21 (`decisions`, `actions`, `agent-requests`, …) use `org_id` as the partition key; `transcript-chunks` and `agent-stream` use the composite `{org_id}:{meeting_id}` ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)). |
+| Tenant-keyed partitions | Every Redpanda topic is tenant-partitioned. 20 of 22 (`decisions`, `actions`, `agent-requests`, …) use `org_id` as the partition key; `transcript-chunks` and `agent-stream` use the composite `{org_id}:{meeting_id}` ([ADR-0017](../adr/0017-transcript-chunks-composite-partition-key.md)). |
 | `nexus:{org_id}:…` | The Redis key namespace prefix; the key builder rejects unprefixed keys. |
 | Solid arrows | The single-resolution `org_id` propagation path from edge to each store. |
 | Dotted arrows | Cross-cutting control-plane concerns (quotas, audited ops) that apply across all tenants/cells. |
