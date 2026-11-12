@@ -60,9 +60,13 @@ compromise of any container the key is not mounted into. It does not defend the 
 
 ## Required mitigations (conditions of this decision)
 
-1. **Mounted into `identity-tenant-service` only**, read-only, no other container. (Note: when
-   `integration-service` starts encrypting `oauth_tokens` it needs the KEK too. That is a
-   change to this mount list and must be recorded here, or given a separate KEK id.)
+1. **Mounted into `identity-tenant-service` and the three `integration-service` processes
+   only**, read-only, no other container. (Amended 2026-11-12: `integration-service`
+   envelope-encrypts `oauth_tokens`, so it, `integration-worker` and `integration-consumer`
+   got the same read-only mounts in `mytheus-platform` `deploy/compose.prod.yml` (platform
+   PR #21). Without them the first OAuth connect in production failed with
+   `KeyConfigurationError: MYTHEUS_KEY_CUSTODY is unset`. A separate KEK id was not used:
+   one active KEK keeps the backup and rotation runbook single.)
 2. **File mode 0400, owned by the service uid** (10001 in the `mytheus-backend` image).
    Enforced by the provider at startup and by the deploy preflight.
 3. **Backed up off-box, separately from database backups.** Losing the KEK makes every
