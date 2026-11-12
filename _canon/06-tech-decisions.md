@@ -245,6 +245,7 @@ flowchart LR
 | Real-time client | Socket.io client | locked | PDF | Matches the Socket.io server for chat/presence/agent outputs. |
 | Meeting client | LiveKit React client (meeting-SDK client) | locked | PDF→SaaS | Pairs with the locked LiveKit transport. |
 | Agent sidebar | Collapsible meeting-room sidebar (My Notes, suggestion cards, decision/action cards, context-fill card, conflict banner, workload/stakeholder/dependency alerts), calm animation discipline, Save-for-later queue persisting into next meeting | locked | PDF | The hardest design surface; specified in detail and frozen. |
+| Personal agent's user-facing name | **Myte** (plural **Mytes**) in all user-facing copy, web and mobile; explained once as "your personal AI agent". Never a code, API, event, table, prompt-key or agent identifier: the agent names in §4 are unchanged | locked | SaaS | A product name for the personal agent that "agent" alone could not give ([ADR-0042](../adr/0042-myte-user-facing-name.md)). |
 
 ### 2.9 Ingestion, chunking & RAG
 
@@ -351,5 +352,7 @@ Other documents and ADRs **must** use these exact strings. This list is the nami
 - **Workflows:** MeetingLifecycleWorkflow, ActionFollowUpWorkflow
 - **Confidence thresholds:** `>0.7` surface · `0.4–0.7` silent log · `<0.4` drop
 - **Latency budget:** live captions < 2s; agent end-to-end p50 < 2s / p95 < 4s; rerank < 500ms cold; embed batch 32 sub-100ms
+
+**User-facing name (not an identifier):** people call their `PersonalListenerAgent`-backed personal agent a **Myte** (plural **Mytes**) ([ADR-0042](../adr/0042-myte-user-facing-name.md)). It is display copy only and is not an alternative name for any string above.
 
 No alternative names for the above are permitted anywhere in the architecture set. Any future rename must land in the [Glossary](../24-glossary-and-naming.md) as an explicit `old → new` entry **and** supersede the relevant row here via an [ADR](../adr/0001-event-driven-microservices.md).
