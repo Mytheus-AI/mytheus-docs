@@ -105,6 +105,11 @@ If the Zoom meeting was also on a connected Google Calendar, Mytheus already cre
 - **Media:** recording files are streamed with the short-lived download token from the webhook, used once, and never stored. Only transcript text is kept.
 - **Audit:** an audit row `zoom.meeting_imported` with the host as actor and the Zoom meeting UUID; the off-record, confidential and erasure rules apply to the imported meeting as to any other.
 
+### 6.6 Two calls made in the design (owner to confirm while reading)
+
+- **No backfill.** Only recordings completed after Zoom is connected come in. Older recordings are not pulled.
+- **Consent.** A Zoom cloud recording already shows Zoom's own "this meeting is being recorded" notice to every participant, and the host chose to record. That notice stands in for the consent prompt Mytheus shows before its own captures; the `zoom.meeting_imported` audit row records it. If doc 12 (compliance) needs a stronger rule, the ADR says so and the import gains a per-workspace switch.
+
 ## 7. UI
 
 - Settings > Integrations, "For your Mytes": add a **Zoom** card; enable the **Linear** segment on the Project tracker card. Same card component, states and Set up dialog as today (`IntegrationsPanel.tsx`, `IntegrationSetup.tsx`, `SETUP_GUIDES` in `src/lib/integrations.ts`).
