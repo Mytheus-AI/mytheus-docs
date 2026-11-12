@@ -288,7 +288,7 @@ On `meeting-events {ended}`, `integration-service` builds a channel summary (dec
 
 ## 5. Jira / Linear bidirectional action-item sync
 
-The project-management connector keeps NEXUS `action_items` and an external tracker in lock-step in **both** directions: a confirmed NEXUS action becomes a ticket (NEXUS → external), and an external status change updates the NEXUS action (external → NEXUS via webhook). **Jira is the default; Linear is the alternative** — a tenant picks exactly one (R8).
+The project-management connector keeps NEXUS `action_items` and an external tracker in lock-step in **both** directions: a confirmed NEXUS action becomes a ticket (NEXUS → external), and an external status change updates the NEXUS action (external → NEXUS via webhook). **Jira is the default; Linear is the alternative** — a tenant picks exactly one (R8). Linear is built per [ADR-0044](adr/0044-linear-and-zoom-integrations.md): OAuth with `actor=app`, the webhook configured once on the Linear OAuth application (resource Issue, `Linear-Signature` HMAC over the raw body, `webhookTimestamp` within 60 s), state type `completed` maps to `done` and every other type to `confirmed`, and the issue is always re-read before a status is applied.
 
 ### 5.1 The two directions and the id map
 
@@ -478,7 +478,7 @@ The page shows, per provider: connection `status` (`active`/`degraded`/`disconne
 
 ## 9. The R8 scope guardrail — Calendar + Slack + one PM tool
 
-R8 is a **hard, enforced cap**, not a guideline: NEXUS ships exactly **Google Calendar + Slack + one of Jira/Linear** ([Locked Decisions §2.13](_canon/06-tech-decisions.md)).
+R8 is a **hard, enforced cap**, not a guideline: NEXUS ships exactly **Google Calendar + Slack + one of Jira/Linear** ([Locked Decisions §2.13](_canon/06-tech-decisions.md)). Additions outside the cap each carry their own ADR: the reach providers ([ADR-0037](adr/0037-plan-12-integrations-follow-ups-and-consoles-build.md) D3) and the Zoom meeting source ([ADR-0044](adr/0044-linear-and-zoom-integrations.md) D4).
 
 Enforcement is layered so the guardrail cannot be bypassed:
 

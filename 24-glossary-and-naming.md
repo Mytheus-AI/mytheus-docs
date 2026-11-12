@@ -64,7 +64,7 @@ All 20 services are kebab-case, named exactly once in [`_canon/01-service-catalo
 | `rag-service` | service | `RAGService` pipeline expand → retrieve → rerank → assemble → cite; hybrid retrieval (Qdrant + Postgres FTS + AGE) with RRF fusion; Redis answer cache. | — · added (SaaS) |
 | `knowledge-graph-service` | service | Owns the Apache AGE graph `nexus_knowledge`: node/edge labels, Cypher templates, org-partitioned, edges on confirmation. | — · added (SaaS) |
 | `search-service` | service | Keyword/lexical retrieval: Postgres FTS over `transcript_chunks` and `chat_messages`; the FTS arm of hybrid retrieval. | — · added (SaaS) |
-| `integration-service` | service | External integrations: Google Calendar, Slack, Jira (default)/Linear OAuth + webhooks; owns `integration_connections` and `oauth_tokens`. | — · added (SaaS) |
+| `integration-service` | service | External integrations: Google Calendar, Slack, Jira (default)/Linear OAuth + webhooks (Linear built, [ADR-0044](adr/0044-linear-and-zoom-integrations.md)); owns `integration_connections` and `oauth_tokens`. | — · added (SaaS) |
 | `workflow-service` | service | Temporal Cloud workers: `MeetingLifecycleWorkflow`, `ActionFollowUpWorkflow`, tenant-provisioning and right-to-be-forgotten workflows, billing dunning sagas. | — · added (SaaS) |
 | `billing-metering-service` | service | SaaS monetization: Stripe billing/subscriptions/seats/dunning/tax, usage metering → quota enforcement, plans/tiers, per-tenant token budgets. | — · added (SaaS) |
 | `notification-service` | service | Unified delivery fabric: in-app (via `realtime-gateway`), email, Slack; templating, per-user priority queue, dedupe, delivery receipts. | — · added (SaaS) |

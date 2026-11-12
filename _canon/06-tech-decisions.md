@@ -305,9 +305,9 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | Calendar | Google Calendar OAuth (auto-create meetings, match participants by email, route attachments through unstructured.io) | locked | PDF | Pre-meeting context made searchable; meetings created from events. |
 | Chat | Slack bot OAuth (Block Kit prep briefs per user, post-meeting summaries to channel/DM) | locked | PDF | Personalized prep and recap where teams already work. |
-| Project management | Jira (default) / Linear (alt) OAuth, bidirectional action-item sync | locked | PDF | NEXUS action → external ticket; external status → NEXUS via webhook. |
+| Project management | Jira (default) / Linear (alt) OAuth, bidirectional action-item sync; Linear built by [ADR-0044](../adr/0044-linear-and-zoom-integrations.md) | locked | PDF | NEXUS action → external ticket; external status → NEXUS via webhook. |
 | Follow-up workflow | Temporal `ActionFollowUpWorkflow` (reminders day 1/3/7; manager escalation via Slack DM at day 10) | locked | PDF | Durable, timed nudges and escalation. |
-| Integration scope guardrail | Ship Calendar + Slack + one of Jira/Linear only (R8) | locked | PDF | Hard scope cap against integration creep. |
+| Integration scope guardrail | Ship Calendar + Slack + one of Jira/Linear (R8), plus the reach providers of [ADR-0037](../adr/0037-plan-12-integrations-follow-ups-and-consoles-build.md) D3 and the Zoom meeting source of [ADR-0044](../adr/0044-linear-and-zoom-integrations.md) D4 | locked | PDF, amended | Hard scope cap against integration creep; each addition outside it needs its own ADR. |
 
 ### 2.14 CI/CD, observability & testing
 
