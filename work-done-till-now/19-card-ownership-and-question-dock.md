@@ -1,6 +1,6 @@
 # 19. A card is settled by its owner, and a question comes up over the room
 
-Status: `DONE WITH GAPS` (built and verified locally on 2026-11-13; committed on `main` in three repos, not pushed, not deployed). Not a plan band: [ADR-0045](../adr/0045-card-ownership-and-question-dock.md).
+Status: `DONE WITH GAPS` (built and verified locally on 2026-11-13; pushed to `main` in three repos, not deployed). Not a plan band: [ADR-0045](../adr/0045-card-ownership-and-question-dock.md).
 
 ## Why
 
@@ -46,7 +46,7 @@ Before this, `core-api` let every participant of a meeting edit, confirm and dis
 
 - `mytheus-mobile` still offers confirm and dismiss on every card (`src/api/endpoints.ts`); a card that is not the caller's now fails with its generic error. It needs the same ownership rule in its UI.
 - Not checked against a live meeting with two signed-in people; the room was verified in the component harness with the gateway faked (below).
-- Not pushed, not deployed.
+- Not deployed.
 - Pre-existing failures seen and left alone: `tests/test_bff_dashboard.py::test_a_slow_arm_degrades_and_does_not_500` (fails without this change too), two tests in `mytheus-ui` `tests/skeletons.test.ts` (Windows path checks, already recorded in file 17).
 
 ## Verification (2026-11-13, local)
@@ -55,7 +55,7 @@ mytheus-backend, against a fresh database on the compose Postgres (`BOOTSTRAP_DA
 
 - `pytest tests/test_candidates.py tests/test_card_moments.py tests/test_agent_learning.py tests/test_only_mytheus.py tests/test_bff_dashboard.py tests/test_room_stage.py`: 97 passed, 1 failed (the pre-existing dashboard test above).
 - `ruff check services tests`, `black --check services tests`, `mypy` on the two route files: clean.
-- The full suite was started but had not finished when this was written; its result is not claimed.
+- The full suite was started and stopped after about fifteen minutes without finishing; its result is not claimed.
 
 mytheus-realtime (`services/realtime-gateway`): `npx tsc --noEmit` clean; `npx vitest run test/room-events.test.ts`: 26 passed.
 
