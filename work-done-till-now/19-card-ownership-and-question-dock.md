@@ -1,6 +1,6 @@
 # 19. A card is settled by its owner, and a question comes up over the room
 
-Status: `DONE WITH GAPS` (built and verified locally on 2026-11-13; pushed to `main` in three repos, not deployed). Not a plan band: [ADR-0045](../adr/0045-card-ownership-and-question-dock.md).
+Status: `DONE WITH GAPS` (built and verified locally on 2026-11-13; pushed to `main` in three repos and deployed by each repo's CI on 2026-11-13). Not a plan band: [ADR-0045](../adr/0045-card-ownership-and-question-dock.md).
 
 ## Why
 
@@ -46,7 +46,6 @@ Before this, `core-api` let every participant of a meeting edit, confirm and dis
 
 - `mytheus-mobile` still offers confirm and dismiss on every card (`src/api/endpoints.ts`); a card that is not the caller's now fails with its generic error. It needs the same ownership rule in its UI.
 - Not checked against a live meeting with two signed-in people; the room was verified in the component harness with the gateway faked (below).
-- Not deployed.
 - Pre-existing failures seen and left alone: `tests/test_bff_dashboard.py::test_a_slow_arm_degrades_and_does_not_500` (fails without this change too), two tests in `mytheus-ui` `tests/skeletons.test.ts` (Windows path checks, already recorded in file 17).
 
 ## Verification (2026-11-13, local)
@@ -65,3 +64,9 @@ mytheus-ui:
 - `npm test`: 549 pass, 2 fail (the pre-existing skeleton tests).
 - `npx playwright test -c tests/e2e/playwright-ct.config.ts room-sidebar-a11y room-a11y`: 21 passed, including three new tests (host and guest ownership; the dock at the bottom left with the panel closed, minimise, ask, dismiss) and axe with the dock on screen in light and dark.
 - A screenshot of the room as a guest (dock, own task with Accept, others' cards waiting) was looked at.
+
+## Deployment (2026-11-13)
+
+- mytheus-ui `79a406f` and mytheus-realtime `91eb37e`: CI green, `deploy` job succeeded.
+- mytheus-backend: CI on `fc30a11` failed in `test` and `openapi`, so `deploy` was skipped. Both failures came from the earlier Linear commit (`b0cbf44`, ADR-0044), not from this work: two assertions in `tests/test_only_mytheus_services.py` did not expect the new `provider` field, and `design/openapi/core-api.yaml` and `integration-service.yaml` were stale. Fixed in `6e86b64` and the commit before it; CI run 43407662523 was green on every job (1655 tests) and `deploy` succeeded, including the `https://api.mytheus.cloud/healthz` check.
+- `tests/test_bff_dashboard.py::test_a_slow_arm_degrades_and_does_not_500` fails only on the local Windows machine; it passes in CI.
