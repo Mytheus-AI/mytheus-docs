@@ -59,10 +59,11 @@ Unchanged from ADR-0037 D5, now written down in ADR-0046 D1 and on the Staff pag
 - `uv run ruff check`, `black --check` and `mypy` on the changed backend modules: clean. `scripts/check_authz.py`: passed.
 - mytheus-ui: `npx tsc --noEmit` and ESLint clean on the changed files; `npm test` 553 passed, 2 failed (`tests/skeletons.test.ts`, Windows path separators in other routes, not ops).
 - The migration applied on a fresh database from scratch.
+- The charts and the feedback card were rendered with sample data on a temporary local page (deleted, never committed) and looked at in the browser pane, in dark mode: columns, the coral current period, axis labels, hover tooltips, the quota colours and the bar lists. This caught a real defect: `weekPoints`, `dayPoints` and `fmt` were exported from the `"use client"` chart module, so the server-rendered Overview and Staff pages would have thrown. They moved to `src/lib/ops-charts.ts` (`bed00cd`).
 
 ## Gaps
 
-- Not deployed, and not looked at in a browser: the local UI talks to `api.mytheus.cloud`, which does not have the new routes until the backend is pushed.
+- Not deployed, and the real pages not looked at with live data: the local UI talks to `api.mytheus.cloud`, which does not have the new routes until the backend is pushed. Light mode was not looked at.
 - The local development database (`mytheus` on port 5443) is behind head and cannot be upgraded because one leftover `oauth_tokens` test row fails a foreign key; deleting it was not done.
 - Support sessions have not been tried against real Clerk. Clerk's impersonation needs to be enabled for the instance; without a working key the start call answers 503 and records nothing.
 - DLQ counts and consumer lag are still not readable from admin-ops-service.
