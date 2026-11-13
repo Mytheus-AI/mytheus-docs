@@ -1,6 +1,6 @@
 # 21. The superadmin console: a complete /ops
 
-Status: `DONE WITH GAPS` (built and tested locally on 2026-11-13, including bug reports and feedback; committed to `main` of mytheus-docs, mytheus-backend and mytheus-ui, not pushed or deployed). Not a plan band. Decisions: [ADR-0046](../adr/0046-superadmin-ops-console.md). Canon: `support_sessions` and `tenant_migrations` in [_canon/02-data-model.md](../_canon/02-data-model.md), the new `/admin/ops/*` routes in [_canon/01-service-catalog.md](../_canon/01-service-catalog.md).
+Status: `DONE WITH GAPS` (built and tested on 2026-11-13, including bug reports and feedback; pushed to `main` of mytheus-docs, mytheus-backend and mytheus-ui and deployed to the VPS the same day). Not a plan band. Decisions: [ADR-0046](../adr/0046-superadmin-ops-console.md). Canon: `support_sessions`, `tenant_migrations` and `feedback_reports` in [_canon/02-data-model.md](../_canon/02-data-model.md), the new `/admin/ops/*` and `/admin/tenant/*` routes in [_canon/01-service-catalog.md](../_canon/01-service-catalog.md).
 
 ## Why
 
@@ -61,9 +61,14 @@ Unchanged from ADR-0037 D5, now written down in ADR-0046 D1 and on the Staff pag
 - The migration applied on a fresh database from scratch.
 - The charts and the feedback card were rendered with sample data on a temporary local page (deleted, never committed) and looked at in the browser pane, in dark mode: columns, the coral current period, axis labels, hover tooltips, the quota colours and the bar lists. This caught a real defect: `weekPoints`, `dayPoints` and `fmt` were exported from the `"use client"` chart module, so the server-rendered Overview and Staff pages would have thrown. They moved to `src/lib/ops-charts.ts` (`bed00cd`).
 
+- Deploy: backend CI run `43459491583` ran 1,670 tests, 1,669 passed; `test_health_probes_services_and_reports_the_outbox` failed because it expected its workspace in the top ten backlogs while other tests leave events behind. The test now checks its workspace through `ops_tenant_rollup` as `mytheus_app`, and the overview test gives its workspace 180% of quota so it always leads (`6bd7c19`). Run `43460382242`: every job green, deployed. UI run `43459634170`: quality, build and deploy green.
+- Live: `https://api.mytheus.cloud/healthz` 200; `/admin/ops/overview` answers 401 unauthenticated (the route exists). Signed in as the owner, `dashboard.mytheus.cloud/ops` shows the 404 page: the owner's `users.id` is not yet in `MYTHEUS_STAFF_USER_IDS` on the VPS.
+
 ## Gaps
 
-- Not deployed, and the real pages not looked at with live data: the local UI talks to `api.mytheus.cloud`, which does not have the new routes until the backend is pushed. Light mode was not looked at.
+- The owner is not on the production staff list yet, so `/ops` has not been seen with live data. Adding them is a VPS edit, given to the owner as commands.
+
+- Light mode was not looked at.
 - The local development database (`mytheus` on port 5443) is behind head and cannot be upgraded because one leftover `oauth_tokens` test row fails a foreign key; deleting it was not done.
 - Support sessions have not been tried against real Clerk. Clerk's impersonation needs to be enabled for the instance; without a working key the start call answers 503 and records nothing.
 - DLQ counts and consumer lag are still not readable from admin-ops-service.
