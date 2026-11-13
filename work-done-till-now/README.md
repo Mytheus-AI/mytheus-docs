@@ -35,6 +35,7 @@ This exists because progress was previously scattered across four repos in three
 | `14-myte-name.md` | ADR-0042, not a plan band: the personal agent is called a Myte in every user-facing word across UI, backend, intelligence and mobile, with Myte consent notice versions; code and canon names unchanged. |
 | `15-meeting-invitations.md` | ADR-0043, not a plan band: meeting invitations by email (members only: there is no guest join), the meeting as an RFC 5545 calendar event with a signed calendar-only link, reschedule and cancellation emails, the Invite and share card and the New meeting switch, and the `push-secrets.sh email` mode. |
 | `16-integrations-setup.md` | Not a plan band: the owner guide for turning on each integration (where to create the app, redirect URL, scopes, env vars, push and redeploy), the Settings > Integrations redesign and the `push-secrets.sh integrations` mode. |
+| `19-card-ownership-and-question-dock.md` | ADR-0045, not a plan band: a task is accepted or declined only by the person it is for, decisions and unowned tasks by the host, the close-out and review queue follow that, and a suggested question is docked over the web room, across backend, realtime and UI. |
 
 ## How to write a band file
 
