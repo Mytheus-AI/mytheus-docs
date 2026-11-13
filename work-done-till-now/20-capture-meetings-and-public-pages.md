@@ -1,6 +1,6 @@
 # 20. Capture and Meetings tidy-up, a dark public site, a real blog and an honest careers page
 
-Status: `DONE WITH GAPS` (built and verified locally on 2026-11-13; committed to `main` of mytheus-ui, not pushed). Not a plan band and no ADR: presentation and copy only, no contract, name or number changed.
+Status: `DONE WITH GAPS` (built and verified locally on 2026-11-13; committed and pushed to `main` of mytheus-ui on 2026-11-13). Not a plan band and no ADR: presentation and copy only, no contract, name or number changed.
 
 ## Why
 
