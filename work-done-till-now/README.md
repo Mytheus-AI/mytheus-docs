@@ -37,7 +37,7 @@ This exists because progress was previously scattered across four repos in three
 | `16-integrations-setup.md` | Not a plan band: the owner guide for turning on each integration (where to create the app, redirect URL, scopes, env vars, push and redeploy), the Settings > Integrations redesign and the `push-secrets.sh integrations` mode. |
 | `19-card-ownership-and-question-dock.md` | ADR-0045, not a plan band: a task is accepted or declined only by the person it is for, decisions and unowned tasks by the host, the close-out and review queue follow that, and a suggested question is docked over the web room, across backend, realtime and UI. |
 | `20-capture-meetings-and-public-pages.md` | Not a plan band: Capture's "What it records" as a dialog, the Meetings week strip, dark mode for the marketing site, a blog with real posts and post pages, a rewritten careers page, and the old-brand links and addresses fixed, in mytheus-ui. |
-| `21-superadmin-console.md` | Not a plan band ([ADR-0046](../adr/0046-superadmin-ops-console.md)): the superadmin console made complete: overview with charts, workspace detail panel, health, staff, tenant move requests, Clerk support sessions enforced and tagged server-side, and the support-session banner, across mytheus-backend and mytheus-ui. |
+| `21-superadmin-console.md` | Not a plan band ([ADR-0046](../adr/0046-superadmin-ops-console.md)): the superadmin console made complete: overview with charts, workspace detail panel, health, staff, tenant move requests, Clerk support sessions enforced and tagged server-side, the support-session banner, and Report a bug in Settings with a staff feedback inbox, across mytheus-backend and mytheus-ui. |
 
 ## How to write a band file
 

@@ -1,6 +1,6 @@
 # 21. The superadmin console: a complete /ops
 
-Status: `DONE WITH GAPS` (built and tested locally on 2026-11-13; committed to `main` of mytheus-docs, mytheus-backend and mytheus-ui, not pushed or deployed). Not a plan band. Decisions: [ADR-0046](../adr/0046-superadmin-ops-console.md). Canon: `support_sessions` and `tenant_migrations` in [_canon/02-data-model.md](../_canon/02-data-model.md), the new `/admin/ops/*` routes in [_canon/01-service-catalog.md](../_canon/01-service-catalog.md).
+Status: `DONE WITH GAPS` (built and tested locally on 2026-11-13, including bug reports and feedback; committed to `main` of mytheus-docs, mytheus-backend and mytheus-ui, not pushed or deployed). Not a plan band. Decisions: [ADR-0046](../adr/0046-superadmin-ops-console.md). Canon: `support_sessions` and `tenant_migrations` in [_canon/02-data-model.md](../_canon/02-data-model.md), the new `/admin/ops/*` routes in [_canon/01-service-catalog.md](../_canon/01-service-catalog.md).
 
 ## Why
 
@@ -38,17 +38,24 @@ Unchanged from ADR-0037 D5, now written down in ADR-0046 D1 and on the Staff pag
 - `/workspace/support` lists the workspace's support sessions, and the Act as support help says what it allows.
 - `tests/ops-console.test.ts`.
 
+### Bug reports and feedback (ADR-0046 D6), added on the owner's request the same day
+
+- mytheus-docs (`8512ef6`): ADR-0046 D6, the `feedback_reports` canon row, the routes, glossary and doc 18.
+- mytheus-backend (`eaff1f3`..`18f039b`): migration `c7d2e3f4a5b6` (`feedback_reports`: a workspace session may insert and read its own rows through `tenant_insert` and `tenant_isolation`; only the `ops_console` policy may update); `feedback_routes.py` with `POST/GET /admin/tenant/feedback` (any member, 20 per person per day, audited as `feedback.submitted`) and `GET /admin/ops/feedback`, `POST /admin/ops/feedback/status` (staff, in `ops_audit_log`); the overview counts new reports; 4 more tests.
+- mytheus-ui (`05772d6`..`64c2fc6`): Settings gains "Report a bug" (`/settings/feedback`): "Report a bug" and "Send feedback" buttons open one dialog (kind, message up to 4,000 characters, where in Mytheus), and the page lists what the person has sent with its state. `/ops/feedback` is the staff inbox with New, Seen, Resolved and All, the workspace and the reporter's email on each report, and Mark seen, Resolve, Reopen. The overview's sixth figure is new feedback.
+
 ## Decisions and why
 
 - Overview numbers come from one database function rather than a Python loop: the local database has about 4,500 workspaces left by test runs, and a loop of three round trips per workspace took seconds. The function is SECURITY INVOKER, so RLS still checks every row; a SECURITY DEFINER read would have been an RLS bypass on the request path, which doc 06 rules out.
 - The workspace detail is a panel loaded with a POST, not a `/ops/workspaces/[id]` page, because `org_id` never goes in a path or query.
 - Impersonation uses Clerk actor tokens (Clerk's own primitive), but the server does the time-boxing: Clerk's session lifetime is not trusted, the `support_sessions` row is.
 - Tenant moves are recorded, not executed. Mytheus runs one cell (`pool-us-1`), so there is nowhere to move a workspace to, and `data_residency` stays identity-tenant-service's to write. The console says so.
+- Feedback is the one cross-workspace read of text a member wrote, and it is allowed because they wrote it to Mytheus. It uses the same `app.ops_console` seam as `feature_flags` rather than a new role, and the reporter's email is copied onto the row at sending time so staff never read another workspace's `users`.
 - Staff emails come from each person's own `ops.whoami` rows, which already record their workspace, instead of a cross-tenant lookup of `users`.
 
 ## Verified
 
-- `uv run pytest tests/test_admin_ops_console.py tests/test_admin_ops_api.py` against a fresh `postgres:15` (the CI image): 25 passed. The one failure, `test_set_organization_status_is_reachable_only_through_identity`, compares paths with `/` and fails on Windows before this work too.
+- `uv run pytest tests/test_admin_ops_console.py tests/test_admin_ops_api.py` against a fresh `postgres:15` (the CI image): 29 passed, feedback included. The one failure, `test_set_organization_status_is_reachable_only_through_identity`, compares paths with `/` and fails on Windows before this work too.
 - `uv run ruff check`, `black --check` and `mypy` on the changed backend modules: clean. `scripts/check_authz.py`: passed.
 - mytheus-ui: `npx tsc --noEmit` and ESLint clean on the changed files; `npm test` 553 passed, 2 failed (`tests/skeletons.test.ts`, Windows path separators in other routes, not ops).
 - The migration applied on a fresh database from scratch.
