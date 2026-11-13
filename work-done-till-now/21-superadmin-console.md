@@ -8,7 +8,24 @@ The owner asked for `/ops` to be a complete superadmin console: everything doc 1
 
 ## How someone becomes a superadmin
 
-Unchanged from ADR-0037 D5, now written down in ADR-0046 D1 and on the Staff page: the person signs in to Mytheus once; `uv run python -m scripts.staff_lookup <email>` in mytheus-backend prints their `users.id`; that id is appended to `MYTHEUS_STAFF_USER_IDS` in admin-ops-service's environment and the service restarted. There is no button for it on purpose.
+Changed on the owner's request later the same day (ADR-0046 D1, `e2d9947`): a superadmin is a **separate Clerk account that belongs to no workspace**, and it sees only `/ops`.
+
+1. Sign up for a new Mytheus account and stop at "join or create an organization".
+2. On the server, in the admin-ops-service container: `python -m scripts.staff_lookup <email>`. It finds the account in Clerk, refuses it if it belongs to any organization or Mytheus workspace, and prints the Clerk user id and the Staff ID.
+3. Append the Clerk user id to `MYTHEUS_STAFF_CLERK_USER_IDS` in admin-ops-service's environment and recreate that service.
+4. Refresh the page: it sends a staff account to `/ops`, and every app page sends it back there.
+
+A workspace member is refused as staff on every call even if listed: when its session carries an organization, or `clerk_user_in_any_tenant` finds a live `users` row for it. There is no button for any of this on purpose.
+
+### The org-less staff change (`ca22ecf`..`7518a7b` in mytheus-backend, `d9671d5`..`9d87b11` in mytheus-ui)
+
+- `libs/shared/auth.py`: `verify_token_without_org`, used only by admin-ops-service's staff dependency and the gateway's `/admin/ops/` branch; personal access tokens are refused there.
+- Migration `d8e3f4a5b6c7`: `clerk_user_in_any_tenant(clerk_user_id)`, SECURITY INVOKER, binds each workspace in turn, returns a boolean only.
+- `services/admin_ops_service/common.py`: `MYTHEUS_STAFF_CLERK_USER_IDS`, `StaffPrincipal`, `staff_id_for` (UUIDv5 Staff ID), `staff_refusal` (`not_listed`, `workspace_session`, `workspace_member`), logged with each denial. `whoami` answers any session and returns `staff_id` to staff. A global flag change no longer emits `admin-events` (no `org_id` to partition by). The own-org suspend guard is gone: staff have no workspace.
+- `services/api_gateway/edge.py`: `/admin/ops/*` is verified without an organization and forwarded with no tenant headers.
+- The Staff page reads names and emails from Clerk (`clerk_admin.user_summary`); `scripts/staff_lookup.py` now asks Clerk by email.
+- mytheus-ui: the API client sends a pending session's token; the middleware lets a pending session into `/ops` and `/admin`; the choose-organization page and the app shell send a staff account to `/ops`; the console header has Sign out instead of Back to app; the Staff page shows each account's Clerk id and Staff ID, flags a listed account that is in a workspace, and shows your own Staff ID.
+- Tests: 62 passed across the admin-ops and gateway suites (new: a listed member is refused in both session shapes; malformed list entries grant nothing; an org-less session reaches only `/admin/ops/`); 89 passed across the auth, token, self-serve, policy and RLS suites.
 
 ## What landed
 
