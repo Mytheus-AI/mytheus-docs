@@ -1,4 +1,4 @@
-# ADR-0046: The superadmin console: who is staff, what /ops must show, support sessions and tenant moves
+# ADR-0046: The superadmin console: who is staff, what /ops must show, support sessions, tenant moves and feedback
 
 ## Related documents
 
@@ -51,6 +51,7 @@ Removing someone is the same edit in reverse. The Staff page (D3) shows who is o
 | **Costs** (`/ops/costs`) | Existing table, plus a chart of the top workspaces by share of quota. | existing |
 | **Health** (`/ops/health`) | Each backend service's `/healthz` probed from `admin-ops-service`: up or down, and response time. Outbox backlog by topic: unpublished rows, the oldest one's age, the highest retry count. DLQ counts and consumer lag stay "not connected": they live in Redpanda and Prometheus, which this service cannot reach. | `GET /admin/ops/health` |
 | **Audit** (`/ops/audit`) | Existing viewer (one workspace at a time, needs a grant), unchanged. | existing |
+| **Feedback** (`/ops/feedback`) | Every bug report and piece of feedback members sent from Settings (D6), newest first, filterable by state, with the workspace and the reporter's email; mark seen or resolved. | `GET /admin/ops/feedback`, `POST /admin/ops/feedback/status` |
 | **Staff** (`/ops/staff`) | Every id on the allowlist with their email and workspace (resolved from their own `ops.whoami` calls; someone who has never opened the console shows as "not seen yet"), last activity, actions in the last 30 days, a 14-day activity chart, and the 50 most recent ops actions across all staff. The page also says how to add or remove someone (D1). | `GET /admin/ops/staff` |
 
 ### D4. Support sessions (impersonation)
@@ -67,10 +68,17 @@ Removing someone is the same edit in reverse. The Staff page (D3) shows who is o
 1. `POST /admin/ops/tenants/migrate` records a request to move a workspace to another region (`us`, `eu`, `ap`) and database cell, with a reason, in `tenant_migrations` (status `requested`). One open request per workspace; `POST /admin/ops/tenants/migrations/cancel` cancels it.
 2. The move itself is **not automated**. Mytheus runs one cell (`pool-us-1`) today, so there is nowhere to move a workspace to. The residency-migration workflow in section 8 stays future work; until it exists, a request is the ops record that a customer asked for a move and why, and the console says so plainly. `data_residency` stays written only by `identity-tenant-service`.
 
+### D6. Bug reports and feedback reach staff
+
+1. Any signed-in member can send Mytheus a bug report or general feedback from Settings (`POST /admin/tenant/feedback`, tier `member`): a kind (`bug` or `feedback`), a message of up to 4,000 characters, and the page it is about if they give one. The reporter's email is stored with it, so staff can answer without reading the workspace's `users`. At most 20 reports per person per day (429 past that).
+2. A member sees their own reports and whether staff have seen or resolved them (`GET /admin/tenant/feedback`).
+3. Staff read every report in a Feedback inbox at `/ops/feedback` (`GET /admin/ops/feedback`) and mark each `seen` or `resolved` (`POST /admin/ops/feedback/status`). This is the one cross-workspace read of user-written text in `/ops`, and it is allowed because the member wrote it to Mytheus; it goes through the same `app.ops_console` policy as `feature_flags`, and every read and change is in `ops_audit_log`. The overview counts new reports.
+4. `feedback_reports` is owned by `admin-ops-service`. A workspace session may insert its own rows and read them; only a transaction with `app.ops_console` on may update one.
+
 ## Consequences
 
 - `/ops` becomes eight surfaces with one gate and one audit trail.
-- Two new tenant-scoped tables (`support_sessions`, `tenant_migrations`), both owned by `admin-ops-service`, both under the canonical RLS policy.
+- Three new tables owned by `admin-ops-service`: `support_sessions` and `tenant_migrations` under the canonical RLS policy, and `feedback_reports` under a tenant insert/read policy plus the `ops_console` policy.
 - `tenant_context` gains one indexed lookup, only for requests whose token carries an `act` claim.
 - Impersonation depends on Clerk actor tokens. Without a real `CLERK_SECRET_KEY` the start call answers 503 and nothing is recorded as started.
 - The overview's rollup visits every workspace inside one database call. That is fine at today's scale; past a few thousand workspaces it should become a scheduled snapshot.
