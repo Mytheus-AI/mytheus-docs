@@ -3,7 +3,7 @@
 ## Related documents
 
 - [18-saas-business-architecture.md](../18-saas-business-architecture.md) section 8: the internal ops console capability list. Expanded here into pages.
-- [ADR-0037](0037-plan-12-integrations-follow-ups-and-consoles-build.md) D5 (staff are an allowlist) and D8 (support access needs a live grant). Both kept; D8 is extended to impersonation.
+- [ADR-0037](0037-plan-12-integrations-follow-ups-and-consoles-build.md) D5 (staff are an allowlist): superseded by D1 here, the allowlist now holds workspace-less Clerk accounts. D8 (support access needs a live grant) is kept and extended to impersonation.
 - [_canon/02-data-model.md](../_canon/02-data-model.md): `support_sessions` and `tenant_migrations`, added in the same change.
 - [_canon/01-service-catalog.md](../_canon/01-service-catalog.md): the new `/admin/ops/*` routes of `admin-ops-service`.
 - [06-multi-tenancy.md](../06-multi-tenancy.md): no RLS-bypass role on the request path. Kept: nothing here bypasses RLS.
@@ -20,16 +20,21 @@ Mytheus has two admin levels. A **workspace admin** (a customer's `owner` or `ad
 
 ### D1. Who is a superadmin
 
-A superadmin is a Mytheus user whose internal `users.id` is listed in `MYTHEUS_STAFF_USER_IDS` on `admin-ops-service` (ADR-0037 D5, unchanged). There is no role, flag or button that makes someone staff from inside the product. That is deliberate: granting the most privileged access in the system is a deployment change, made by someone who can already edit the server's secrets, and it cannot be escalated to from a compromised workspace admin account.
+A superadmin is a **dedicated Clerk account that belongs to no workspace**, whose Clerk user id is listed in `MYTHEUS_STAFF_CLERK_USER_IDS` on `admin-ops-service`. This supersedes ADR-0037 D5's `MYTHEUS_STAFF_USER_IDS` (a list of `users.id`): a staff account has no `users` row, because `users` rows exist only inside a workspace.
+
+1. **Staff accounts are separate accounts.** Someone who also uses Mytheus as a customer keeps a personal account for that and signs up a second, staff-only account.
+2. **A workspace member can never be staff.** An account is refused as staff, even when listed, if its session carries an organization or it has a `users` row in any workspace (`clerk_user_in_any_tenant`, a SECURITY INVOKER check that binds each workspace in turn and returns only true or false). The lookup script refuses such an account before it is ever listed.
+3. **Staff see only `/ops`.** A staff account signs up and stops on the choose-organization step. Once listed, it lands on `/ops` from that step, and every app page sends it back to `/ops`. A support session (D4) is different: the session is the member's, not the staff account's.
+4. **Staff ID.** Each staff account has a fixed Staff ID, a UUIDv5 of its Clerk user id. It is what a workspace admin enters in a support grant, what `ops_audit_log.staff_user_id` records, and what the console shows the staff member.
 
 To add someone:
 
-1. They sign up and sign in to Mytheus once, so their `users` row exists.
-2. Look up their `users.id`: `uv run python -m scripts.staff_lookup <email>` in `mytheus-backend` (read-only; runs as `mytheus_admin` through `ADMIN_DATABASE_URL`).
-3. Append the id to `MYTHEUS_STAFF_USER_IDS` (comma-separated) in the admin-ops-service env file (`/etc/dokploy/mytheus-secrets/` on the VPS, `.env` locally) and restart `admin-ops-service`. The list is read on every request.
-4. They open `/ops`. Anyone not on the list gets a 404.
+1. They sign up for a new Mytheus account and stop at "join or create an organization".
+2. Run `uv run python -m scripts.staff_lookup <email>` in mytheus-backend (on the server: inside the admin-ops-service container). It finds the account in Clerk, refuses it if it is in any organization or workspace, and prints its Clerk user id and Staff ID.
+3. Append the Clerk user id to `MYTHEUS_STAFF_CLERK_USER_IDS` (comma-separated) in admin-ops-service's environment and recreate that service.
+4. They refresh the page and land on `/ops`. Anyone else gets a 404 there.
 
-Removing someone is the same edit in reverse. The Staff page (D3) shows who is on the list and what each person did.
+The gateway lets a signed-in account with no organization reach `/admin/ops/*` only (verified, no tenant resolved, no tenant headers attached); admin-ops-service then applies the rules above on every call. A global feature flag change emits no `admin-events` record, because the topic is partitioned by `org_id` and a staff account has none; it is still in `ops_audit_log`.
 
 ### D2. Rules every /ops page keeps
 
