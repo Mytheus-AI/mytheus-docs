@@ -38,6 +38,7 @@ This exists because progress was previously scattered across four repos in three
 | `19-card-ownership-and-question-dock.md` | ADR-0045, not a plan band: a task is accepted or declined only by the person it is for, decisions and unowned tasks by the host, the close-out and review queue follow that, and a suggested question is docked over the web room, across backend, realtime and UI. |
 | `20-capture-meetings-and-public-pages.md` | Not a plan band: Capture's "What it records" as a dialog, the Meetings week strip, dark mode for the marketing site, a blog with real posts and post pages, a rewritten careers page, and the old-brand links and addresses fixed, in mytheus-ui. |
 | `21-superadmin-console.md` | Not a plan band ([ADR-0046](../adr/0046-superadmin-ops-console.md)): the superadmin console made complete: overview with charts, workspace detail panel, health, staff, tenant move requests, Clerk support sessions enforced and tagged server-side, the support-session banner, and Report a bug in Settings with a staff feedback inbox, across mytheus-backend and mytheus-ui. |
+| `22-product-record.md` | Not a plan band: `DESIGN.md` rewritten from the current code (with its `.impeccable/design.json` sidecar) and `PRODUCT.md` at the mytheus-ui root, the product record the Impeccable design tooling reads (users, purpose, positioning, constraints, evidence), with the owner's answers on the primary user, integrations and the Chrome extension, and the absence of customer proof. |
 
 ## How to write a band file
 
