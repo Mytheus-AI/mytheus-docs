@@ -50,10 +50,37 @@ One session's list from the owner: suspension, the ops cost and audit views, the
 
 - Deploy, then a Razorpay test-mode payment end to end (keys go in `prod.env`, auto-capture on in the Razorpay dashboard).
 - No Razorpay webhook: a payment captured but not verified (browser closed mid-way) is not applied automatically.
-- The budget mirror in Redis keeps the old allowance for a workspace until its next charge or plan change after the migration.
+- ~~The budget mirror in Redis keeps the old allowance for a workspace until its next charge or plan change after the migration.~~ Closed 14 November 2026: `GET /billing/status` republishes it when the row is blocked (see below).
 - Mobile shows none of the plan screens.
 
 ## Verification
 
 - Backend: `uv run pytest tests/test_org_resolver.py tests/test_gateway_edge.py tests/test_admin_ops_api.py tests/test_admin_ops_pipeline.py tests/test_billing_metering.py tests/test_billing_checkout_unit.py tests/test_staff_mail.py tests/test_openapi_contract.py`: all pass; the database-backed tests skip without Docker locally and run in CI. `ruff`, `black`, `mypy` clean on every touched package; `python -m scripts.emit_openapi` and `scripts.check_authz` run.
 - UI: `npx tsc --noEmit` clean; `node --test tests/ops.test.ts tests/ops-console.test.ts` 13 pass; eslint clean on touched files.
+
+## 14 November 2026: what "AI is paused" actually stops, and owner UI fixes
+
+The owner saw the AI-paused banner while Ask Myte, its popup and New meeting all still worked. Two causes: the app never read the paused state anywhere but the banner, and the agent tier's budget gate reads the Redis mirror, which could still carry a pre-migration allowance (the open gap above).
+
+### mytheus-backend
+
+- `services/core_api/routes/meetings.py`: `create_meeting` reads this month's `agent_budgets.state` under the caller's RLS (read only) and answers 402 `QUOTA_EXCEEDED` when it is `blocked` and `BUDGET_ENFORCEMENT_MODE=enforce`. Covers the app, the API and Capture (the extension creates core-api meetings). `alert_only` never refuses, matching the agent gate.
+- `services/billing_metering_service/payments.py`: `GET /billing/status` republishes the mirror (`write_mirror`) when the row is `blocked`; a Redis failure is logged and the status still answers. Every member's page load reads this, so the gate catches up within one page view.
+- Tests: `tests/test_meetings_api.py` (refused while blocked under `enforce`, allowed under `alert_only`; database-backed, run in CI), `tests/test_billing_checkout_unit.py` (republish when blocked, not otherwise, Redis down still answers).
+
+### mytheus-ui
+
+- `src/lib/ai-status.tsx`: `AiStatusProvider` (set from `billing.blocked` in `(app)/layout.tsx`), `useAiPaused()`, and `AiPausedNote` (what is off, plus Buy credits or upgrade for admins, "your admin can turn it back on" for members).
+- Paused: Ask Myte page and Ctrl+J sheet swap the composer for the note, starters and Talk are disabled, nothing is sent (an `/ask?q=` hand-off included); the Home ask box is disabled; the sidebar New meeting and the meetings-hub New meeting are disabled (a `?new=1` link no longer opens the form); Capture shows the note; `createMeeting` maps a 402 to a plain paused message.
+- `BudgetBanner`: a card in the page flow (not sticky, no 1200px inner cap), says Mytes, Ask Myte, Talk and new meetings are off, and publishes its height as `--ai-banner-h`; the Ask Myte frame subtracts it, so the page is no longer cut off at the bottom under the banner.
+- Owner fixes, one commit each: Ask Myte history says New chat / Your chats and its rail header lines up with the chat header (h-14, divided); Your Myte drops its ask box and Open Ask Myte; Save Myte sits under the Voice card (`AgentPanel` `beforeSave`); Topics you watch suggestion chips and add row tidied; Settings > Briefings drops the Voice card (the voice is set on Your Myte only) and puts speed beside language; Settings > Profile drops the workspace logo (Workspace console only); the Extra AI credits card no longer glows.
+
+### Deviations, and why
+
+- ADR-0051 D2 said captions and transcription continue while paused; the owner asked that no new meeting start, since meetings are where the Mytes work. Amended in the ADR; meetings already running keep captions.
+- core-api reads `agent_budgets` directly (read only, under RLS) rather than calling billing over HTTP, the same in-process read admin-ops already makes; billing stays the one writer.
+
+### Verification
+
+- Backend: `uv run pytest tests/test_billing_checkout_unit.py tests/test_openapi_contract.py` pass; `python -m scripts.emit_openapi --check` matches; ruff, black, mypy clean on touched modules. `tests/test_meetings_api.py` needs Docker (CI).
+- UI: `npx tsc --noEmit` clean, eslint clean on touched files; `npm test` 720 of 722 pass, the 2 failures (`tests/skeletons.test.ts`) fail identically without these changes (Windows path separators).

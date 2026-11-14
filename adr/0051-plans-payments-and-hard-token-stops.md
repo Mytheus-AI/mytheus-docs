@@ -30,7 +30,7 @@ Plans are new versions of the catalog (never edited in place); every subscriptio
 
 ### D2. A hard stop
 
-`hard_cap = token_quota` on every plan and `BUDGET_ENFORCEMENT_MODE` defaults to `enforce`. At the allowance AI is paused for the whole workspace (captions and transcription continue). Extra credits ($10 per 100,000 tokens) add to `credit_tokens` for the current month and survive a plan change. No-cap plans use a cap of 10^15 so the agent tier needs no special case.
+`hard_cap = token_quota` on every plan and `BUDGET_ENFORCEMENT_MODE` defaults to `enforce`. At the allowance AI is paused for the whole workspace. Amended 14 November 2026: a paused workspace also starts no new meeting (core-api `POST /api/v1/meetings` answers 402 `QUOTA_EXCEEDED` under `enforce`), because a meeting is where the Mytes listen and take notes; meetings already running keep their captions and transcription. The app shows the pause where each AI control would be (Ask Myte, Talk, the Home ask box, New meeting, Capture), and `GET /billing/status` republishes the Redis budget mirror whenever it reads a blocked row, so the agent tier's gate never lags the banner. Extra credits ($10 per 100,000 tokens) add to `credit_tokens` for the current month and survive a plan change. No-cap plans use a cap of 10^15 so the agent tier needs no special case.
 
 ### D3. Payments
 
