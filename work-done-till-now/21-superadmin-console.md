@@ -90,3 +90,42 @@ A workspace member is refused as staff on every call even if listed: when its se
 - Support sessions have not been tried against real Clerk. Clerk's impersonation needs to be enabled for the instance; without a working key the start call answers 503 and records nothing.
 - DLQ counts and consumer lag are still not readable from admin-ops-service.
 - `next build` and the Playwright suite were not run.
+
+## The console redesign: a sidebar, more chart types and a map (2026-11-14)
+
+The owner found `/ops` unprofessional to look at and asked for a full redesign of its UI, for chart types beyond bar charts, and for maps. Three choices were put to them and taken as recommended: a small backend field so the overview can map workspaces, a left sidebar instead of the tab row, and hand-built SVG charts instead of a chart library.
+
+### mytheus-backend (`caeb244`)
+
+- `GET /admin/ops/overview` gains `regions`: one row per `data_residency.region` with `workspaces`, `active`, `members`, `meetings_7d` and `cells` (each `db_cell` with its count). `ops_tenant_rollup` already returned `region` and `db_cell`, so this is grouping in Python (`_regions` in `console_routes.py`) with no migration. A workspace with no residency row counts under `unplaced`, so the rows always add up to `totals.tenants`.
+- `design/openapi/admin-ops-service.yaml` regenerated. A pure test of `_regions` (grouping, the `unplaced` bucket, largest-first order) and region assertions on the existing overview test.
+
+### mytheus-ui (`4be7de2`, `00a1012`)
+
+- Frame: `OpsShell` and `OpsNav` in `components/ops/`. A 256px sidebar grouped Platform (Overview, Workspaces, Health, Cost and lag), Controls (Feature flags, Staff) and Records (Audit log, Feedback), with Sign out and the theme toggle at its foot; below `lg` a header with the sections as a sideways row. `OpsTabs` is removed. Each section page now carries its own h1.
+- Chart kit in `components/ops/viz/`: an area chart with crosshair and arrow-key reading, sparklines, a donut, a calendar heatmap, a squarified treemap, a latency dot plot, quota meters with 80% and 95% ticks, and `KpiStrip`. Every chart keeps a visually hidden table or prints its numbers.
+- Map in `components/ops/map/`: `world-dots.ts` is a 144 by 55 dot grid baked once from world-atlas `land-110m` (Natural Earth, public domain), drawn as a single SVG path. `RegionMap` puts a hub on each region (`us`, `eu`, `ap`), sized by workspaces and labelled with its code and count; a requested move draws the coral line from the current region to the target.
+- Pages. Overview: KPI strip with trends, weekly trend switching between meetings and new workspaces, plan donut, the map beside a region list (hovering either highlights both), quota meters, a 14-day console activity heatmap, and a Refresh button. Health: status banner, KPI strip, every service on one latency scale. Cost and lag: a treemap of token share coloured by quota state, then every workspace's meter. Staff: KPI strip, daily calls as an area chart, an inline bar per person. The workspace panel shows the residency map with any requested move. Workspaces, Feature flags, Audit log and Feedback take the new header. Loading skeletons follow the new layouts.
+- `styles/ops.css`: two one-hue scales scoped to `.mx-ops`, plan ordinal (`--ord-1..4`, warm ink) and activity heat (`--heat-1..4`, coral), with chosen light and dark steps, plus `--land` for the map.
+
+### Decisions and why
+
+- The sidebar is drawn by `ops/layout.tsx` after the staff gate, not by the `(admin)` layout. A non-staff visitor gets a 404 that names nothing, as before; the `(admin)` loading screen draws only bones while the gate is checked.
+- No chart or map library. The charts read the design tokens directly, so light and dark come free, and the console adds no bundle weight. The map needs only three hubs, which a baked dot grid serves without a projection library.
+- The trend chart shows one series at a time behind a switch, never meetings and sign-ups on two axes.
+- Treemap colour states the quota (inside, past 80%, past 95%), never identity, and the legend names each fill.
+- Region hubs sit at a point inside each region. The console knows the region code and cell, nothing finer, so no city or data centre is implied.
+- Both new scales were checked with the dataviz palette validator in ordinal mode against the card surface of each theme; the first light-end steps failed the 2:1 floor and were darkened until they passed.
+
+### Verified
+
+- mytheus-backend: the `_regions` test passes when run directly (the module skips itself without Docker, which was not running); `ruff`, `black --check`, `scripts/emit_openapi --check` clean on the rebased tree; `mypy` reports only the two Windows-only `os.geteuid` errors in `libs/shared/crypto/providers.py`, untouched here.
+- mytheus-ui: `npx tsc --noEmit` and `npx next lint` clean after rebasing on main; `npm test` 633 of 635 passed, the 2 failures being the same `tests/skeletons.test.ts` cases that fail on the untouched code (routes outside ops); `next build` compiled and generated all 109 pages.
+- Rendered with sample data through a temporary loader and middleware patch (reverted, never committed) and screenshotted at 1440 and 390 wide, light and dark: overview, health, costs, staff, the workspace panel with a requested US to EU move, and map hover. The first round caught a truncated KPI figure, a clipped donut legend, an axis top far above the data, a wrapping tick label and an overflowing down-service note; all were fixed and rechecked.
+- The Impeccable detector reported only advisory font-size notes (13, 14 and 15px are not on the DESIGN.md ramp, though its prose uses them). No blocking findings.
+
+### Gaps
+
+- The map and region list need the backend deploy; until then the overview says region counts come with the next admin-ops-service deploy.
+- DESIGN.md does not yet list the ops chart scales or the 13 to 15px sizes the app uses.
+- Playwright and axe were not run on the new pages.
