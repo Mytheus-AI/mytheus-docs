@@ -217,7 +217,7 @@ flowchart TB
     RDc["caches · pub/sub · queues · dedupe · budgets"]
   end
   subgraph OBJ["Object storage (Cloudflare R2, S3-compatible)"]
-    OBJr["mytheus-recordings · mytheus-documents ·<br/>mytheus-attachments · mytheus-invoices ·<br/>mytheus-audit-archive · mytheus-exports"]
+    OBJr["mytheus-recordings · mytheus-documents ·<br/>mytheus-attachments · mytheus-invoices ·<br/>mytheus-audit-archive · mytheus-exports ·<br/>mytheus-branding"]
   end
   PGcore --> AGE
   PGpart -->|embedding consumer| QD
@@ -608,6 +608,7 @@ Object storage is **S3-compatible**, regionally placed per tenant via `data_resi
 | `mytheus-invoices` | Finalized invoice PDFs (`invoices.pdf_url`) | `{org_id}/{invoice_id}.pdf` | 7-year legal retention; object lock (immutable) |
 | `mytheus-audit-archive` | Cold-archived `audit_logs` partitions | `{org_id}/{YYYY-MM}/` | SOC2 retention; write-once object lock |
 | `mytheus-exports` | GDPR data-export bundles (right-of-access) | `{org_id}/{export_id}.zip` | Auto-expire 7 days after generation |
+| `mytheus-branding` | Workspace logos ([ADR-0048](adr/0048-workspace-logo.md)), written only by `identity-tenant-service` | `{org_id}/branding/logo-{version}.{ext}` | No lifecycle rule (never auto-expires); old version deleted on replace; purge on RTBF |
 
 **Cold transcript archive.** At T4 = 21B `transcript_chunks` rows/year, hot Postgres holds only the most recent 90 days. When a monthly partition ages past 90 days, the nightly Temporal job exports it to Parquet under `mytheus-recordings/{org_id}/_cold/transcript_chunks/{YYYY-MM}/` (columnar, compressed, queryable by Athena/DuckDB for rare historical access) and then drops the Postgres partition. The transcript view reads hot partitions from Postgres FTS; historical/legal access reads the Parquet cold tier.
 
