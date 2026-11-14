@@ -139,6 +139,7 @@ The ADRs record *why* each load-bearing decision was made.
 | [ADR-0047](adr/0047-ask-myte.md) | Ask Myte: one assistant over the whole platform at `/ask`, a `⌘J` sheet and entry points; the loop is rag-service `POST /api/rag/myte` (streamed, tool-calling through the router's `converse()`, MCP tools called as the person); writes are confirmed proposals; private threads in core-api `myte_threads`/`myte_messages`; answers in the Myte's own character. |
 | [ADR-0048](adr/0048-workspace-logo.md) | A workspace admin uploads the organisation's logo: cropped to a square in the browser, validated by its bytes (PNG, JPEG or WebP, 2 MB, SVG refused by the API and rasterised by the web editor), stored privately in R2's `mytheus-branding` under `{org_id}/branding/` and pointed at by `tenant_settings.logo_*`, served through a versioned, tenant-checked route, mirrored to the Clerk organization image, and drawn wherever the workspace appears. |
 | [ADR-0049](adr/0049-ask-myte-v2.md) | Ask Myte v2: live eval gate, stored proposal states, per-person metering and daily cap, latency metrics; ask a teammate's Myte (reviewed by the teammate), Myte reaches out first, seven more confirmed actions, memory, routines run on the next visit, voice mode, attached text files. |
+| [ADR-0050](adr/0050-kokoro-voice.md) | Every Myte speaks with Kokoro-82M, self-hosted on the VPS (`kokoro-tts`): core-api's default TTS provider, curated voices with personality defaults and one choice per person, `/api/v1/voice/*` streamed speech, and no device-voice fallback. |
 
 ---
 
