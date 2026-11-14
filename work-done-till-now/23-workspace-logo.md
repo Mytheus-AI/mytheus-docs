@@ -67,3 +67,10 @@ UI:
 - `npx tsc --noEmit -p .`, `npx next lint`: clean. `npm test`: 561 passed.
 - `CT_PORT=3611 npx playwright test -c tests/e2e/playwright-ct.config.ts org-logo --workers=4`: 21 passed. Full suite `--workers=4`: 597 passed, 473 skipped, 4 failed (the pre-existing ones above, one flaky and passing on rerun).
 - `npx -y node@20 ./node_modules/next/dist/bin/next build` with `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` exported from the main checkout's `.env`: compiled, `/api/org-logo` listed.
+
+## Follow-ups, 2026-11-14 (mytheus-ui)
+
+- Settings > Profile shows the logo card to admins too, editable (`9cb86da`); before, it showed only to members, read-only, and an admin found no way to set the logo outside the Workspace console.
+- Start a workspace takes an optional logo (`9919ef0`): picked with the editor's checks, previewed beside the name, and uploaded right after the workspace is set up as the same centred 512 px square (the upload is an admin call scoped to the new workspace, so it cannot happen earlier). A failed upload never undoes the workspace; the page says why and offers Continue. The image helpers moved to `src/lib/org-logo-browser.ts` unchanged (`596bbaa`).
+- Production: saving a logo answers the generic "could not be saved just now". The `S3_*` variables are set (otherwise the message names storage as not connected), so the write to R2 fails: owner step 1 above (create the private bucket `mytheus-branding` and allow the backend's R2 token on it) is the likely missing piece. Not confirmed from the VPS logs, which were not read; `docker logs` on identity-tenant-service shows `org logo: upload failed` with the cause.
+- Verified: CT `location-prompt-a11y` covers the Start a workspace picker (pick, remove, a non-image refused) in both themes, axe clean.

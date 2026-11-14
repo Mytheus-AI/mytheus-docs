@@ -139,3 +139,12 @@ The owner, whose workspace and members are in India, saw the map put their works
 - Verified: `tests/ops-geo.test.ts` (India at Kolkata, the not-set rules), `tsc`, lint, `npm test` 635 of 637 (the same two skeleton failures), backend `ruff`, `black`, `mypy` and `emit_openapi --check`; the card rendered with sample data, light, dark and 390 wide.
 - Gap: choosing the storage region when a workspace is created is not built; the default stays `us`.
 - Also reported the same day: `/ops` once showed "Not available right now", meaning the staff check failed or took over 6 seconds rather than a refusal. The service answered normally minutes later; the cause was not established because the VPS logs were not read.
+
+### Same day: People layout, where members work, and the prompt
+
+- mytheus-ui `69403b8`: People team cards stop at two columns (at three, a card was about 430 px and cut full names and emails short).
+- Where members work, set by them. Canon `e475e57` (`users.country`, `users.subdivision`); mytheus-backend `b9cbb3a` (migration `f1a2b3c4d5e6`, `GET /users/me` returns them, `PATCH /users/{id}` takes them from the person only, a new country clears the state) and `6fa4ace` (the overview's `member_places`, read per workspace under RLS, counts only).
+- mytheus-ui `f73123d`..`3b64ca1`: a "Where do you work?" card at the foot of the app (country pre-selected from the browser's zone, state for India and the United States, one Save that also stores the browser's time zone over the UTC default; the X hides it until the next sign-in), a Where you work card on Settings > Profile, and the ops map placing members by country with states listed beside it. It replaces the earlier time-zone-only prompt (`8cf7a04`).
+- Why country and state: the owner asked for them. A time zone cannot place a member by state (India has one zone), and `data_residency.region` is a storage setting.
+- Verified: backend `ruff`, `black`, `mypy`, `emit_openapi --check`, the pure validation test; the database tests run in CI. UI `tsc`, lint, `npm test` 636 of 638 (the two known skeleton failures), `tests/ops-geo.test.ts` (India at Kolkata, the US inside the US, states largest first, not-set counts), CT `location-prompt-a11y` 8 passed with axe clean in both themes.
+- Order: backend deployed before the UI, because the new save sends fields the old backend refuses.
