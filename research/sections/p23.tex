@@ -1,0 +1,45 @@
+\section{Principles of Mixed-Initiative User Interfaces}
+\paperhead{Principles of Mixed-Initiative User Interfaces}{Eric Horvitz}{CHI 1999 (ACM SIGCHI Conference on Human Factors in Computing Systems)}{https://doi.org/10.1145/302979.303030}{Crossref DOI 10.1145/302979.303030, title match 1.00, cited\_by=993}
+
+\subsection{What the paper does}
+
+The paper attacks a design split that had hardened into a debate: build richer direct-manipulation metaphors, or build interface agents that act for the user. Horvitz argues the choice is false and that the failures blamed on agents are specific and fixable: poor guessing about a user's goals, inadequate weighing of the costs and benefits of automated action, poor timing, and no efficient way to invoke, terminate or refine what the agent produced.
+
+The core idea is to treat ``act, ask, or stay quiet'' as a decision under uncertainty rather than a rule. An agent holds an explicit probability that the user has a goal given evidence, and expected utility over acting versus not acting yields a threshold above which autonomous action is worth taking. Twelve critical factors are stated and grounded in LookOut, a scheduling agent layered over Microsoft Outlook.
+
+\subsection{How the method works}
+
+LookOut parses the header, subject and body of an email brought to focus and identifies the date and time of an event implied by the sender, anchoring relative expressions to the composition date so a message written yesterday saying ``tomorrow'' resolves correctly. It fills an Outlook appointment record for the user to edit and save. When it cannot pin a day and time it gracefully degrades the goal, showing a scoped day, week or month view rather than a bad point guess.
+
+Goal inference is a text classifier over the message in focus returning the likelihood the user wants a calendar or an appointment; naive Bayes and SVM were explored, and the described version uses a linear SVM approximation with task-specific features. From $p(G \mid E)$ the system reasons over four outcomes on a zero to one utility scale, giving $eu(A \mid E) = p(G \mid E)u(A,G) + [1 - p(G \mid E)]u(A,\neg G)$ and the analogue for inaction. The lines cross at a threshold $p^{*}$ above which acting is optimal; adding dialog as a third option, with $u(D,G)$ and $u(D,\neg G)$, splits the axis into three regions.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm,>=Stealth,font=\footnotesize]
+\draw[->,thick] (0,0) to (9.4,0) node[below right]{$p(G \mid E)$};
+\foreach \x/\lb in {0/{$0$}, 3/{$p^{*}_{\neg A,D}$}, 6/{$p^{*}_{D,A}$}, 9/{$1$}}
+  \draw (\x,0.09) to (\x,-0.09) node[below=3pt]{\lb};
+\node at (1.5,0.4) {no action = discard};
+\node at (4.5,0.4) {dialog = log silently};
+\node at (7.5,0.4) {act = surface};
+\end{tikzpicture}
+\end{center}
+
+The thresholds are not constants: shifting any one utility moves $p^{*}$, so the cost of unwanted action grows with the depth of the user's focus elsewhere and the cost of withholding a wanted service grows as the user becomes rushed. Users may assess the four utilities or set the two thresholds directly, which the paper notes implies an expected-utility model held implicitly. Timing is a separate attention model: LookOut recorded message size against dwell time before manual invocation and defers service until the user is likely ready, waiting longer when the inferred probability is high or the user shows signs of thinking, then withdrawing. Lifelong learning labels a message schedule-relevant when a calendaring operation follows within a time horizon, and refits both models.
+
+\subsection{What it reports}
+
+This is a principles and systems paper, not a controlled study. It reports that the twelve factors can be realised in one artefact, that LookOut runs in manual, automated-assistance and social-agent modalities including handsfree speech, and that one probabilistic assessment drives both whether to act and how long to wait. The classifier was trained initially on approximately 1000 messages, divided into 500 calendar-relevant and 500 irrelevant messages. The timing study, over instrumented data from several users, found a nonlinear saturating relation between message size and preferred dwell time, fitted with a sigmoid. No accuracy or satisfaction figures are given and no always-ask or always-act baseline is compared against.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+This is the formal justification for the shape of Mytheus's confidence gating and the strongest attack on its current form. The three-band contract (below 0.4 discard, 0.4 to 0.7 log silently, above 0.7 surface) is exactly Horvitz's inaction / dialog / action partition, so cite this paper for the structure. But flat 0.7 and 0.4 are correct only if $u(A,\neg G)$ is identical across every agent, detector and participant, which it is not: a false missing-stakeholder alert from the \texttt{ProactiveAgent} interrupts a live call and costs every attendee, whereas a false workload flag at 80 percent capacity is nearly free. Build a per-detector utility table, derive $p^{*}_{\neg A,D}$ and $p^{*}_{D,A}$ from it, and present utility-weighted gating as a contribution with the flat cut-off kept as the ablation baseline. Two existing signals are the right inputs: the \texttt{PersonalListenerAgent}'s per-user relevance score modulates interruption cost, and the 30-second window boundary is a defer-until-ready point in Horvitz's sense. One precondition the paper never states: a threshold comparison is meaningless on uncalibrated confidence, so the Brier score already in the golden-set CI eval must be reported per agent and per role before any derived threshold is claimed. Cost is no obstacle, one multiply and a comparison against the 1.5 second \texttt{ContextGapAgent} round trip, and the same rule justifies that agent's silence fallback as the principled no-action region rather than a failure case. What does not transfer: the dwell-time model needs seconds of idle desktop observation a live call never provides, and utility elicitation here is single-tenant, so utilities must become tenant-scoped defaults never pooled across orgs.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*,itemsep=1pt,topsep=2pt]
+  \item No quantitative evaluation: classifier accuracy is never reported and the utility rule is never validated against a fixed-threshold, always-ask or always-act baseline, nor tested in a user study.
+  \item The four utilities are hand-assessed by a designer or single user, with no elicitation procedure that scales, no sensitivity analysis on how far $p^{*}$ moves when they are misjudged, and no treatment of classifier calibration error, which the comparison silently inherits.
+  \item The setting is one user, one application, asynchronous desktop email: interruption cost falls on one person reading a static message, never on a group in live synchronous speech where a mistimed intervention costs every participant at once and cannot be withdrawn.
+  \item Goal inference is a binary classifier over the single message in focus: no competing goals, no several agents holding different beliefs about different users, and no protocol by which one agent queries another before deciding to act.
+  \item The attention model is an offline per-user regression over message length requiring accumulated traces, so it assumes a cold-start corpus, no multi-tenant model governance, and no latency bound on inference itself.
+\end{itemize}

@@ -1,0 +1,50 @@
+\section{Building Effective AI Agents}
+\paperhead{Building Effective AI Agents}{Erik S., Barry Zhang}{Anthropic Engineering Blog, December 2024}{https://www.anthropic.com/engineering/building-effective-agents}{live page fetch, title present in page body}
+
+\subsection{What the paper does}
+
+Teams building on LLMs routinely reach for orchestration frameworks and multi-agent architectures before establishing that either is needed. Writing from Anthropic's experience with customer teams across industries, the authors report that ``the most successful implementations weren't using complex frameworks or specialized libraries. Instead, they were building with simple, composable patterns.'' The piece is an engineering synthesis rather than an empirical study: its contribution is a vocabulary and a decision rule, not a measured result.
+
+The core idea is a hard architectural line drawn inside the umbrella term ``agentic system''. Workflows are ``systems where LLMs and tools are orchestrated through predefined code paths''. Agents are ``systems where LLMs dynamically direct their own processes and tool usage, maintaining control over how they accomplish tasks''. Both are assembled from one primitive, the augmented LLM. The accompanying discipline is a cost argument: agentic systems trade latency and cost for task performance, so one should ``consider adding complexity only when it demonstrably improves outcomes'', and for many applications optimising a single LLM call with retrieval and in-context examples is already enough.
+
+\subsection{How the method works}
+
+The augmented LLM is a model given retrieval, tools and memory, generating its own search queries, selecting tools and deciding what to retain; the authors point at the Model Context Protocol for attaching third-party tools. Five workflow patterns compose that primitive over fixed code paths. \emph{Prompt chaining} decomposes a task into a sequence in which each call consumes the previous output, with optional programmatic gates between steps. \emph{Routing} classifies an input and dispatches it to a specialised follow-up task, the named example being sending easy queries to a smaller model such as Haiku and harder ones to Sonnet. \emph{Parallelization} has two forms: sectioning, where independent subtasks run concurrently (one model instance answers while another screens the query for inappropriate content), and voting, where the same task is run several times and results aggregated (multiple code vulnerability reviews). \emph{Orchestrator-workers} has a central LLM decompose a task at run time, delegate to worker LLMs and synthesise their results, for tasks whose subtasks cannot be predicted in advance. \emph{Evaluator-optimizer} pairs a generator with a critic in a loop, recommended only where evaluation criteria are clear and iterative refinement provides measurable value.
+
+An agent proper begins from a user command or discussion, then plans and operates independently, taking ``ground truth'' from the environment at each step (tool call results, code execution) to assess progress. Control comes from stopping conditions such as a maximum iteration count, and from pausing for human feedback at checkpoints or when blocked. The authors argue that the interface the model sees, the agent-computer interface, deserves as much design effort as a human-computer interface: tool definitions need example usage, edge cases, input format requirements and clear boundaries; formats should avoid escaping overhead and stay close to text the model has seen naturally; parameters should be poka-yoke so mistakes are hard to make.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm,
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=4pt, minimum height=9mm, text width=3.1cm, font=\footnotesize},
+  capsty/.style={align=center, font=\scriptsize},
+  ar/.style={-{Stealth[length=2mm]}}]
+\node[box] (aug) {Augmented LLM\\{\scriptsize retrieval, tools, memory}};
+\node[box, right=1.2cm of aug] (wf) {Workflow\\{\scriptsize predefined code path}};
+\node[box, right=1.2cm of wf] (ag) {Agent\\{\scriptsize LLM directs its own tool use}};
+\node[capsty, below=0.4cm of wf, text width=4.2cm] (pat) {chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer};
+\node[capsty, below=0.4cm of ag, text width=3.4cm] (stop) {stopping condition, human checkpoint};
+\draw[ar] (aug) -- (wf);
+\draw[ar] (wf) -- (ag);
+\draw[dotted] (wf) -- (pat);
+\draw[dotted] (ag) -- (stop);
+\draw[ar] (ag.north east) to[out=60, in=120, looseness=1.8] node[midway, above, font=\scriptsize] {environment feedback} (ag.north west);
+\end{tikzpicture}
+\end{center}
+
+\subsection{What it reports}
+
+The article contains no benchmark tables, no metrics and no ablations; every claim is reported practice from customer deployments. It names two domains where agents are working well: customer support, where the interaction is naturally conversational, tools reach order history and knowledge bases, actions such as refunds are programmable, and success is measurable through user-defined resolution; and coding, where solutions are verifiable by automated tests, citing agents that resolve real GitHub issues in SWE-bench Verified while noting that ``human review remains crucial''. The most concrete engineering finding is in the tool appendix: an agent made errors with relative filepaths once it had moved out of the root directory, and changing the tool to require absolute filepaths made usage reliable, with the team reporting that they spent more time optimising their tools than the overall prompt. On frameworks, the recommendation is to start with the LLM APIs directly, and if a framework is used, to understand the underlying code, since incorrect assumptions about what is under the hood are a common source of error.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+Adopt this taxonomy verbatim in the design chapter and apply it against Mytheus's own naming, because it cuts the wrong way and that honesty is defensible. \texttt{DecisionAgent}, \texttt{ActionAgent}, \texttt{QuestionAgent} and \texttt{PersonalListenerAgent} are \emph{workflows}: fixed-path extractors over a 30-second window with a versioned prompt template and a fixed confidence gate, no dynamic tool choice anywhere. The \texttt{ProactiveAgent} conflict detector is weaker still, a deterministic AGE graph traversal. The Haiku relevance pre-gate is literally the Routing pattern, and tiered LiteLLM routing (Haiku triage, Sonnet extraction, Opus for conflict and synthesis) is the article's own Haiku-versus-Sonnet example, so cite it as prior art rather than claiming the cost cascade as novel architecture. Only \texttt{ContextGapAgent} clears the bar for ``agent'': it chooses at run time whom to query over \texttt{agent-requests}, and its fallback chain (peer agents, related-meeting agents, RAG, silence) plus the deadline and \texttt{correlation\_id} are exactly the stopping conditions the article demands. That means the article also sets the burden of proof: build the ablation where dynamic peer selection is replaced by a static workflow (always RAG, or broadcast to all peers and take the first reply) and measure context-fill correctness and citation validity against p95 round-trip time. If the static workflow matches it inside the 1.5\,s budget, the agentic version has not earned its latency and should be cut. Treat the ACI advice as a spec for the request envelope: require fully qualified, tenant-scoped participant identifiers rather than display names (the absolute-filepath lesson), make \texttt{deadline} mandatory, and document each field with an example. Frame the no-silent-commit contract as a strengthening of the article's optional ``pause for human feedback at checkpoints'' into a mandatory gate. Be clear about what it does not give you: it assumes a trusted environment, so deny-by-default tenant plus role authorisation on every agent-to-agent call and per-tenant token quotas are outside its scope and must be justified from elsewhere. It is also a blog post, so use it for vocabulary and framing, never as evidence for a results claim.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+  \item No evaluation of any kind: no benchmarks, latency or cost measurements, and no ablation comparing a workflow against an agent on the same task, so the central claim that simple composable patterns outperform frameworks is reported experience and the workflow-versus-agent boundary is never tested empirically.
+  \item Every pattern assumes a discrete, user-initiated, turn-based request; none addresses a continuously arriving diarised speech stream where the trigger is a 30-second window rather than a user command, and no pattern is given a wall-clock deadline or a p95 latency budget of any kind.
+  \item The multi-LLM topology is strictly hierarchical (orchestrator to workers, generator to evaluator). Peer-to-peer messaging between co-equal agents owned by different principals is never considered, so there is no addressing scheme, no request or response envelope, no deadline semantics and no correctness criterion for an answer supplied by another user's agent.
+  \item Output is assumed to be a single artefact for a single requester: there is no notion of the same input producing different outputs for different recipients, no relevance scoring against a user profile, and no discussion of what personalisation does to caching, evaluation labels or the tool interface.
+  \item Security and governance are reduced to ``trusted environments'' and sandboxed testing, with no model for multi-tenant isolation, per-caller authorisation on tool or agent invocation, PII handling before model egress, or token budget enforcement; and stopping conditions stop at a maximum iteration count, with no deadline-bounded degradation ladder that falls back to a cheaper source and finally to returning nothing.
+\end{itemize}

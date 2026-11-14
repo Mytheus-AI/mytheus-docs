@@ -1,0 +1,50 @@
+\section{Personalize Before Retrieve: LLM-based Personalized Query Expansion for User-Centric Retrieval}
+\paperhead{Personalize Before Retrieve: LLM-based Personalized Query Expansion for User-Centric Retrieval}{Yingyi Zhang, Pengyue Jia, Derong Xu, Yi Wen, Xianneng Li, et al.}{arXiv preprint (cs.IR), 2025}{https://arxiv.org/abs/2510.08935}{arXiv API id\_list=2510.08935, title match 1.00}
+
+\subsection{What the paper does}
+
+Query expansion is the lever that decides what a RAG system retrieves, but every established expander (HyDE, Query2Doc, MILL, chain-of-thought prompting, ThinkQE) applies one uniform strategy: the same query string produces the same expansion for every user. The authors argue this is exactly wrong once retrieval targets a private, user-specific corpus, because identical surface text carries different intent across people. A query such as ``How would you describe my dietary preferences?'' should resolve toward organic ingredients for one user and toward new side dishes for another. They name two obstacles: user expression styles are diverse and non-transferable, so a generic expansion does not preserve personalized intent, and user corpora have heterogeneous semantic structure, so an expanded query has no reliable region to anchor into.
+
+The response is to move personalization ahead of retrieval rather than patching results afterwards. Personalize Before Retrieve (PBR) rewrites the query representation itself using two user-specific signals, one stylistic and one structural, then hands a single fused vector to an ordinary nearest-neighbour retriever. The retriever, the index and the encoder are left untouched, so the method is a drop-in stage rather than a new retrieval architecture.
+
+\subsection{How the method works}
+
+Everything happens in embedding space under a frozen encoder $\phi$. The user history $H=\{h_1,\dots,h_n\}$ is encoded once into corpus vectors $\mathcal{C}=\{\mathbf{c}_1,\dots,\mathbf{c}_n\}$, and the goal is a transformed query $\mathbf{q}^{*}=\mathbf{q}+\Delta_{\mathrm{user}}(\mathbf{q},\mathcal{C})$.
+
+\textbf{P-PRF} first selects a task-relevant subset $H_q$, the top $k_1$ historical utterances by cosine similarity to $\mathbf{q}$, then issues two LLM calls at temperature 0. The ``roughly'' prompt asks for natural candidate utterances the user might plausibly say, conditioned on that history, with explicit guidelines forbidding paraphrase, requiring variation in tone and emphasis, requiring each utterance to exceed 25 words, and demanding JSON output; the $m$ generated utterances are embedded and mean-pooled into $\mathbf{f}_{\mathrm{avg}}$. The ``logically'' prompt asks for a step-by-step rationale that maintains the user's tone and reasoning patterns, embedded into $\mathbf{r}$.
+
+\textbf{P-Anchor} builds a semantic graph over the user's own corpus vectors. Edge weight $A_{ij}=S_{ij}$ (cosine) is retained only when $S_{ij}\geq\theta$ and $j$ lies in the top $k_2$ neighbours of $i$, and is zero otherwise. Personalized PageRank on the row-normalized transition matrix yields a stationary distribution $\pi$, and the anchor $\mathbf{c}_{\mathrm{Anchor}}=\sum_i \pi_i\mathbf{c}_i$ is a centrality-weighted centroid of the corpus. Fusion then scales each expansion signal by its agreement with the midpoint of query and anchor: $w_1=1+\mathrm{sim}(\tfrac{\mathbf{q}+\mathbf{c}_{\mathrm{Anchor}}}{2},\mathbf{f}_{\mathrm{avg}})$, $w_2$ likewise against $\mathbf{r}$, giving $\Delta_{\mathrm{user}}=\mathbf{c}_{\mathrm{Anchor}}+w_1\mathbf{f}_{\mathrm{avg}}+w_2\mathbf{r}$. Retrieval is FAISS nearest-neighbour search with Euclidean distance over the user corpus. Defaults are $k_1=5$, $m=5$, $\theta=0.75$, $k_2=10$, raised to $k_2=50$ on the denser split.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth, node distance=1.4cm,
+  b/.style={draw, rounded corners=2pt, align=center, font=\scriptsize, inner sep=3pt}]
+  \node[b, text width=1.3cm] (q) at (0,0) {query $\mathbf{q}$};
+  \node[b, text width=4.4cm] (prf) at (3.7,0.85) {\textbf{P-PRF}: top-$k_1$ history $\to$ LLM pseudo utterances $\mathbf{f}_{\mathrm{avg}}$, rationale $\mathbf{r}$};
+  \node[b, text width=4.4cm] (an) at (3.7,-0.85) {\textbf{P-Anchor}: cosine kNN graph ($\theta$, $k_2$) $\to$ PageRank $\to$ $\mathbf{c}_{\mathrm{Anchor}}$};
+  \node[b, text width=2.1cm] (f) at (8.4,0) {fusion $w_1,w_2$: $\mathbf{q}^{*}=\mathbf{q}+\Delta_{\mathrm{user}}$};
+  \node[b, text width=2.2cm] (r) at (11.7,0) {FAISS top-$k$ over user corpus};
+  \draw[->] (q) -- (prf); \draw[->] (q) -- (an);
+  \draw[->] (prf) -- (f); \draw[->] (an) -- (f);
+  \draw[->] (f) -- (r);
+\end{tikzpicture}
+\end{center}
+
+\subsection{What it reports}
+
+Three frozen dense encoders are used as retrieval backbones (\texttt{multi-qa-MiniLM-L6-cos-v1}, \texttt{all-MiniLM-L6-v2}, \texttt{bge-base-en-v1.5}), against Base, HyDE, Query2Term, MILL, CoT and ThinkQE, each run five times. On PersonaBench (6 users, 263 queries, per-user corpora of conversations, AI dialogues and e-commerce history) PBR reaches an overall average R@5 of 0.4527 and N@5 of 0.3819, against the strongest baseline ThinkQE at 0.4098 and 0.3484, marked significant at $p<0.05$. On LongMemEval the margins are far thinner: with \texttt{bge-base-en-v1.5}, R@1 is 0.2315 versus 0.2267 on the sparse split and 0.1408 versus 0.1384 on the dense split.
+
+The ablation shows P-PRF carries almost all the weight. Average PersonaBench R@5 falls from 0.4527 to 0.3005 without P-PRF, but only to 0.4391 without P-Anchor. Removing both (0.4002) is better than removing P-PRF alone, which the authors attribute to redundancy between the signals: an anchor without style-aligned feedback pulls the query off target. Per-stage timing puts graph construction at 0.0008 s and final retrieval at 0.0167 s, while the expansion LLM call dominates at 2.6646 s, roughly 0.18 s more than ThinkQE. Downstream generation on LongMemEval-S gives 42.6\% exact match for PBR against 41.8\% for ThinkQE and 40.0\% with no expansion. Sensitivity analysis peaks at $\theta$ between 0.65 and 0.75 with $k_2=5$, with over-propagation at $\theta=0.8$ causing semantic drift.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+This is the closest published prior art to the Mytheus \texttt{expand} stage and must be cited there; it pre-empts any naive novelty claim about role-tuned query variants. Differentiate on two axes: PBR conditions on a single user's behavioural interaction history, whereas Mytheus conditions on structured organizational context returned by \texttt{get\_user\_context} (role, skills, team, recent meetings, topics); and PBR retrieves from a corpus that user personally authored, whereas Mytheus retrieves from a shared multi-party transcript no participant authored. Build PBR as the strongest baseline in the golden-set eval: freeze \texttt{retrieve} and \texttt{rerank}, swap only \texttt{expand}, and measure whether role-tuned variants still change the top-10 after RRF at $k=60$ and BGE-reranker-base rescoring. That is the paper's blind spot, since it only tests single-arm dense FAISS and never checks whether a cross-encoder erases the expansion shift, and it is the cheapest defensible result Mytheus can claim. Two things do not transfer. A 2.6646 s expansion call is fatal inside the \texttt{ContextGapAgent} p95 1.5 s peer round trip and breaks the warm 500 ms RAG target, so any PBR-like signal must be precomputed and cached per participant, for example a P-Anchor style PageRank centroid over that tenant's confirmed decision embeddings built offline, rather than generated per query; the graph build itself is cheap enough to afford. Second, $\mathbf{q}^{*}$ is a raw vector shift, useless to the Postgres full-text arm and the AGE \texttt{RELATES\_TO} and \texttt{FOLLOWS\_FROM} traversal, so \texttt{expand} should keep emitting text variants and treat the anchor as an optional bias on the Qdrant arm only. Note also that the P-PRF prompt ships raw user history to an external LLM, which must pass PII redaction before egress and stay inside per-tenant collection boundaries.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*,nosep]
+  \item Retrieval is always confined to one user's own private corpus, so the paper offers no mechanism for personalizing over a corpus authored jointly by several speakers, and no notion of tenant-scoped rather than user-scoped isolation: every user is effectively their own tenant.
+  \item Personalization is derived purely from behavioural interaction history (past utterances, assistant dialogues, purchase records); structured profile attributes such as role, skills or team are never used, and cold start is never evaluated, although both the top-$k_1$ selection in P-PRF and the graph in P-Anchor require an existing history (PersonaBench corpora average about 88 segments per user).
+  \item The corpus is static and offline: the kNN graph and its PageRank distribution are computed once over a fixed history, and no experiment involves a corpus that grows during the session, so incremental anchor recomputation over streaming speech is entirely unaddressed.
+  \item Only single-arm dense retrieval is tested, FAISS with Euclidean distance over three frozen bi-encoders; there is no lexical or BM25 arm, no graph relation arm, no rank fusion and no cross-encoder reranking stage, leaving it unknown whether an embedding-space query shift survives a reranker that scores query and passage jointly.
+  \item Evaluation reports recall, NDCG and a single exact-match figure, with no precision-side analysis of whether style-aligned expansion also retrieves stylistically similar but irrelevant passages, and no attribution or citation-validity metric; the expansion LLM is named only as ``an advanced LLM'', with no token cost and no caching, batching or cheaper-tier variant measured against the 2.6646 s per-query expansion.
+\end{itemize}

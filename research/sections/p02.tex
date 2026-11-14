@@ -1,0 +1,53 @@
+\section{CAMEL: Communicative Agents for ``Mind'' Exploration of Large Language Model Society}
+\paperhead{CAMEL: Communicative Agents for ``Mind'' Exploration of Large Language Model Society}{Guohao Li, Hasan Abed Al Kader Hammoud, Hani Itani, Dmitrii Khizbullin, Bernard Ghanem}{NeurIPS 2023}{https://arxiv.org/abs/2303.17760}{arXiv API id\_list=2303.17760, title match 1.00}
+
+\subsection{What the paper does}
+
+Chat-based LLMs solve hard tasks only when a human stays in the loop to steer each turn. The paper attacks that dependency directly: can two role-assigned agents be handed a task once and then cooperate to completion with no further human instruction? The obstacle is not capability but control. Left to converse freely, two instances of the same model drift out of their assigned roles, stall, or never stop.
+
+The proposal is \emph{role-playing} driven by \emph{inception prompting}. A human supplies a seed idea and two role names; the system produces a concrete task and two symmetric system prompts, one casting an agent as AI User (who instructs) and one as AI Assistant (who solves). Prompt engineering happens only at $t=0$. After that the two agents prompt each other in a loop until a termination rule fires. The paper's second contribution is honest failure reporting: it names four specific ways the autonomous dyad breaks, and shows the prompt clauses and stop rules introduced to suppress each.
+
+\subsection{How the method works}
+
+Inception prompting is three templates. The task specifier prompt $P_T$ takes a vague idea plus the two role names and rewrites it as a concrete task under a word limit. The assistant system prompt $P_A$ and user system prompt $P_U$ are deliberately near-symmetric and both carry the task, the role pair, the communication protocol and the termination conditions.
+
+The load-bearing clauses in $P_A$ are: ``Never forget you are a \texttt{<ASSISTANT\_ROLE>} and I am a \texttt{<USER\_ROLE>}''; ``Never flip roles! Never instruct me!''; a mandatory reply schema beginning \texttt{Solution: <YOUR\_SOLUTION>} and ending with \texttt{Next request.}; and an explicit licence to decline for physical, moral, legal or capability reasons. $P_U$ mirrors these and constrains the user to exactly two instruction forms, an \texttt{Instruction} with an \texttt{Input} or with \texttt{Input: None}, one instruction per turn, and adds ``You should instruct me not ask me questions.'' The user signals completion with the single token \texttt{<CAMEL\_TASK\_DONE>}.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm, >=Stealth, every node/.style={font=\scriptsize},
+  box/.style={draw, rounded corners=1pt, align=center, inner sep=3pt, minimum height=6mm}]
+\node[box] (seed) {seed idea\\+ 2 roles};
+\node[box, right=of seed] (spec) {task specifier\\$P_T$};
+\node[box, right=of spec] (user) {AI user\\$P_U$};
+\node[box, right=of user] (asst) {AI assistant\\$P_A$};
+\node[box, right=of asst] (stop) {5 stop rules\\40 msg cap};
+\draw[->] (seed) -- (spec);
+\draw[->] (spec) -- (user);
+\draw[->] ([yshift=1.6pt]user.east) -- node[above, font=\tiny]{instruct} ([yshift=1.6pt]asst.west);
+\draw[->] ([yshift=-1.6pt]asst.west) -- node[below, font=\tiny]{solution} ([yshift=-1.6pt]user.east);
+\draw[->] (asst) -- (stop);
+\end{tikzpicture}
+\end{center}
+
+Five conditions end a session: the user issuing no instruction for 3 rounds; the assistant instructing the user, read as role reversal; the end-of-task token; either agent hitting the model token limit; and a hard cap of 40 messages, imposed because cost grows quadratically with conversation length. Both agents are gpt-3.5-turbo. The same recipe generates data at scale: 50 assistant roles by 50 user roles by 10 tasks yields 25,000 AI Society conversations, with 20 programming languages and 50 domains for Code, a 50K pair Math set and 20K pairs each for Physics, Biology and Chemistry.
+
+\subsection{What it reports}
+
+Four failure modes are named and illustrated: \emph{role flipping} (the assistant begins instructing, which the paper traces to the assistant asking questions at all), \emph{assistant repeats instruction}, \emph{flake replies} of the form ``I will\ldots'' that promise action without delivering it, and \emph{infinite loop of messages} where both agents thank each other indefinitely, sometimes while visibly aware they are stuck.
+
+On 100 AI Society tasks and 100 Code tasks, the CAMEL transcript is summarised by GPT-4 into one consolidated solution and compared blind against a gpt-3.5-turbo single-shot answer. Across 453 human responses on AI Society, CAMEL wins 76.3\%, gpt-3.5-turbo wins 10.4\%, 13.3\% draw; GPT-4 as judge gives 73.0\% / 23.0\% / 4.0\%, and on Code 76.0\% / 24.0\% / 0.0\%. A LLaMA-7B fine-tuned on all four generated sets reaches 14.0\% pass@1 and 57.9\% pass@100 on HumanEval, above LLaMA-7B (10.5 / 36.5) and Vicuna-7B (11.0 / 42.9), though far below gpt-3.5-turbo at 69.4 / 94.0.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+CAMEL is the lineage citation for \texttt{ContextGapAgent}: two role-specialised agents exchanging messages to resolve something one of them lacks. Cite it for the premise and then state the delta plainly, because CAMEL's dyad cannot run inside Mytheus. An open-ended loop capped at 40 messages has no wall-clock bound at all and would blow the p95 1.5 second peer round-trip budget by orders of magnitude. The \texttt{agent-requests} / \texttt{agent-responses} envelope is the fix: one request, one response, a \texttt{deadline} and a \texttt{correlation\_id} make non-termination structurally impossible rather than prompt-discouraged, which is the defensible novelty claim. What to \textbf{build}: turn CAMEL's four failure modes into named golden-set eval cases for the peer-response path. A flake reply (``I will check with the team'') is precisely the response that must score below 0.4 and be discarded, never surfaced at the 0.7 gate; role flipping maps to a responder \texttt{PersonalListenerAgent} that asks the requester a question instead of answering, and should be rejected by the response schema before scoring. Port CAMEL's decline clause into the versioned prompt-template loader as the enforcement arm of silent-on-empty: the responder must decline when its own user's context does not cover the query, then fall through to related meetings, then RAG. What to \textbf{reject}: role as a prompt string. CAMEL has no identity, no scope and no isolation, so a role clause is a style hint, not an authorization boundary; Mytheus must keep deny-by-default tenant plus role checks server side, since a peer agent leaking one tenant's context on a persuasive prompt is a data breach, not a formatting error. Finally, do not reuse CAMEL's 76.3\% as evidence for Mytheus; it is an offline quality preference with no latency budget. Measure and report context-fill correctness with 100\% citation resolution and p95 round-trip time instead.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+\item No latency is measured anywhere. Cost is discussed only as growing quadratically with conversation length and is controlled by a 40-message cap; there is no per-turn deadline, no timeout and no wall-clock figure, so the framework is designed for offline dataset generation and is untested under any real-time budget.
+\item The four failure modes are reported qualitatively from preliminary analysis with appendix examples and \emph{no measured frequency}. There is no ablation isolating which prompt clause or stop rule suppresses which failure, so the claim that ``Never flip roles!'' prevents role flipping is asserted rather than quantified.
+\item Termination is heuristic and prompt-enforced rather than protocol-enforced: \texttt{<CAMEL\_TASK\_DONE>} depends on the user agent's own judgement, and three of the five stop rules are safety nets that fire only after a failure has already occurred, leaving no bounded-round-trip guarantee.
+\item Both agents are the same base model with no private per-agent state; role is entirely a prompt persona. The setting therefore never tests the case that motivates context-gap filling, where one agent genuinely holds information the other lacks, and it has no notion of tenant scope, access control or what one agent may reveal to another.
+\item Evaluation uses a single baseline, gpt-3.5-turbo single-shot, with no stronger single-agent comparison such as chain-of-thought or self-refine, and the treatment arm alone receives a GPT-4 summarisation pass, so the margin cannot be attributed to multi-agent structure specifically.
+\item Responses are ungrounded parametric generation with no retrieval, provenance or citation contract, so the framework offers no mechanism for a never-fabricate guarantee of the kind Mytheus requires.
+\end{itemize}

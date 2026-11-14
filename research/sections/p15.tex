@@ -1,0 +1,47 @@
+\section{QMSum: A New Benchmark for Query-based Multi-domain Meeting Summarization}
+\paperhead{QMSum: A New Benchmark for Query-based Multi-domain Meeting Summarization}{Ming Zhong, Da Yin, Tao Yu, Ahmad Zaidi, Mutethia Mutuma, et al.}{NAACL 2021}{https://arxiv.org/abs/2104.05938}{arXiv API id\_list=2104.05938, title match 1.00}
+
+\subsection{What the paper does}
+
+Long multi-party meetings carry several topics and several audiences, and the paper argues that no single short summary can cover all of that content. Instead of asking a model to compress a whole meeting into one artefact, the authors define query-based multi-domain meeting summarization: given a query, a system must select the relevant spans of the transcript and summarize only those. QMSum is the benchmark for that task, with 1,808 query-summary pairs over 232 meetings.
+
+The dataset is deliberately multi-domain so that generalization is testable rather than assumed: 137 product meetings (AMI), 59 academic meetings (ICSI) and 36 committee meetings drawn from parliamentary proceedings, averaging 9069.8 words and 556.8 turns per meeting. Crucially, annotation ships gold relevant text spans alongside each query and summary, which turns meeting understanding into an explicitly two-stage contract: locate, then generate.
+
+\subsection{How the method works}
+
+Annotation runs in three stages. Annotators first segment a meeting into main topics with their relevant, possibly non-contiguous, turn spans. They then write queries from fixed schemas, splitting them into \emph{general} queries about whole-meeting content and \emph{specific} queries about relatively detailed information tied to one topic. Finally they write abstractive answers. A span is only admitted if it is large enough to be a summarization rather than a question-answering target, and the annotation team was 2 native and 10 non-native English-literature speakers working under expert review.
+
+The modelling contribution is a locate-then-summarize pipeline. The Locator is a hierarchical ranking model: feature-based BERT embeddings feed a CNN turn encoder, a speaker embedding is concatenated to each utterance representation, a document-level Transformer contextualizes turns across the meeting, the query is encoded the same way, and an MLP scores every turn against the query under a binary cross-entropy objective on gold-span membership. The top-scoring turns, taken to a fixed extraction ratio, are concatenated in order and handed to a Summarizer. Locator baselines are random selection, cosine similarity over BERT embeddings, and a pointer network that emits start and end turn indices. Summarizers are a Pointer-Generator network with copy and coverage, BART, and HMNet.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.2cm, >=Stealth, every node/.style={font=\footnotesize},
+  box/.style={draw, rounded corners=2pt, minimum height=9mm, align=center, inner sep=3pt}]
+\node[box] (q) {Query $+$\\ full meeting};
+\node[box, right=of q] (loc) {Locator\\ (turn ranker)};
+\node[box, right=of loc] (sp) {Top turns at\\ ratio $1/6$};
+\node[box, right=of sp] (sum) {Summarizer\\ (BART, HMNet)};
+\draw[->] (q) to (loc);
+\draw[->] (loc) to (sp);
+\draw[->] (sp) to (sum);
+\node[font=\scriptsize, below=2mm of loc] {$\approx$ Mytheus retrieve $+$ rerank};
+\node[font=\scriptsize, below=2mm of sp] {$\approx$ assemble};
+\end{tikzpicture}
+\end{center}
+
+\subsection{What it reports}
+
+Measured as ROUGE-L recall against gold spans at a $1/6$ extraction ratio, the Locator reaches 72.51 against 58.86 for random, 55.97 for the similarity baseline and 61.27 for the pointer network; the authors read the weak similarity result as a style mismatch between meeting speech and BERT's pretraining text. End to end, BART on Locator spans scores 31.74 / 8.53 / 28.21 (R-1 / R-2 / R-L) versus 32.18 / 8.48 / 28.56 on gold spans, while HMNet moves from 32.29 / 8.67 / 28.17 on predicted spans to 36.06 / 11.36 / 31.27 on gold spans. An extractive oracle reaches 42.84 / 16.86 / 39.20. The pattern matters more than the absolute values: truncation-limited generators are nearly indifferent to span quality, whereas the longer-context model gains substantially from gold spans, so the retrieval stage, not the generator, is the binding constraint. Manual analysis is bleak in a useful way: inconsistent facts appear in 74\% of inspected samples and 31\% of summaries are completely unrelated to the given query.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+QMSum is the natural offline harness for the frozen \texttt{retrieve} $\to$ \texttt{rerank} $\to$ \texttt{assemble} stages, because it is the rare meeting corpus with gold relevant spans rather than only reference text. Build a CI job that runs the three retrieval arms plus RRF ($k{=}60$) plus the BGE-reranker-base cross-encoder over QMSum meetings and scores recall of gold-span turns at the top-10 cut and at the 3,000-token assemble cap, expressed as an extraction ratio so it is directly comparable to the paper's Table 2 column at $1/6$. Cite the HMNet gold-versus-predicted gap (36.06 to 32.29 R-1) as the empirical justification for keeping an expensive cross-encoder rerank stage while routing generation to Sonnet: span quality buys more than generator capacity. Cite the 74\% factual-inconsistency figure as external motivation for the citation contract, the 0.7 and 0.4 confidence gates, and the no-silent-commit rule. Two hard cautions. First, QMSum queries carry no asker identity and each query has exactly one gold answer, so nothing here can validate the \texttt{PersonalListenerAgent} claim; the student must either re-annotate a QMSum slice with role-conditioned summaries or state plainly in the paper that no public benchmark measures the personalization axis. Second, the Locator runs a document-level Transformer over hundreds of turns per query with no latency accounting at all, so it is not a template for the \texttt{ContextGapAgent} path under a p95 of 1.5\,s; use QMSum strictly off the live path, as an offline quality gate, and keep it out of the per-tenant runtime since the corpus has no notion of tenant scope.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt, topsep=2pt]
+  \item Queries are anonymous and each has a single gold summary: there is no asker role, expertise or team attached, so the benchmark cannot express, let alone score, per-participant output for the same meeting content.
+  \item The setting is entirely post hoc: the complete transcript exists before any query is issued, so span selection over a partial or still-growing transcript, and any notion of intervening while the meeting is live, are never evaluated.
+  \item No latency, throughput or cost is reported anywhere, and the Locator re-encodes the full meeting per query, so the paper offers no evidence about operation inside a real-time budget or under tiered model routing.
+  \item Inputs are curated transcripts with speaker labels supplied; ASR word error and diarization error never enter the pipeline, yet the Locator conditions on speaker embeddings, so its robustness to noisy streaming speaker attribution is untested.
+  \item Evaluation is ROUGE plus a small manual study, with no provenance or attribution metric, no confidence calibration, and no abstention option, so a system is never rewarded for returning nothing when the located spans do not support an answer.
+\end{itemize}

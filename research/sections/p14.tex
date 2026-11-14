@@ -1,0 +1,56 @@
+\section{Zep: A Temporal Knowledge Graph Architecture for Agent Memory}
+\paperhead{Zep: A Temporal Knowledge Graph Architecture for Agent Memory}{Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais, Jack Ryan, Daniel Chalef}{arXiv preprint (Zep AI, Graphiti engine), 2025}{https://arxiv.org/abs/2501.13956}{arXiv API id\_list=2501.13956, title match 1.00}
+
+\subsection{What the paper does}
+
+RAG for agents assumes a largely static corpus: documents are indexed once and rarely change. Enterprise agents violate that assumption: their knowledge arrives as an ongoing conversation plus structured business data, and facts do not merely accumulate, they stop being true. The failure mode attacked here is a memory system that either drops old context or retains stale context contradicting the present.
+
+Zep is a memory-layer service built on Graphiti, a temporally aware knowledge graph engine. Rather than storing chat history or rolling summaries, it incrementally derives a graph of entities and fact edges in which every edge records both when the fact held in the world and when the system learned it. New information never overwrites: a contradicted edge is expired, not deleted. Retrieval then returns a short list of facts with their date ranges instead of a transcript.
+
+\subsection{How the method works}
+
+The graph has three tiers. The \emph{episode subgraph} stores raw ingested units (message, text or JSON) non-lossily, with episodic edges linking each episode bidirectionally to the entities extracted from it, so semantic artefacts can be traced back to their source. The \emph{semantic entity subgraph} holds resolved entities and fact edges. The \emph{community subgraph} holds clusters of strongly connected entities with generated summaries.
+
+Ingestion runs a fixed chain. Entity extraction sees the current message plus the last $n=4$ messages, extracts the speaker as an entity automatically, and applies a reflexion-style pass to cut hallucinated entities. Entity names are embedded into a 1024-dimensional space; duplicate candidates come from cosine search plus a separate full-text search over existing names and summaries, and an LLM entity-resolution prompt decides the merge. Writes use predefined Cypher rather than LLM-generated queries. Fact edges are deduplicated only against edges already existing between the same entity pair, which bounds the search. Temporality is bi-temporal: timeline $T$ carries $t_{valid}$ and $t_{invalid}$ (when the fact held), timeline $T'$ carries created and expired (when the system asserted or retracted it). Invalidation is an LLM comparison of a new edge against semantically related existing edges; on a temporally overlapping contradiction the old edge's $t_{invalid}$ is set to the new edge's $t_{valid}$, with $T'$ order deciding that newer information wins. Communities use label propagation rather than Leiden, so a new node simply joins the plurality community of its neighbours, deferring expensive full refreshes at the cost of gradual drift.
+
+Retrieval composes search, rerank and construct. Search runs cosine similarity, Okapi BM25 (both over Neo4j's Lucene) and $n$-hop breadth-first search, which accepts seed nodes such as recent episodes. Reranking offers RRF, MMR, node distance from a centroid, episode-mention frequency, or cross-encoder scoring at the highest cost. The constructor emits facts with their valid and invalid dates plus entity and community summaries.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm, font=\scriptsize,
+  b/.style={draw, rounded corners=2pt, align=center, text width=2.15cm, inner sep=3pt, minimum height=8mm},
+  a/.style={-Stealth}]
+\node[b] (ep) {Episode\\(raw message)};
+\node[b, right=of ep] (en) {Entities:\\extract, resolve};
+\node[b, right=of en] (fc) {Fact edge:\\set valid\_at};
+\node[b, right=of fc] (iv) {Contradiction:\\expire old edge};
+\node[b, below=0.75cm of ep] (gr) {Graph: episodic,\\semantic, community};
+\node[b, right=of gr] (se) {Search: cosine,\\BM25, BFS};
+\node[b, right=of se] (rr) {Rerank: RRF, MMR,\\cross-encoder};
+\node[b, right=of rr] (cs) {Context string:\\facts + date ranges};
+\draw[a] (ep) to (en);
+\draw[a] (en) to (fc);
+\draw[a] (fc) to (iv);
+\draw[a] (iv.south) to ($(iv.south)+(0,-0.375)$) to ($(gr.north)+(0,0.375)$) to (gr.north);
+\draw[a] (gr) to (se);
+\draw[a] (se) to (rr);
+\draw[a] (rr) to (cs);
+\end{tikzpicture}
+\end{center}
+
+\subsection{What it reports}
+
+On Deep Memory Retrieval (500 conversations from Multi-Session Chat, 5 sessions of up to 12 messages each), Zep scores 94.8\% against MemGPT's 93.4\% with gpt-4-turbo, and 98.2\% against a full-conversation baseline's 98.0\% with gpt-4o-mini. The authors themselves judge DMR inadequate: the conversations fit inside a modern context window and the full-conversation baseline (94.4\%) already beats MemGPT. On LongMemEval$_s$, where conversations average about 115,000 tokens, Zep reaches 63.8\% versus 55.4\% full-context on gpt-4o-mini and 71.2\% versus 60.2\% on gpt-4o, with query latency of 3.20 s and 2.58 s against 31.3 s and 28.9 s, and average context of 1.6k tokens against 115k. Gains concentrate in single-session-preference, temporal-reasoning and multi-session questions; single-session-assistant regresses (94.6\% to 80.4\% on gpt-4o) and knowledge-update dips slightly on gpt-4o-mini. MemGPT could not be run on LongMemEval at all. Embedding and reranking use BGE-m3; graph construction uses gpt-4o-mini.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+Adopt Graphiti's four-timestamp edge schema on the Apache AGE graph: \texttt{valid\_at} and \texttt{invalid\_at} on the meeting timeline, created and expired on the ingest timeline, for every confirmed Decision edge, so a superseded decision is expired rather than deleted and \texttt{FOLLOWS\_FROM} lineage stays queryable as history. Then state the contrast, because that is where the novelty sits: Graphiti lets an LLM expire an edge automatically, with no confidence score, no human step, and no reported precision for that decision. Mytheus's ProactiveAgent conflict detector instead emits a CANDIDATE, routes it through the 0.7 surface gate, and writes \texttt{invalid\_at} only on user confirmation; the golden-set harness should report the invalidation precision and false-invalidation rate Zep never measures. Copy two mechanisms directly: bound contradiction search to edges between the same entity pair so the conflict traversal fits the per-window budget, and seed the AGE arm of the RRF fusion stage with breadth-first search from Topic and Decision nodes mentioned in recent windows. Cite the 1.6k versus 115k context-token result as justification for the 3,000-token assembly cap. Do not put Graphiti's write path in the live loop: extraction over a 4-message window, entity resolution, fact extraction, temporal extraction and invalidation adjudication are several LLM calls per message, which cannot survive the ContextGapAgent's 1.5 s p95 peer round trip and would defeat the Haiku triage pre-gate economics. Keep graph construction on the post-confirmation asynchronous path and let the live path read only. Zep also has no tenant scoping, so label propagation and community summarisation must run per \texttt{org\_id} inside the org-partitioned graph, a cost the paper never prices.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+  \item Both benchmarks are text chat with clean turn boundaries and a single agent-user thread: nothing is evaluated on diarized live speech, multi-party meetings or streaming ingestion, and the graph has no per-participant view, one shared memory answers for everyone.
+  \item Edge invalidation is fully automatic and LLM-adjudicated, yet no precision, recall or false-invalidation rate is reported for that decision, only downstream QA accuracy, so the cost of wrongly expiring a still-valid fact is never quantified and no confidence or confirmation step exists.
+  \item Only query-time latency is measured; ingestion latency and the per-message LLM call count for graph construction are never reported, so the write path has no published real-time or cost budget, and the reported query latency even includes a laptop-to-AWS-us-west-2 hop the full-context baselines did not pay.
+  \item There are no ablations: the contributions of the bi-temporal fields, the community subgraph and each reranker (RRF, MMR, node distance, episode mentions, cross-encoder) are never isolated, and the configuration behind the headline numbers is unstated; the only LongMemEval baseline is full-context, since MemGPT could not be run and no GraphRAG, LightRAG or vector-RAG comparison is given.
+  \item The bidirectional episodic edges that would supply provenance and quotation are explicitly deferred to future work, so citation resolvability is unmeasured; the abstract's claim of synthesising structured business data is never evaluated; and multi-tenant isolation and retrieval authorization are absent entirely.
+\end{itemize}

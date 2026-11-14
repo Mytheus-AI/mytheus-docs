@@ -1,0 +1,46 @@
+\section{Policies and Evaluation for Online Meeting Summarization}
+\paperhead{Policies and Evaluation for Online Meeting Summarization}{Felix Schneider, Marco Turchi, Alex Waibel}{arXiv preprint, 2025}{https://arxiv.org/abs/2502.03111}{arXiv API id\_list=2502.03111, title match 1.00}
+
+\subsection{What the paper does}
+
+Academic meeting summarization is posed almost exclusively as an offline task: the meeting ends, the full transcript goes to a summarizer, one artefact is scored. This is the first systematic study of the online setting, where a summary is produced and revised while the meeting is still running. The authors argue this is a different problem with three axes: \textbf{quality} (adequacy, fluency, relevance) which must now be judged on the intermediate summaries users actually look at, \textbf{latency} between content appearing in the source and in the output, and \textbf{rewriting}, since revising already-shown text costs the reader attention.
+
+The core idea is borrowed from simultaneous machine translation: treat the summarizer as an agent over two streams that may READ a chunk of input, WRITE whole summary sentences, or ERASE prior output. What it does is decided by a \emph{policy}. The authors restrict themselves to parameter-free policies applied post-training on top of an existing offline summarizer, so the policies are backend agnostic and need no retraining, then ask which policy shape wins.
+
+\subsection{How the method works}
+
+Five policies. \textbf{Length-based segmentation} reads fixed $C$-token chunks and summarizes each independently: incremental, no rewriting, every token processed once, latency tuned by $C$, but boundaries rarely fall on topic boundaries. \textbf{Model-based segmentation} accumulates chunks, summarizes each growing prefix until the input is full, scores candidates with a reference-free estimator (here the summarizer's own confidence), writes the best, discards only the chunks it used and restarts, so leftovers are re-read. \textbf{Sliding window} replaces that estimator with the model's own output as segmentation signal (below). \textbf{Full rewriting} re-summarizes everything each chunk and erases the previous output, the only policy bounding total output length. \textbf{Fully incremental} also re-summarizes everything but forces the prior output as a prefix, so nothing is erased and the summary grows unbounded.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm, >={Stealth[length=2mm]}, font=\scriptsize,
+  b/.style={draw, rounded corners=2pt, align=center, inner sep=3pt, minimum height=8mm}]
+  \node[b] (r) {Read chunk\\into window};
+  \node[b, right=of r] (s) {Summarize window,\\prior output forced\\as prefix};
+  \node[b, right=of s] (t) {New text\\beyond\\the prefix?};
+  \node[b, right=of t] (e) {Emit new text, rotate\\used chunks out,\\it becomes the prefix};
+  \draw[->] (r) to (s);
+  \draw[->] (s) to (t);
+  \draw[->] (t) to node[above, font=\tiny] {yes} (e);
+  \draw[->] (t.south) to[out=270, in=270, looseness=0.55] node[below, font=\tiny] {no, read another chunk} (r.south);
+\end{tikzpicture}
+\end{center}
+
+The sliding-window prompt makes that test explicit: the model is told more transcript is available and must either continue its previous summary with exactly one additional sentence or reply ``No update necessary''. Backends are BART-large fine-tuned on SamSum (1024-token limit, beam size 4) and \texttt{gpt-4-32k} at temperature 0.7, over chunk sizes 256, 512, 1024 and 2048 for GPT-4. Evaluation uses the AutoMin 2023 test set, 12 real meetings, de-identified by substituting PERSON, ORGANIZATION and PROJECT labels and reverting before scoring. Four measures: ROUGE-1 F1 for final quality; \emph{Expected Latency} $EL=E[N(t)-t]$ with $t$ uniform over the input and $N(t)$ the next WRITE timestamp, adopted because length-adaptive average lagging distorts when hypothesis lengths vary (two systems on an identical schedule scored 112.5 versus 67.7 LAAL); \emph{redundancy factor}, tokens sent to the model over tokens in the meeting, as a cost proxy; and \emph{R1-AUC}, area under the ROUGE-1 F1 curve recomputed against the full human reference at every output update and plotted against percent of meeting completed.
+
+\subsection{What it reports}
+
+Online systems land close to offline ones. Best online ROUGE-1 is length-based BART at $C{=}768$ with 42.7, against 43.7 for offline GPT-4 and 41.2 for the offline Zoom-long baseline; model-based BART-512 reaches 42.6, and sliding-window BART-256 reaches 41.8 at less than half the latency (EL 11.7 versus 25.9) but 4.1$\times$ redundancy versus 1.0$\times$. Full rewriting with GPT-4 scores 41.5 at 12.2$\times$ redundancy and Normalized Erasure 13.8; fully incremental GPT-4 is uncompetitive at EL 67.9. Crucially ROUGE misranks the policies: two annotators rating final summaries on 5-point adequacy, fluency and relevance put model-based BART at 4.4 average and sliding-window BART at 4.1, but length-based BART at only 3.6 despite its top ROUGE. On the first 40 percent of the transcript that ordering widens: sliding-window BART-256 scores 3.7 average, 38.2 ROUGE-1 at the 40 percent mark and R1-AUC 3382, against 3.4, 32.8 and 3047 for length-based.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+Mytheus's frozen 30-second window \emph{is} the length-based policy: redundancy 1.0$\times$, no re-ingestion, aligned with the cost cascade. This is the strongest published evidence that exactly this family looks fine on automatic metrics and is rated worst by humans, both at the end and on the 40 percent partial. Build a sliding-window trigger as an alternative for \texttt{DecisionAgent} and \texttt{ActionAgent}: keep accumulating speaker turns while the extractor returns no candidate above the 0.4 gate, and cut the window the moment one clears it, the direct analogue of ``new text beyond the prefix''. Measure it with their metrics, reporting Expected Latency and an R1-AUC-style quality curve per agent instead of asserting p50 under 2 s and p95 under 4 s with no quality attached. Be critical on cost: 4.1$\times$ redundancy on 1,206 calls per meeting erases most of the 86 percent reduction, and 12.2$\times$ rewriting is unaffordable under per-tenant token budgets, so any adaptive trigger must sit \emph{behind} the Haiku triage pre-gate so re-reads only hit the cheap tier. Cite this for the online-versus-offline framing, the EL and R1-AUC definitions, and the adaptive-beats-fixed result, but not for latency evidence: EL here is counted in dialog turns, not seconds, and nothing in it validates a 1.5 s peer round trip.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+  \item Evaluation is text-only on 12 AutoMin meetings with no audio and no timestamps, so latency is computed by assuming every dialog turn has unit duration: no wall-clock delay is ever measured, no ASR or diarization error enters, and mutable interim hypotheses from a live stream are never confronted.
+  \item Every policy emits one shared summary scored against a single human reference; no policy conditions on who is listening and no proposed metric can express that an intermediate output is adequate for one attendee and useless for another, leaving per-participant relevance unmeasured.
+  \item Policies are parameter-free and bolted onto a frozen offline summarizer; no learned policy is attempted, and the model-based estimator is only the summarizer's own confidence, which cannot be applied to GPT-4 because the API does not expose output probabilities, partly confounding policy with backend.
+  \item Cost appears only as a redundancy factor reported as a caveat: no tiered routing, no prompt or semantic caching, no budget enforcement and no per-tenant accounting, so the 4.1$\times$ and 12.2$\times$ figures are never optimized against a serving constraint.
+  \item The task stops at free-text summary, and R1-AUC is human-validated at a single 40 percent checkpoint with two annotators: no decision or action extraction, no conflict or stakeholder detection and no confirmation step, so nothing tests whether adaptive boundaries help structured extraction or a human-in-the-loop commit contract.
+\end{itemize}

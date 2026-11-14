@@ -1,0 +1,120 @@
+% Mytheus — one-page project abstract
+% Compiles with pdfLaTeX on Overleaf. No external assets, no custom classes.
+
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[margin=1.8cm]{geometry}
+\usepackage{mathptmx}          % Times text + math
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{titlesec}
+
+% Compact, unnumbered headings so the whole piece stays on one page.
+\titleformat{\section}{\normalfont\bfseries\normalsize}{}{0pt}{}
+\titlespacing*{\section}{0pt}{0.8\baselineskip}{0.2\baselineskip}
+
+\setlength{\parskip}{0.28\baselineskip}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries Mytheus}\\[0.35em]
+  {\large Personalized Multi-Agent Meeting Orchestration}
+\end{center}
+
+\vspace{0.4em}
+\hrule
+\vspace{0.5em}
+
+\section{The problem}
+
+Meeting-assistance tools produce one shared artefact, a transcript and a
+summary, and hand the identical copy to everyone. That is the wrong unit of
+output: what a designer needs from an hour-long planning call is not what the
+engineering lead needs. The tools are also passive, reporting after the fact,
+so a decision that contradicts last month's decision, a task assigned to
+someone already at capacity, or a reference to context a participant does not
+have all pass unremarked while the meeting is still running and still fixable.
+
+\section{What the system does}
+
+A meeting runs as a LiveKit video room whose audio is streamed server-side to
+Deepgram, which returns diarized transcripts; interim results are mutable and
+only finals are persisted. Live captions render beside the video within two
+seconds. Next to them, each participant sees a sidebar that is theirs alone:
+notes filtered to their role, decision and action cards awaiting confirmation,
+suggested questions ranked by priority, and proactive warnings, with a
+red conflict banner pinned above everything else. Confirmed action items
+synchronize outward to the team's existing tools, with the connected surface
+deliberately capped at Google Calendar, Slack, and one of Jira or Linear.
+
+\section{The agent layer}
+
+Each participant gets their own AI agent. Six agent types share one LangGraph
+\texttt{BaseAgent} lifecycle and a versioned prompt loader.
+\textbf{PersonalListenerAgent} scores each window of transcript for relevance
+to one user's role and skills and records only what matters to them.
+\textbf{DecisionAgent} and \textbf{ActionAgent} extract decisions and tasks with
+rationale, assignee, and a confidence score. \textbf{QuestionAgent} proposes
+role-specific questions while the topic is still open.
+\textbf{ProactiveAgent} detects contradictions with past decisions, workload
+overload, and missing stakeholders.
+
+The distinctive component is \textbf{ContextGapAgent}. When the conversation
+depends on context a participant lacks, that participant's agent queries
+\emph{other participants' agents} over a correlation-ID request/response
+protocol, falling through a fixed chain: peer agents, then agents from related
+meetings, then retrieval, then silence. Agents collaborate across meetings to
+close gaps no single attendee could close alone.
+
+Two rules constrain every agent. Confidence thresholds are uniform: above $0.7$
+surface to the user, between $0.4$ and $0.7$ log silently, below $0.4$ discard.
+And there are \textbf{no silent commits}. An agent emits a \emph{candidate}
+only; the database row, the event, and the knowledge-graph edge are written
+solely on user confirmation, so nothing is recorded that the user did not
+approve.
+
+\section{Organizational memory}
+
+Every confirmed decision and action becomes an edge in a property graph
+(Apache AGE) whose nodes are Person, Meeting, Decision, Action, and Topic,
+linked by \texttt{ATTENDED}, \texttt{PRODUCED}, \texttt{ASSIGNED\_TO},
+\texttt{RELATES\_TO}, and \texttt{FOLLOWS\_FROM}. The graph is what makes
+cross-meeting reasoning possible: contradiction detection is a graph traversal,
+not a prompt. In parallel, transcript and document chunks are embedded with
+BGE-small-en into per-tenant vector collections. Retrieval runs a fixed
+five-stage pipeline, expand, retrieve, rerank, assemble, cite: hybrid vector
+and full-text results are fused, reordered by a cross-encoder reranker, and
+every returned passage carries a citation back to its source chunk.
+
+\section{System architecture}
+
+The platform is event-driven microservices, cut into families that scale on
+different signals: a CRUD control plane (requests per second), a real-time
+plane (concurrent connections), and an AI/inference plane (tokens and vectors),
+with the embedding and reranking models served on GPU off the API tier.
+Services communicate over tenant-partitioned Redpanda topics with Avro schemas,
+at-least-once delivery, transactional outboxes, and consumer-side
+deduplication. A separate real-time gateway fans captions and agent output to
+clients over WebSockets, independent of the media path.
+
+Multi-tenancy is enforced structurally rather than in application code. One
+chokepoint resolves \texttt{org\_id} from the verified session token and
+injects it server-side; PostgreSQL row-level security is the fail-closed
+backstop; vector collections are per tenant and the graph is org-partitioned.
+No client ever derives or transmits a tenant identifier.
+
+\section{Current status}
+
+The contract scaffold and the foundation-and-tenancy band are built across
+eight repositories: the row-level-security baseline with least-privilege
+database roles, role-based access grants behind a deny-by-default authorization
+gate, append-only audit logging, meetings CRUD, Clerk identity with webhook
+user sync, the transactional outbox relay, and both clients reading the real
+backend contract. Meeting capture and transcription come next, then the agent
+runtime and retrieval.
+
+\end{document}

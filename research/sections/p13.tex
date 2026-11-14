@@ -1,0 +1,52 @@
+\section{HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models}
+\paperhead{HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models}{Bernal Jim\'enez Guti\'errez, Yiheng Shu, Yu Gu, Michihiro Yasunaga, Yu Su}{NeurIPS 2024}{https://arxiv.org/abs/2405.14831}{arXiv API id\_list=2405.14831, title match 1.00}
+
+\subsection{What the paper does}
+
+Standard RAG scores every passage independently against the query embedding, so evidence whose connection is never stated inside any single passage is invisible to it. Multi-hop questions are exactly this case: the bridge passage shares little surface with the query and only becomes relevant once an intermediate entity is known. The field's usual repair is iterative retrieve-then-reason, as in IRCoT, which interleaves retrieval with chain-of-thought and therefore pays several LLM calls per query. The paper frames the underlying problem as knowledge integration: LLMs, even with retrieval, absorb new experiences poorly after pre-training.
+
+Its answer is an analogy to the hippocampal indexing theory of human long-term memory. The LLM plays the neocortex and performs pattern-separated encoding of raw text into discrete propositions; a schemaless knowledge graph plays the hippocampal index; a retrieval encoder plays the parahippocampal region that links similar cues. Retrieval then becomes a single Personalized PageRank (PPR) pass over that index, seeded at the query's entities. The multi-hop reasoning moves out of the LLM loop and into one graph search.
+
+\subsection{How the method works}
+
+Offline, each passage is passed through LLM-driven open information extraction (GPT-3.5-turbo-1106 by default) yielding subject, predicate, object triples. Noun phrases become nodes and relations become edges in one schemaless graph across the whole corpus. A retrieval encoder (ColBERTv2 or Contriever) adds \emph{synonymy} edges between nodes whose cosine similarity exceeds $\tau = 0.8$, which is what lets separately extracted mentions of the same thing fuse. The system also stores an $|N| \times |P|$ node-to-passage occurrence matrix.
+
+Online, an LLM extracts named entities from the query, those entities are linked to graph nodes by encoder similarity, and the linked nodes become the seed distribution for PPR with damping factor $0.5$. Seed weights are scaled by \emph{node specificity}, an IDF-like term defined as $|P_i|^{-1}$, the inverse of the number of passages containing that phrase, so generic hub phrases do not dominate the walk. The resulting node probability vector is multiplied by the occurrence matrix to score and rank passages. The paper also reports Llama-3.1-70B outperforming GPT-3.5 as the OpenIE backbone on two of three datasets, with the 8B variant a cheaper indexing option.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm,
+  box/.style={draw, rounded corners=1pt, align=center, inner sep=3pt, minimum height=7mm, font=\footnotesize},
+  arr/.style={-Stealth, thin}]
+\node[box] (p) {Passages};
+\node[box, right=of p] (oie) {LLM OpenIE\\triples};
+\node[box, right=of oie] (kg) {Schemaless KG: noun-phrase nodes,\\relation + synonymy edges ($\tau{=}0.8$)};
+\node[box, below=1.1cm of p] (q) {Query};
+\node[box, right=of q] (ner) {LLM NER +\\node linking};
+\node[box, right=of ner] (ppr) {PPR, damping $0.5$,\\node specificity};
+\node[box, right=of ppr] (rank) {Ranked\\passages};
+\draw[arr] (p) -- (oie);
+\draw[arr] (oie) -- (kg);
+\draw[arr] (q) -- (ner);
+\draw[arr] (ner) -- (ppr) node[midway, above, font=\scriptsize] {seeds};
+\draw[arr] (ppr) -- (rank) node[midway, above, font=\scriptsize] {$N{\times}P$};
+\draw[arr] (kg) -- (ppr);
+\end{tikzpicture}
+\end{center}
+
+\subsection{What it reports}
+
+On single-step retrieval against ColBERTv2, HippoRAG reports R@2/R@5 of 70.7/89.1 versus 59.2/68.2 on 2WikiMultiHopQA and 40.9/51.9 versus 37.9/49.2 on MuSiQue, but 60.5/77.7 versus 64.7/79.3 on HotpotQA, where it loses. Downstream QA follows the same pattern: 2WikiMultiHopQA EM/F1 46.6/59.5 versus 33.4/43.3, MuSiQue 19.2/29.8 versus 15.5/26.4, HotpotQA 41.8/55.0 versus 43.4/57.7. The abstract claims gains over state of the art by up to 20\%, and that single-step HippoRAG matches or beats iterative IRCoT while being 10 to 30 times cheaper and 6 to 13 times faster; combining the two pushes IRCoT R@5 on 2WikiMultiHopQA to 93.9 versus 74.4 over ColBERTv2. Ablations show node specificity and synonymy edges each contribute, and that replacing the PPR walk with the linked query nodes alone costs substantially on MuSiQue. A path-finding case study retrieves a scientist (Thomas S\"udhof) from a query joining ``Stanford'' and ``Alzheimer's'' where ColBERTv2 and IRCoT fail. The appendix attributes most remaining errors to the NER and OpenIE stages.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+Build a PPR arm over the existing AGE property graph and ablate it against the frozen RRF stage. Mytheus already owns the hippocampal index for free: Person, Meeting, Decision, Action and Topic nodes joined by RELATES\_TO and FOLLOWS\_FROM, written only on user confirmation under the no-silent-commit rule, which is a strictly stronger provenance guarantee than LLM OpenIE triples and avoids HippoRAG's per-passage extraction bill entirely. Do not run OpenIE over all 90 windows; that would break the cost cascade. Measure R@5 and context-fill correctness for RRF ($k = 60$) over three arms versus PPR seeded on the asker's entities over one org-partitioned graph, on the same golden set. Two things must change before it is usable. First, HippoRAG's online path still spends an LLM NER call before the walk, so ``single-step'' means one reasoning round, not zero model calls; inside the ContextGapAgent's p95 1.5 second peer round trip that call must be folded into the existing Haiku expand call or replaced by entities already extracted for the current window, never added as a second hop. Second, a single global graph with encoder-derived synonymy edges is a cross-tenant leak by construction: PPR must be confined to the org partition and synonymy edges must never bridge tenants. Cite the 10 to 30 times cheaper, 6 to 13 times faster result as the justification for banning iterative retrieve-then-reason from the fallback tier. PPR returns node probabilities, not provenance, so ranked passages still pass through the citation contract and anything unbindable is dropped.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt, topsep=2pt]
+  \item Indexing is offline and batch over a static corpus; the paper never evaluates incremental insertion, edge invalidation, or PPR recomputation cost while the graph is being written, which is the only regime Mytheus has, since decisions and actions land mid-meeting on 30-second windows.
+  \item Efficiency is reported only as a ratio against IRCoT, with no wall-clock p50 or p95 per query and no tail-latency analysis of the PPR pass as the graph grows, so nothing in the paper certifies it against a hard 1.5 second budget.
+  \item It loses to plain ColBERTv2 on HotpotQA (R@2 60.5 versus 64.7, EM 41.8 versus 43.4) yet offers no router that decides when a query needs the graph, leaving the practitioner to run both arms and fuse them anyway.
+  \item Retrieval is impersonal and single-tenant: seeds depend only on query entities, there is no per-user, per-role or per-organization view of the graph, and no access scoping, so the paper's shared global index is unusable as written under row-level security.
+  \item Nodes are noun phrases from written encyclopedic prose; the method is never tested on diarized conversational speech, where referents are pronouns, roles and unnamed artifacts, and it emits ranked scores with no calibrated confidence that could feed a 0.7 or 0.4 gate.
+\end{itemize}

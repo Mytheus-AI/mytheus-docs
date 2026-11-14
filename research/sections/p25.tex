@@ -1,0 +1,53 @@
+\section{Generative Agents: Interactive Simulacra of Human Behavior}
+\paperhead{Generative Agents: Interactive Simulacra of Human Behavior}{Joon Sung Park, Joseph C. O'Brien, Carrie J. Cai, Meredith Ringel Morris, Percy Liang et al.}{UIST 2023, 36th Annual ACM Symposium on User Interface Software and Technology}{https://arxiv.org/abs/2304.03442}{arXiv API id\_list=2304.03442, title match 1.00}
+
+\subsection{What the paper does}
+
+A language model call is stateless and its context window is finite, so an agent that must stay coherent across simulated days cannot simply be handed its own history. The paper attacks the resulting problem of believability over long horizons: an agent should remember what happened, decide which of its accumulated experience is worth conditioning on right now, form durable opinions rather than re-deriving them, and act on plans that survive interruption.
+
+The core idea is an architecture wrapped around a frozen language model that stores a complete record of experience as natural-language strings, retrieves a small ranked subset of that record on demand, periodically synthesizes retrieved records into higher-level statements, and uses both to plan. The authors instantiate twenty five such agents in a sandbox town inspired by The Sims and let end users interact with them in natural language.
+
+\subsection{How the method works}
+
+The central data structure is the \emph{memory stream}, an append-only list of memory objects, each a natural-language description with a creation timestamp and a most-recent-access timestamp. Retrieval scores every candidate memory on three terms and returns the top-ranked ones that fit the prompt budget. \textbf{Recency} is an exponential decay over the number of sandbox game hours since the memory was last retrieved, with decay factor $0.995$. \textbf{Importance} is a poignancy score the model assigns at write time, prompted on a scale of $1$ to $10$ where $1$ is mundane and $10$ is extremely poignant. \textbf{Relevance} is cosine similarity between the embedding of the query and the embedding of the memory. The three are min-max normalized to $[0,1]$ and combined as a weighted sum in which all $\alpha$ are set to $1$.
+
+\emph{Reflection} fires when the summed importance of recently perceived events crosses a threshold, $150$ in their implementation, which yields roughly two to three reflections per simulated day. The agent hands the model its $100$ most recent records and asks for the three most salient high-level questions answerable about those statements; each question is used as a retrieval query, and the model emits insights in a form that cites the retrieved records as evidence pointers. Insights are written back into the stream, so later reflections can cite earlier ones and a tree forms. \emph{Planning} is top-down recursive decomposition: a day plan of five to eight chunks, refined to hour-long segments, refined again to actions of roughly five to fifteen minutes, all stored as memory objects. Each timestep the agent perceives its surroundings and the model decides whether to continue or react; on a reaction the plan is regenerated from that point forward. Dialogue is generated conditioned on retrieved memories of the interlocutor and the relationship.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm, >=Stealth,
+  box/.style={draw, rounded corners=2pt, align=center, text width=1.6cm,
+              minimum height=0.9cm, inner sep=2pt, font=\scriptsize}]
+\node[box] (obs) {Observations (NL strings)};
+\node[box, right=of obs] (mem) {Memory stream (append only)};
+\node[box, right=of mem] (ret) {Ranked retrieval};
+\node[box, right=of ret] (refl) {Reflection tree};
+\node[box, right=of refl] (plan) {Plan and react};
+\node[above=0.3cm of ret, font=\tiny, align=center, text width=3.6cm]
+  {recency $0.995$ decay $+$ importance $1$ to $10$ $+$ cosine relevance, all $\alpha=1$};
+\draw[->] (obs) -- (mem);
+\draw[->] (mem) -- (ret);
+\draw[->] (ret) -- (refl);
+\draw[->] (refl) -- (plan);
+\draw[->] (plan.south) -- ++(0,-0.5) -| node[pos=0.25, below, font=\tiny]
+  {insights and plans written back as memory objects} (mem.south);
+\end{tikzpicture}
+\end{center}
+
+\subsection{What it reports}
+
+A controlled evaluation interviews agents and has human evaluators rank ablated conditions by believability using TrueSkill. The full architecture scores $\mu=29.89$, $\sigma=0.72$, ahead of no reflection ($\mu=26.88$), no reflection and no planning ($\mu=25.64$), a human crowdworker condition ($\mu=22.95$), and no memory ($\mu=21.21$); the difference is significant with $H(4)=150.29$, $p<0.001$. Each of observation, planning and reflection therefore contributes measurably. In an end-to-end deployment of $25$ agents over two full game days, awareness of one agent's mayoral candidacy spread from one agent (4\%) to eight (32\%), awareness of a Valentine's Day party from one (4\%) to thirteen (52\%), and five of the twelve invited agents actually arrived at the venue. Social network density rose from $0.167$ to $0.74$. Of $453$ responses about awareness of other agents, 1.3\% ($n=6$) were hallucinated. Reported failure modes include retrieval misses, embellishment of remembered facts, poor location choice, and dialogue made overly formal and overly cooperative by instruction tuning.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+This is the canonical prior art for \texttt{PersonalListenerAgent}, and Mytheus should cite it as such while inverting its scoring point. Park scores a memory at retrieval time to decide what to condition on; Mytheus scores each 30-second window at ingest to decide whether it is worth recording at all, per participant. Build the relevance term the same shape Park builds it, as a cosine between the window embedding and a persistent profile vector assembled from \texttt{get\_user\_context} (role, skills, team, recent topics), because that term costs no LLM call and can run ahead of the Haiku triage pre-gate rather than after it. Measure against Park's configuration as the ablation baseline: all $\alpha=1$, no tuning, and an importance scalar the model emits with no calibration and no thresholding contract. That uncalibrated scalar is exactly the weakness the uniform $0.7$ and $0.4$ gates plus the Brier-score calibration in the golden-set eval are meant to close, so report Brier and reliability curves that Park never reports. For \texttt{ProactiveAgent}, keep the evidence-pointer idea from reflection: an insight that names the memory records it came from is structurally the citation contract, and a derived signal that cannot be bound to source records should be dropped exactly as an uncitable passage is dropped in the assemble-then-cite stage. Do not adopt the rest of reflection as-is. Park writes free-text insights straight back into memory with no human confirmation, which under Mytheus's no-silent-commit rule is a silent commit; conflict detection must stay the AGE graph traversal plus semantic conflict search over confirmed decisions, which is deterministic and auditable. Be blunt about latency: reflection is a multi-call chain (question generation, then a retrieval per question, then insight generation) running in sandbox game time with no wall-clock budget anywhere in the paper, so it cannot sit on the live path and certainly not inside the \texttt{ContextGapAgent} 1.5 second p95 peer round trip. Schedule it as a post-meeting or inter-meeting job. Finally, the memory stream has no tenant or role boundary at all, so per-tenant collections, org-partitioned graph and deny-by-default agent-to-agent authorization are additions Mytheus must make, not inherit.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt, topsep=2pt]
+  \item The retrieval weights are fixed at $\alpha=1$ with no sensitivity study or per-term ablation, and the importance score is an uncalibrated model-emitted integer: no reliability, Brier or threshold analysis is done, so nothing shows the ranking survives a domain where a missed memory is costly rather than merely less believable.
+  \item Everything is measured in sandbox game time. No wall-clock latency, token cost or throughput figure is reported for retrieval, reflection or recursive replanning, so the architecture is untested against any real-time budget, let alone a sub-second peer round trip.
+  \item Inputs are clean, typed, single-attributed natural-language observations produced by a simulator; the paper never touches diarized streaming ASR with mutable interim results, overlapping speakers or transcription error, so its ``perceive'' stage assumes a fidelity live meeting audio does not have.
+  \item The memory stream is single-tenant, unbounded and has no eviction, compaction or access control, and there is no notion of which agent may read which memories, so the multi-tenant isolation and authorized agent-to-agent query problem is entirely outside its scope.
+  \item The outcome measure is believability, not correctness: there is no ground truth for whether the retrieved memory was the right one, hallucination is quantified only for one narrow awareness question (1.3\%, $n=6$ of $453$), and reflections are committed without human confirmation, so retrieval and synthesis errors compound up the tree unchecked.
+  \item Scale and horizon are small: $25$ agents, two game days, one town, one underlying model, with no cross-model replication and no evidence about how retrieval quality degrades as the stream grows over weeks.
+\end{itemize}

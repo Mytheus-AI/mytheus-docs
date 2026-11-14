@@ -1,0 +1,182 @@
+\section{What the literature does not cover}
+
+Six independent analyses read all twenty five limitation sets, each hunting a
+different kind of absence. They converged on six themes. What follows is
+ordered by how countable the gap is, because a gap you can count across
+twenty five papers is one a reviewer cannot wave away.
+
+One framing result comes first, because it organises everything else. Sort the
+corpus on two axes, whether the input is a static corpus or a live stream, and
+whether the system owes one shared output or a different output per recipient.
+Papers land in three quadrants. The fourth is empty.
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize,>={Stealth[round]}]
+  \fill[boxgrey] (4.05,2.05) rectangle (8.0,4.0);
+  \draw[->,rulegrey] (0,0) -- (8.3,0) node[right,black,font=\scriptsize] {};
+  \draw[->,rulegrey] (0,0) -- (0,4.2);
+  \node[rotate=90,font=\scriptsize\itshape,text=accent] at (-0.55,2.1)
+       {shared output \ \ $\rightarrow$ \ \ per recipient};
+  \node[font=\scriptsize\itshape,text=accent] at (4.1,-0.55)
+       {static corpus \ \ $\rightarrow$ \ \ live stream};
+  \draw[rulegrey,dashed] (4.05,0) -- (4.05,4.0);
+  \draw[rulegrey,dashed] (0,2.05) -- (8.0,2.05);
+
+  \node[align=center,text width=3.6cm] at (2.0,1.05)
+    {\textbf{Static, shared}\\ 7, 8, 12, 13, 14, 18, 19,\\ 20, 21, 22, 25, 1, 2, 3, 5, 6};
+  \node[align=center,text width=3.4cm] at (6.0,1.05)
+    {\textbf{Streaming, shared}\\ 15, 17, 9\\ {\itshape partial coverage}};
+  \node[align=center,text width=3.4cm] at (2.0,3.05)
+    {\textbf{Static, per recipient}\\ 10, 11, 16, 23, 24};
+  \node[align=center,text width=3.4cm,text=accent] at (6.0,3.05)
+    {\textbf{Streaming, per recipient}\\ \textbf{empty}\\ {\itshape the Mytheus quadrant}};
+\end{tikzpicture}
+\end{center}
+
+The empty quadrant is not proof of novelty. It is proof that the two
+constraints have never been imposed together, which is a weaker but far more
+defensible statement, and it is the statement every theme below refines.
+
+\subsection{Theme 1: the tail is never reported}
+
+Not one of the twenty five papers reports a percentile latency for its own
+method. This is the most countable gap in the corpus and the easiest to
+defend, because it rests on an absence rather than an interpretation.
+
+Efficiency is not ignored by this literature. It is simply always expressed as
+a mean, a ratio or a token count, never as a distribution and never against a
+deadline. Paper 13, HippoRAG, reports being six to thirteen times faster than
+IRCoT but gives no absolute p50 or p95 and no tail curve as the graph grows.
+Paper 12, From Local to Global, prices queries only in context tokens. Paper
+22, FrugalGPT, never measures latency anywhere, despite a strictly sequential
+cascade whose worked example queries every API in the chain. Paper 4, AI
+Agents That Matter, names latency once as a desideratum and then measures only
+dollars.
+
+The three papers that do report absolute wall clock are all over a 1.5 second
+budget before any tail effect is added. Paper 14, Zep, reports 2.58 and 3.20
+second read path means, and never times its write path at all. Paper 16 reports
+110 to 152 seconds per sample for precisely the detect-gap-then-fill task
+Mytheus must run inside a 30 second window. Paper 11 reports 2.66 seconds for
+the query expansion call alone and explicitly never mitigates it.
+
+\begin{takeaway}
+A p95 budget is a statement about the tail, and a mean says almost nothing
+about it. Because the field publishes only means and ratios, there is no
+published evidence that any of these retrieval, memory or attribution methods
+can be served inside a bounded response time. That makes a quality, cost and
+p95 frontier an empirical contribution rather than an engineering footnote.
+\end{takeaway}
+
+\subsection{Theme 2: one input, one reference}
+
+No evaluation substrate in the corpus can measure whether two readers of the
+same event should receive different output, because every benchmark binds one
+input to exactly one reference answer.
+
+Paper 10, LaMP, is the field's personalization benchmark and states it
+outright: every input belongs to exactly one owning user, so divergence across
+users on identical input is inexpressible. Paper 15, QMSum, is the sharpest
+case, since its own claim is that one meeting yields different summaries for
+different queries, yet each query is anonymous and pairs with exactly one gold
+summary. Paper 17 scores every policy against a single human reference.
+
+Paper 16 is the near miss and must be conceded honestly. It produces
+reader-tailored meeting summaries from transcript-derived personas, which is
+the closest published work to the Mytheus thesis. What it lacks is a per-reader
+reference, so it cannot test whether the tailoring is real. Its own LLM judge
+ranks the human gold summary lowest on informativeness and relevance, which is
+itself evidence that the evaluation instrument, not the system, is the
+bottleneck.
+
+The mechanism side has the same shape. Every personalization method in the
+corpus needs either a corpus the reader authored or a query the reader typed.
+A live shared meeting supplies neither. Scoring relevance for a silent
+participant over a jointly authored artefact is not a harder version of a
+solved problem, it is a primitive none of these methods accept as input.
+
+\subsection{Theme 3: coordination has no clock, and no principal}
+
+Across every coordination framework in the corpus, termination is a logical
+predicate, goal satisfied, iteration cap, message cap, reply count cap, and
+never a wall clock. Paper 1 terminates on a satisfied condition or a cap on
+consecutive auto replies. Paper 2 bounds cost with a 40 message cap and
+enforces stopping through a prompt token the agent itself must decide to emit.
+Paper 5 limits stopping to a maximum iteration count.
+
+Paper 3 supplies the strongest evidence. Across 1642 traces from seven
+frameworks it identifies fourteen failure modes, and not one of them is
+temporal. Deadline miss, stale context under latency and partial result on
+timeout are absent from the field's own failure vocabulary.
+
+The second half of this theme is addressing. The two dominant topologies each
+destroy the precondition for peer querying: broadcast eliminates the
+information asymmetry that makes asking worthwhile, and hierarchy eliminates
+lateral edges. Paper 1 broadcasts every response to all members and carries no
+identity on the message. Paper 6 states plainly that its subagents never query
+one another and that agents coordinate poorly in real time, which is the ideal
+citation position, since it publishes the problem statement without the
+mechanism.
+
+\subsection{Theme 4: correct silence is unscorable}
+
+Every evaluation instrument in the corpus either penalises abstention or
+cannot see it. Paper 21, ALCE, is explicit: a statement with an empty citation
+set scores citation recall zero, and a system that declines to answer emits no
+statements to average over, so declining is strictly dominated. Paper 15
+offers no abstention option. Paper 9 is strictly binary with no middle band.
+
+Worse, paper 3 classifies information withholding as a pure defect, with no
+category for a refusal that is correct under an authorization policy. A system
+built to the published guidance is therefore optimised toward disclosure, and
+Mytheus's deny-by-default scoping and its silent-on-empty rule would both be
+scored as failures by the field's own taxonomy.
+
+This matters more than it first appears. Two of the load-bearing Mytheus
+invariants, the below-0.4 discard band and the silence terminal of the
+ContextGapAgent fallback chain, are currently unreportable as successes. There
+is no vocabulary in which the system can say it was right to stay quiet.
+
+\subsection{Theme 5: grounding is established on clean written prose}
+
+Not one paper measures confidence calibration or citation validity on spoken,
+disfluent, diarized, partially erroneous transcript text. Paper 20 confines
+itself to static single-turn written question answering plus one biography
+task. Paper 21 defines citation validity as entailment over stable document
+spans. Paper 18 fits a scalar on a held-out set drawn from the same
+distribution and runs no shift experiment.
+
+Two consequences follow. First, a fixed uniform threshold set by hand is not
+defensible as a design claim: every paper that sets an operating point by hand
+names that as a limitation, and every paper that fits one shows the fit does
+not transfer across distributions. The Mytheus 0.7 and 0.4 cuts are currently
+stipulated, not measured, and that is the most attackable number in the
+design.
+
+Second, citing a spoken utterance is undefined. Speaker attribution
+correctness is not a component of citation validity in any published
+attribution measure in this corpus, even though for a decision or an action
+item the content of the claim is who committed to what.
+
+\subsection{Theme 6: the write path, the tenant and the incidence of cost}
+
+Memory and graph papers price the read path and leave the write path
+unmeasured. Paper 14 reports query latency precisely and never measures
+ingestion latency or the number of model calls per ingested message across its
+five extraction stages. Paper 12 builds its hierarchy in one offline pass and
+never measures adding one finished meeting. In a live meeting system the write
+path is the continuous, latency bound, dominant cost, so architecture choices
+made on these published numbers rest on the wrong side of the ledger.
+
+Tenant isolation is not merely missing, it is a precondition violation. Paper
+12 runs community detection over one undivided corpus, so communities would
+span organisations by construction. Paper 13 lets entities bridge documents
+with no entitlement boundary. Partitioning per organisation does not degrade
+these methods gracefully, it invalidates the construction.
+
+Finally, every cost result prices per input on the assumption of one output.
+Nobody has modelled what per-recipient divergence does to caching, batching and
+budget enforcement, nor reported the incidence of cost control: when the budget
+binds, whose output degrades, and by how much. Mean quality hides this
+entirely, and worst-participant quality is the number that actually decides
+whether the product is usable.

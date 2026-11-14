@@ -1,0 +1,54 @@
+\section{Tell me what I need to know: Exploring LLM-based (Personalized) Abstractive Multi-Source Meeting Summarization}
+\paperhead{Tell me what I need to know: Exploring LLM-based (Personalized) Abstractive Multi-Source Meeting Summarization}{Frederic Kirstein, Terry Ruas, Robert Kratel, Bela Gipp}{EMNLP 2024 Industry Track}{https://arxiv.org/abs/2410.14545}{arXiv API id\_list=2410.14545, title match 1.00}
+
+\subsection{What the paper does}
+
+A meeting transcript is not self-contained. Speakers point at a slide, refer to a whiteboard sketch, or assume a shared document, and a summarizer that sees only the words produces a summary that is fluent but hollow. Prior multi-source attempts simply concatenate the extra files onto the transcript, which strains context windows and forces one model to simultaneously find the relevant material, align it to the right moment in the dialogue, and summarize. This paper decomposes that overloaded task.
+
+The core idea is to turn multi-source summarization back into a single-source problem before summarizing. A first model marks where the transcript is context-deficient and asks explicit questions about what is missing; a retrieval stage answers those questions from the supplementary materials and writes the answers back into the transcript as inline comments; a third model summarizes the now self-contained transcript. A separate, optional protocol extracts a persona for the intended reader and conditions both the gap-finding and the summarizing stages on it, so different participants receive different summaries of the same meeting.
+
+\subsection{How the method works}
+
+Stage one (gap identification) prompts an LLM with chain-of-thought reasoning to locate and prioritize context-deficient passages, and to emit questions about the missing context; the prompt fixes the budget at the top five gaps per meeting to bound computation. Stage two (information inferring) treats those questions as RAG queries over the supplementary corpus, using OpenAI \texttt{text-embedding-3-small} with cosine similarity over chunked documents, and injects the inferred answers into the original transcript as comments. Stage three summarizes the enriched transcript abstractively under a 250 token cap. The personalization protocol adds an upstream LLM that reads the transcript and writes a persona covering personality traits, viewpoints, interests, and observed knowledge level; the model then embodies that persona when generating gap questions and receives it as the target-audience description for retrieval and summarization.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm, font=\scriptsize,
+  box/.style={draw, rounded corners=2pt, align=center, minimum height=8mm, minimum width=2.4cm, inner sep=3pt},
+  aux/.style={draw, dashed, rounded corners=2pt, align=center, minimum height=7mm, inner sep=3pt},
+  ar/.style={-{Stealth[length=2mm]}}]
+\node[box] (s1) {Gap identification\\CoT, top 5 questions};
+\node[box, right=of s1] (s2) {Information inferring\\RAG, cosine sim.};
+\node[box, right=of s2] (s3) {Enriched\\summarization};
+\node[left=0.8cm of s1] (in) {transcript};
+\node[right=0.8cm of s3] (out) {summary};
+\node[aux, below=0.7cm of s2] (src) {slides, notes, whiteboard OCR};
+\node[aux, above=0.7cm of s2] (per) {persona: traits, interests, knowledge};
+\draw[ar] (in) to (s1);
+\draw[ar] (s1) to (s2);
+\draw[ar] (s2) to (s3);
+\draw[ar] (s3) to (out);
+\draw[ar] (src) to (s2);
+\draw[ar, dashed] (per) -| (s1);
+\draw[ar, dashed] (per) -| (s3);
+\end{tikzpicture}
+\end{center}
+
+Experiments use MS-AMI, an adaptation of AMI the authors release: 125 staged business meetings (12 of the original 137 dropped for processing errors), with slides, notes, and whiteboard drawings passed through GPT-4o for OCR and image description and Aspose for document text extraction. The corpus averages 558.4 turns, 4.0 speakers, and 21.8 documents per meeting. The backbone for the main experiments is \texttt{gpt-4-turbo-2024-04-09} at temperature 0. Evaluation uses AUTOCALIBRATE plus a GPT-4 metric built on the FACTSCORE idea of decomposing sentences into atomic facts, reporting 5-point Likert scores for informativeness (INF), relevance (REL), factuality (FAC), and overall (OVR), with persona-aware variants.
+
+\subsection{What it reports}
+
+The full pipeline (G-infer) reaches INF 4.49, REL 4.04, FAC 4.78, OVR 4.41, against a single-source GPT-4 baseline (G-none) at 4.31, 3.70, 4.33, 3.99; the abstract summarizes this as roughly 9\% higher relevance. Appending all sources (G-all) or only the top five retrieved sources (G-top) is worse than structured injection, so how the extra material enters the transcript matters more than how much of it does. With personalization, P-infer+per reaches INF-P 4.51, REL-P 4.16, OVR-P 4.79 against P-none at 4.00, 3.59, 4.03, reported as roughly 10\% better informativeness. The judge metric agrees with human labels at 87.3\% (REL), 92.4\% (INF), 85.7\% (FAC), and 93.6\% (OVR). A cost study on one third of MS-AMI across four families gives, per sample on the general pipeline, GPT-4 at \$0.25 and 110 s, Gemini Flash 1.5 at \$0.009 and 92 s, Phi-3 mini 3.8b at \$0.007 and 32 s, and Llama 3 8b at \$0.001 and 68 s, with the personalized pipeline costing more and running longer (GPT-4 at \$0.37 and 152 s). Phi-3 often beats the larger Llama 3, though it inconsistently produces the requested five gaps.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+This is the closest published prior art to \texttt{ContextGapAgent} and must be cited, or the novelty claim is indefensible. Its stage one is exactly Mytheus's trigger condition and its stage two is exactly the RAG tier of the fallback chain, so the student should frame Mytheus as extending Kirstein's fallback from a single static-document tier to a four-tier chain whose first two tiers (peer agents, then agents from related meetings) have no counterpart here. Build: port the stage-one gap prompt as the gap-detection prompt inside \texttt{ContextGapAgent}, but scoped to one 30-second window rather than a whole transcript, and drop the fixed top-five budget in favour of the 0.7 and 0.4 confidence gates so low-confidence gaps are logged rather than dispatched. The pipeline as published cannot survive Mytheus's constraints: 110 to 152 seconds per sample is two orders of magnitude over the 1.5 s p95 peer round trip, and the paper's own cost table is the citation for tiered LiteLLM routing (Phi-3 class models at a fraction of GPT-4 cost, which maps onto Haiku triage and Sonnet extraction). Its comment-injection trick also violates NO SILENT COMMITS: an inferred answer written back into the transcript is an unconfirmed write with no provenance, so Mytheus must emit the fill as a candidate carrying meeting\_id and chunk\_id under the citation contract instead of mutating the record. Measure: run the golden-set context-fill correctness eval against a reimplemented G-infer baseline, and cite roughly 9\% relevance and roughly 10\% informativeness as the numbers to beat. Finally, their persona is inferred from the transcript alone, whereas \texttt{PersonalListenerAgent} calls \texttt{get\_user\_context(user\_id)} against a persistent org profile; that contrast is a clean ablation (transcript-derived persona versus stored profile) and a defensible novelty axis, and their single shared retrieval corpus has no per-tenant scoping at all.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+  \item Everything runs offline over a completed transcript at 110 to 152 seconds per sample; streaming, partial, or diarized-live transcripts are never tested, and the system has no notion of intervening while the meeting is still fixable.
+  \item The only fallback for a detected gap is a static supplementary corpus. There is no tier that queries another participant, another agent, or a prior meeting, no deadline or timeout semantics, and no evaluated abstain path for when the material simply does not contain the answer.
+  \item The number of gaps is pinned at five by prompt, retrieval uses cosine similarity only, and the authors explicitly defer both alternative similarity measures and a dynamic function for how many resources to consider to future work.
+  \item Quality is scored by a GPT-4 judge, and under that judge the human GOLD summary is the weakest of all setups on INF (3.79) and REL (3.59), which is a self-preference signal; injected answers carry no provenance binding, so nothing in the evaluation checks whether a filled gap is attributable to a resolvable source.
+  \item Personas are extracted only from the transcript, so no persistent organizational profile, role hierarchy, or access-control scope informs them; the setting is 125 staged English AMI meetings averaging 4.0 speakers, with no multi-tenant isolation and no per-user restriction on which supplementary documents a given reader's summary may draw from.
+\end{itemize}
