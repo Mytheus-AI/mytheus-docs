@@ -9,7 +9,7 @@
 
 ## Status
 
-**Accepted** (2026-11-14).
+**Accepted** (2026-11-14). D8 and D10 amended 2026-11-16 for a client with no server of its own (`mytheus-mobile`).
 
 ## Context
 
@@ -100,6 +100,8 @@ A message is `{id, thread_id, role, content, payload, feedback, feedback_reason,
 
 The UI server (`mytheus-ui` route handler `POST /api/ask-myte`) relays the stream, then creates the thread if needed and appends the user and Myte messages through core-api, and ends with its own `saved` event `{thread_id, message_ids}`. Persisting from the UI server, with a fresh token, keeps rag-service a non-writer and survives a token that expired during a long answer.
 
+**A client with no server performs the UI server's role itself (amended 2026-11-16).** `mytheus-mobile` has no server between the phone and the gateway, and a second server for one client would be new backend surface. The phone therefore runs the same steps on the device, through the same gateway doors: it checks the body, reads the thread's last 12 messages, the persona and up to 30 memories, streams `POST /api/rag/myte` with a freshly minted Clerk token, and on `done` only creates the thread and appends the two messages through core-api with another fresh token, one base `Idempotency-Key` per answer (`<key>-thread`, `<key>-messages`), the same bounds (6 s per read, 15 s per write) and one same-key retry on a network error, a timeout or a 5xx, then emits its own `saved` or `unsaved`. Stop stores nothing. rag-service stays a non-writer, core-api is still the only persister, and no route, table, event or name is added, so canon is unchanged. The device port is `mytheus-mobile` `src/api/ask-myte.ts`, recorded there as `system.md` N27.
+
 ### D9 In character
 
 Answers speak as the person's own Myte: first person, by its name, in its personality (balanced, concise, detailed, direct, friendly), following its instructions. The face is its plush (`agent_avatar_seed`), live where motion is allowed: `listening` while the person types (eyes on the caret), `thinking` while `step`s run, `speaking` while `delta`s stream (and to its own voice when read aloud), `happy` once when a proposal is confirmed, `idle` otherwise. People keep their doodle avatars. Character never changes facts: citations and abstention rules win.
@@ -107,6 +109,8 @@ Answers speak as the person's own Myte: first person, by its name, in its person
 ### D10 States
 
 Nothing found (abstain, say where it looked), partial (answer and name the gap), outside access (never hint at hidden meetings), not connected (`error.reason = not_connected`, who can fix it), budget (`budget`, when it comes back), session, stopped (keep the streamed text, Retry), offline.
+
+`mytheus-mobile` does not yet produce `offline` (amended 2026-11-16): the phone has no connectivity signal without a new native module (a new development build and runtime-version bump), so a dropped network reads as `unavailable`, whose copy also offers Retry and keeps the streamed text. Its admin-only ways out (Workspace, billing) are not offered because those pages are web-only. Reasons in `mytheus-mobile` `system.md` N27.
 
 ## Consequences
 
