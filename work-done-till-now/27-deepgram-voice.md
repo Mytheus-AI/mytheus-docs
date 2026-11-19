@@ -1,6 +1,6 @@
 # 27. Every Myte speaks with Deepgram Aura-2
 
-Not a plan band ([ADR-0052](../adr/0052-deepgram-voice.md)). Status: **IN PROGRESS** (built and verified locally; the production rollout waits on the key push). Last verification: 2026-11-19.
+Not a plan band ([ADR-0052](../adr/0052-deepgram-voice.md)). Status: **DONE WITH GAPS** (live in production; two follow-up PRs and the old container's removal are open). Last verification: 2026-11-19, in production.
 
 The owner found the self-hosted Kokoro voice (ADR-0050) too slow and asked for Deepgram to replace it "everywhere and no questions asked". The decision, the measurements behind it and its consequences are in ADR-0052, which supersedes ADR-0050 D1 and the provider part of D2. The canon row for core-api in [_canon/01-service-catalog.md](../_canon/01-service-catalog.md) now names Deepgram Aura-2 instead of `kokoro-tts`. No table, topic, route or event changed.
 
@@ -8,7 +8,7 @@ Speech to text (Talk mode's `POST /api/v1/voice/transcribe`, faster-whisper in `
 
 ## 1. What landed, per repo
 
-### mytheus-backend (branch `feat/deepgram-tts`)
+### mytheus-backend (PR #47, merged and deployed 2026-11-19)
 
 - `services/core_api/briefing_audio.py`:
   - `TTS_PROVIDER` now defaults to `deepgram` (`kokoro`, `elevenlabs` and `none` stay selectable). New settings: `DEEPGRAM_API_KEY` and `DEEPGRAM_API_URL` (default `https://api.deepgram.com`).
@@ -35,21 +35,26 @@ Speech to text (Talk mode's `POST /api/v1/voice/transcribe`, faster-whisper in `
   - The render test now proves a stored `bm_george` speaks as `aura-2-draco-en`.
   - The voice route test now covers a legacy id sent by an app and the Hindi 503.
 
-### mytheus-ui (branch `feat/deepgram-voice`)
+### mytheus-ui (PR #94, merged and deployed 2026-11-19)
 
 - `src/lib/voice/catalog.ts`: `VOICE_ID` accepted only Kokoro-shaped ids (`af_heart`). With it, every Deepgram voice would have been dropped from the catalogue and every preview refused with 422. It now accepts `aura-2-<name>-<lang>` as well as the Kokoro shape.
 - Comments in the speech route, Ask Myte voice, voice mode and the voice picker now name the Aura-2 voice.
 - Tests: `tests/voice-catalog.test.ts` covers Deepgram ids and near misses. The component fixtures (`tests/e2e/voice-fixture.ts`, the picker spec, the stubs, the fake speech route) use the Aura-2 voices.
 
-### mytheus-mobile (branch `feat/deepgram-voice`)
+### mytheus-mobile (PR #8, merged 2026-11-19)
 
 - Comments and `system.md` N25 only. The phone never checked voice ids; it plays whatever core-api lists and streams.
 
-### mytheus-platform (branch `feat/deepgram-tts-secret`)
+### mytheus-platform (PR #29, merged and deployed 2026-11-19)
 
 - `deploy/compose.prod.yml`: the `kokoro-tts` service is removed, which frees 4 CPUs and 3 GB. A note in its place says how to restore it, and that `docker rm -f mytheus-kokoro-tts-1` is needed once, because the deploy's `up -d` keeps orphans.
 - `env/prod.env.example`: `DEEPGRAM_API_KEY` and a commented `TTS_PROVIDER`.
 - `scripts/push-secrets.sh voice`: copies `DEEPGRAM_API_KEY` from the transcription service's `.env` into `prod.env` and writes `TTS_PROVIDER=deepgram`, so an older `kokoro` line cannot win. `--dry-run` prints names only.
+
+### Follow-ups found in production (open PRs)
+
+- **mytheus-backend #48, connection reuse.** Production showed about 1.2 s to the first audio. A phrase-cache hit (which never reaches Deepgram) answered in about 330 ms, so roughly 900 ms was the Deepgram call. `deepgram_stream` opened a new `httpx.AsyncClient`, and so a new TLS connection, for every sentence. The fix keeps one pooled client per event loop, with 30 s keep-alive, and retries a dropped kept-alive connection once, only before any audio. Measured against the live API: 1,234 ms for the first sentence, then 392, 386 and 375 ms.
+- **mytheus-ui #95, picker copy.** The voice picker still said "Spoken by Mytheus's own voice server. What your Myte says never leaves it." That has been false since this change. The line now says the voice comes from Deepgram and that the Myte's words are sent there to be read aloud.
 
 ## 2. Deviations, and why
 
@@ -60,11 +65,22 @@ Speech to text (Talk mode's `POST /api/v1/voice/transcribe`, faster-whisper in `
 
 ## 3. Open gaps
 
-- Production rollout: push the key (`scripts/push-secrets.sh voice`), merge and deploy backend, then UI, then platform, then remove the orphaned `kokoro-tts` container, then check live speech signed in.
+- Merge and deploy backend #48 and UI #95, then measure first audio again in production.
+- Remove the orphaned `kokoro-tts` container on the host: `docker rm -f mytheus-kokoro-tts-1`. The deploy's `up -d` keeps orphans. Claude's SSH to the host was refused in auto mode, so this is an owner step.
 - The Deepgram key now serves two services. A rotation must push both files.
 - Not heard on a phone yet.
 
 ## 4. Verification
+
+Production, 2026-11-19:
+- The owner ran `scripts/push-secrets.sh voice`, which wrote 2 keys to `prod.env`. Backend #47 and UI #94 then deployed through their `main` CI, with every job green.
+- Signed in at `dashboard.mytheus.cloud/agent`, the voice picker listed the nine Aura-2 voices; the personality match was Pandora (detailed). Preview Thalia returned 200 from `POST /api/voice/speech`.
+- From the page, `aura-2-thalia-en` returned 200 `audio/mpeg`, streamed MP3 frames (`FF F3`).
+- First audio for fresh phrases took 1,144 to 1,247 ms. A repeated phrase (a phrase-cache hit) took 307 to 352 ms.
+- Hindi returned 503 `voice_not_connected`, as designed.
+- After platform #29 deployed, Draco (English) and Spanish both returned 200 `audio/mpeg`.
+
+Local:
 
 - A live Deepgram call with the existing key (2026-11-19, a scratch script, never committed):
   - `aura-2-thalia-en`: 200 `audio/mpeg`, first bytes in 0.35 s, streamed in 46 to 882 chunks.
