@@ -7,7 +7,7 @@
 
 ## Status
 
-**Accepted** (2026-11-14).
+**Accepted** (2026-11-14). D1, and the provider and voice list in D2, **superseded** by [ADR-0052](0052-deepgram-voice.md) (2026-11-19): every Myte now speaks with Deepgram Aura-2 and `kokoro-tts` is removed. D2's one voice per Myte, D3 and D4 stand.
 
 ## Context
 
