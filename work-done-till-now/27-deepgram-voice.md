@@ -1,6 +1,6 @@
 # 27. Every Myte speaks with Deepgram Aura-2
 
-Not a plan band ([ADR-0052](../adr/0052-deepgram-voice.md)). Status: **DONE WITH GAPS** (live in production; two follow-up PRs and the old container's removal are open). Last verification: 2026-11-19, in production.
+Not a plan band ([ADR-0052](../adr/0052-deepgram-voice.md)). Status: **DONE WITH GAPS** (live in production, follow-ups deployed; not yet heard on a phone). Last verification: 2026-11-19, in production.
 
 The owner found the self-hosted Kokoro voice (ADR-0050) too slow and asked for Deepgram to replace it "everywhere and no questions asked". The decision, the measurements behind it and its consequences are in ADR-0052, which supersedes ADR-0050 D1 and the provider part of D2. The canon row for core-api in [_canon/01-service-catalog.md](../_canon/01-service-catalog.md) now names Deepgram Aura-2 instead of `kokoro-tts`. No table, topic, route or event changed.
 
@@ -51,7 +51,7 @@ Speech to text (Talk mode's `POST /api/v1/voice/transcribe`, faster-whisper in `
 - `env/prod.env.example`: `DEEPGRAM_API_KEY` and a commented `TTS_PROVIDER`.
 - `scripts/push-secrets.sh voice`: copies `DEEPGRAM_API_KEY` from the transcription service's `.env` into `prod.env` and writes `TTS_PROVIDER=deepgram`, so an older `kokoro` line cannot win. `--dry-run` prints names only.
 
-### Follow-ups found in production (open PRs)
+### Follow-ups found in production (merged and deployed 2026-11-19)
 
 - **mytheus-backend #48, connection reuse.** Production showed about 1.2 s to the first audio. A phrase-cache hit (which never reaches Deepgram) answered in about 330 ms, so roughly 900 ms was the Deepgram call. `deepgram_stream` opened a new `httpx.AsyncClient`, and so a new TLS connection, for every sentence. The fix keeps one pooled client per event loop, with 30 s keep-alive, and retries a dropped kept-alive connection once, only before any audio. Measured against the live API: 1,234 ms for the first sentence, then 392, 386 and 375 ms.
 - **mytheus-ui #95, picker copy.** The voice picker still said "Spoken by Mytheus's own voice server. What your Myte says never leaves it." That has been false since this change. The line now says the voice comes from Deepgram and that the Myte's words are sent there to be read aloud.
@@ -65,8 +65,7 @@ Speech to text (Talk mode's `POST /api/v1/voice/transcribe`, faster-whisper in `
 
 ## 3. Open gaps
 
-- Merge and deploy backend #48 and UI #95, then measure first audio again in production.
-- Remove the orphaned `kokoro-tts` container on the host: `docker rm -f mytheus-kokoro-tts-1`. The deploy's `up -d` keeps orphans. Claude's SSH to the host was refused in auto mode, so this is an owner step.
+- The orphaned `kokoro-tts` container: the owner ran `ssh root@187.127.190.246 docker rm -f mytheus-kokoro-tts-1`, which answered "No such container". Under the deploy's project name (`mytheus`) it is gone or never ran. Any differently named Kokoro container still on the host is unconfirmed (Claude's SSH is refused in auto mode).
 - The Deepgram key now serves two services. A rotation must push both files.
 - Not heard on a phone yet.
 
@@ -79,6 +78,7 @@ Production, 2026-11-19:
 - First audio for fresh phrases took 1,144 to 1,247 ms. A repeated phrase (a phrase-cache hit) took 307 to 352 ms.
 - Hindi returned 503 `voice_not_connected`, as designed.
 - After platform #29 deployed, Draco (English) and Spanish both returned 200 `audio/mpeg`.
+- After backend #48 (connection reuse) and UI #95 deployed: five fresh phrases took 1,378 ms to the first audio for the first one (a new connection after the deploy), then 718, 719, 725 and 738 ms. Before the fix it was 1,144 to 1,247 ms every time. The picker shows the corrected copy.
 
 Local:
 
