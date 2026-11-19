@@ -1,0 +1,32 @@
+\section{AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation}
+\paperhead{AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation}{Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li et al.}{arXiv preprint, 2023}{https://arxiv.org/abs/2308.08155}{arXiv API id\_list=2308.08155, title match 1.00}
+
+\subsection{What the paper does}
+
+An LLM application needing reasoning, code execution, tool use and human judgement at once normally means hand-writing a control plane per application. The paper asks what one agent abstraction and one interface can express patterns from two-agent loops to dynamic multi-party exchanges with humans in the loop.
+
+Its answer collapses the workflow into multi-agent conversation: each capability becomes an agent that receives, reacts to and responds to messages, and the application is written as \emph{conversation programming}, defining agents with roles and backends then programming their interaction. Control flow follows from message passing, not an orchestrator.
+
+\subsection{How the method works}
+
+\texttt{ConversableAgent} is the top-level abstraction, with three unified interfaces: \texttt{send}, \texttt{receive} and \texttt{generate\_reply}. Auto-reply is the control substrate: on receiving a message an agent invokes its reply function and returns the result to the sender unless a termination condition holds. Reply functions are backed by LLM inference, code or function execution, or human input; a custom one can be registered to override the default. Agents are configured, not subclassed: a human input mode (\texttt{NEVER} and \texttt{ALWAYS} are shown), a code-execution config, a system message. The preconfigured pair is an LLM-backed assistant and a human or tool backed user proxy.
+
+Prompts carry natural-language control: the assistant is told to fix its own errors and emit \texttt{TERMINATE} when done. Python sets termination conditions, human input mode and a cap on consecutive auto replies. Dynamic patterns use nested conversations inside a custom reply, LLM-proposed function calls, or GroupChatManager, which loops: pick the next speaker by role-play prompt, collect the response, broadcast to all members.
+
+\subsection{What it reports}
+
+Six applications are built: math, retrieval-augmented chat, ALFWorld, multi-agent coding, dynamic group chat and conversational chess. On the full MATH test set the built-in agents reach 69.48\% against 55.18\% for vanilla GPT-4; a separate 120-problem level-5 set compares against ChatGPT plus Code Interpreter, ChatGPT plus Wolfram plugin, Multi-Agent Debate and LangChain ReAct. On 134 unseen ALFWorld tasks a grounding agent supplying commonsense facts lifts average success from 54 to 69, about 15\%. In OptiGuide, splitting Commander, Writer and Safeguard improves F1 at identifying unsafe code by 8\% (GPT-4) and 35\% (GPT-3.5-turbo) over one agent doing both. The group chat result rests on 12 hand-crafted tasks.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+Cite AutoGen as the named baseline orchestrator for the LangGraph \texttt{BaseAgent} spawn/process/terminate lifecycle, and borrow its interface shape, not its control loop: send, receive and reply map onto the agent-requests and agent-responses envelope, so build ContextGapAgent peer calls as a registered reply function keyed on the correlation id. Auto-reply terminates on a condition or a reply-count cap, never on a clock, so it cannot express the deadline field or the p95 1.5 second peer round trip, and the peers, related-meeting, RAG, silence chain has no analogue. GroupChatManager is worse: a role-play speaker-selection call plus a per-turn broadcast adds a serial hop and leaks one participant's context to all peers; address peers directly by responder target under a deny-by-default tenant and role check AutoGen cannot express. Cite the \texttt{ALWAYS} human input mode as the nearest precedent for a human gate, then draw the line: there it only decides whether the conversation advances, whereas NO SILENT COMMITS makes confirmation a data-integrity boundary gating the Postgres row, the Redpanda event and the AGE edge together, and AutoGen has no confidence value, so the 0.7 and 0.4 gates have no counterpart.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*,itemsep=0pt,topsep=2pt,parsep=0pt]
+  \item No wall-clock latency is reported anywhere and there is no deadline, timeout or token-budget primitive, so neither a bounded peer round trip nor a tiered cost cascade has a baseline.
+  \item Each application yields one shared artefact and the group chat manager broadcasts every response to all members, so per-recipient scoping and per-participant relevance are never posed.
+  \item Message passing carries no identity, authorization or tenancy: any agent may address any other, and isolation between mutually untrusted principals is never evaluated.
+  \item All inputs are static and complete at task start (MATH, NQ, ALFWorld observations, a fixed codebase), so nothing tests input arriving continuously and revised after an agent replied.
+  \item There is no confidence, calibration or provenance channel: replies are free text with no withholding threshold, no citation contract, and only ad hoc per-application grounding.
+\end{itemize}

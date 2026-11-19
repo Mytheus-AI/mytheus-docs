@@ -1,0 +1,155 @@
+\section{An evaluation plan}
+
+The programme below is ordered by cost of evidence, not by ambition. Each
+phase produces a result that stands alone, so the work degrades gracefully if
+time runs out. Phase 0 is not optional: four of the six candidates depend on
+the same annotated substrate, and building it once is the difference between
+one paper and none.
+
+\subsection{Phase 0: build the substrate}
+
+Everything rests on one artifact, a role-annotated meeting slice. Use the AMI
+scenario series, because it already assigns four fixed roles, project manager,
+industrial designer, user interface designer and marketing expert, and because
+its meetings come in linked series of four, which is what makes cross-meeting
+contradiction items possible at all. Borrowing the roles from the corpus rather
+than inventing them is what keeps the annotation defensible.
+
+Replay the audio through the real capture path so that recognition and
+diarization error are present at their measured rates. Then annotate, per 30
+second window: a per-role relevance label, per-role reference extractions for
+decisions, actions and questions, and a decision-closure timestamp marking the
+moment after which surfacing an item is worthless. Add the abstention classes
+explicitly, windows whose correct behaviour is discard, log silently, or
+surface, plus context-gap queries whose true answer is that no source holds it.
+
+Release this slice. It is plausibly a larger contribution than any single
+experiment, because theme 2 showed that no existing benchmark can express
+per-participant divergence at all.
+
+\subsection{Phases 1 to 5, in order}
+
+{\footnotesize
+\begin{longtable}{@{}p{0.55cm}p{4.5cm}p{4.6cm}p{4.9cm}@{}}
+\toprule
+\textbf{Ph} & \textbf{Experiment} & \textbf{Headline metric} & \textbf{Why it is placed here} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Ph} & \textbf{Experiment} & \textbf{Headline metric} & \textbf{Why it is placed here} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+1 & Revision churn (cand.\ 5), including the speaker-permutation ablation salvaged from cand.\ 2 & Seconds saved against retraction rate; band-flip rate at the 0.7 and 0.4 cuts & Cheapest by far. Needs only the capture path and one oracle rerun. No human annotation. Run it first to prove the harness. \\
+\addlinespace
+2 & Swapped-profile control (cand.\ 3 survivor) & Inter-role agreement, reported first; matched minus swapped effect size & The null test for the entire product thesis. If it fails, everything downstream must be reframed, so fail early. \\
+\addlinespace
+3 & Deadline-bounded ladder (cand.\ 1) & Fill correctness against p95 round trip; per-tier service fractions; silence precision & The lead claim, and the most engineering-heavy. Needs phase 0 items and a working peer protocol. \\
+\addlinespace
+4 & Confirmation-gated graph (cand.\ 4) & Edge precision against coverage; false-invalidation rate; write-path cost per confirmed edge & Needs the five-class hard-negative labelling, the most expensive annotation in the plan. \\
+\addlinespace
+5 & Abstention economics (cand.\ 6) & Three-region operating characteristic; per-role silent false-drop rate & Reuses phase 0 labels and phase 1 through 4 logs. Nearly free once the others have run. \\
+\end{longtable}}
+
+\subsection{Ablations reviewers will demand}
+
+Four ablations are not optional, because each directly tests a claim the
+system makes about itself. Omitting any one of them invites the reviewer to
+assume the result would have been unfavourable.
+
+\begin{itemize}
+\item \textbf{Single-agent baseline.} Paper 3 finds that reported multi-agent
+gains over single-agent baselines are often minimal. One well-prompted agent
+over the same windows, producing the same six output types, is the control that
+justifies six agents existing.
+\item \textbf{Single-shared-summary baseline.} One summary handed to every
+participant, scored against every per-role reference. This is the incumbent
+product design and the thing the whole thesis claims to beat.
+\item \textbf{Swapped and random profile controls.} Without these, any observed
+per-participant difference is indistinguishable from prompt noise.
+\item \textbf{Prompt-only contradiction detection.} The specific test of
+whether graph traversal beats simply asking a model, which is the claim that
+justifies the property graph.
+\end{itemize}
+
+\subsection{Reporting discipline}
+
+Paper 4 sets the standard the agent literature now expects, and following it
+costs little while pre-empting an entire class of objection.
+
+Report a three axis frontier of quality, dollars and p95 latency, never quality
+alone. State an admissibility rule for the live path and enforce it: retry,
+temperature warming and serial escalation all buy accuracy with extra serial
+calls, and all three are inadmissible inside a 1.5 second budget, so they must
+not appear in a live-path baseline. Hold out the evaluation set from the golden
+set that gates prompt changes, since fitting thresholds on the suite that also
+gates deployment is the overfitting failure paper 4 names. Report
+worst-participant quality alongside the mean, because theme 6 showed the mean
+hides exactly the failure that matters. And report cost per participant-output
+rather than per meeting, with cache hit rate broken out for shared stages
+against per-role stages, which is the number that reveals whether the design
+scales sublinearly in attendees or fragments the cache.
+
+\section{Threats to validity and what reviewers will attack}
+
+\subsection{The strongest objections}
+
+\textbf{The corpus is staged, not real.} AMI meetings are scenario driven, with
+assigned roles and a synthetic design task. If inter-role agreement turns out
+high, that may be an artifact of staging rather than evidence that
+personalization is unnecessary. Report the agreement statistic with this caveat
+attached, and if any live Mytheus sessions exist, replicate on even a handful.
+
+\textbf{The mechanism is engineering, not research.} This is the sharpest
+attack on candidates 1 and 3, and in both cases it partly lands. Deadline
+propagation and fallback chains are standard distributed systems practice, and
+role-conditioned relevance appears to be patented. The response is the same in
+both cases and it must be made explicitly rather than defensively: claim the
+measurement, not the mechanism. What is unpublished is the operating
+characteristic, not the idea.
+
+\textbf{The evaluation is self-referential.} Several metrics are defined by
+this project and measured on a substrate built by this project. That is
+unavoidable when the gap is precisely that no substrate exists, but it must be
+disclosed, and every new metric must be reported alongside a published anchor
+metric on the same data so a reader can calibrate. Report R1-AUC beside the new
+timeliness numbers, and published citation precision beside the utterance-level
+decomposition.
+
+\textbf{Annotation is the weak link.} Per-role relevance labels are subjective,
+and the five-class decision-pair taxonomy needs genuine domain judgement.
+Report chance-corrected agreement for every label set, publish the annotation
+guidelines, and treat a low agreement figure as a finding rather than as a
+problem to hide.
+
+\textbf{The null may win.} If swapped profiles score close to matched, the
+central thesis is weakened in print. This is the honest risk of running the
+control at all, and it is also the reason the result is worth having, since
+this is the only design in the corpus that can reject the null.
+
+\subsection{How to frame the paper}
+
+The framing that follows from all of the above is narrower than the system and
+stronger than the pitch. Do not write a paper claiming a personalized
+multi-agent meeting assistant, because the mechanism claims in that sentence
+are each individually occupied. Write the paper that the empty quadrant
+licenses.
+
+\begin{takeaway}
+\textbf{The defensible thesis.} Personalized, proactive meeting intelligence
+has been built and patented, but never measured under the two constraints that
+define it: a hard real-time budget on mutable speech, and a per-recipient
+notion of correctness. This project supplies the missing substrate, the missing
+controls, and the first operating characteristics. The contribution is that the
+claims of this product category become falsifiable, and that on the evidence
+here some of them do not survive.
+\end{takeaway}
+
+That framing has three properties worth noting. It survives the prior art that
+refuted candidates 2 and 3, because it concedes the mechanism and claims the
+measurement. It makes a negative result publishable, which protects the project
+against its own strongest risk. And it puts the released artifacts, the
+role-annotated slice, the hard negative taxonomy and the annotation guidelines,
+at the centre, which is what makes a student project citable rather than merely
+complete.

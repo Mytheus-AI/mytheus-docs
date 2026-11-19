@@ -1,0 +1,48 @@
+\section{Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection}
+\paperhead{Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection}{Akari Asai, Zeqiu Wu, Yizhong Wang, Avirup Sil, Hannaneh Hajishirzi}{ICLR 2024 (Oral)}{https://arxiv.org/abs/2310.11511}{arXiv API id\_list=2310.11511, title match 1.00}
+
+\subsection{What the paper does}
+
+Standard retrieval-augmented generation pulls a fixed number of passages for every input, whether or not the input needs evidence and whether or not the passages are relevant. This degrades the model on inputs answerable from parametric knowledge, and it leaves no mechanism for checking that generated text is entailed by what was retrieved, so the consumer gets no calibrated signal about which spans to trust.
+
+Self-RAG moves both decisions inside the model. Retrieval is triggered on demand by the model itself, and the model emits explicit critiques of each passage and of its own generated segments as ordinary vocabulary items, called reflection tokens. Because the critique lives in the token stream it can be read during decoding to re-rank continuations, and reweighted at inference time without retraining.
+
+\subsection{How the method works}
+
+Four token families are added to the vocabulary. \texttt{Retrieve} takes \texttt{yes}, \texttt{no} or \texttt{continue} and precedes a segment. \texttt{IsRel} takes \texttt{relevant} or \texttt{irrelevant} for a passage. \texttt{IsSup} takes \texttt{fully supported}, \texttt{partially supported} or \texttt{no support} for the segment just written against that passage. \texttt{IsUse} is a 1 to 5 utility rating of the response.
+
+Training is a two stage distillation. A critic initialized from Llama2-7B learns reflection-token labels prompted out of GPT-4 with type-specific instructions and few-shot demonstrations, roughly 4k to 20k examples per token type, reaching over 90 percent agreement with GPT-4 on most categories. That critic then annotates about 150k instruction-output pairs offline, interleaving passages from Contriever-MS MARCO with reflection tokens. The generator (Llama2 7B and 13B) is trained on this corpus by next-token prediction with retrieved spans masked out of the loss, so it learns to produce outputs and critiques rather than copy evidence. The critic is discarded: at inference one model emits both.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.4cm, >=Stealth, every node/.style={font=\footnotesize},
+  box/.style={draw, rounded corners=2pt, minimum height=8mm, align=center, inner sep=3pt}]
+  \node[box] (a) {\texttt{Retrieve}?\\ soft thresh.\ 0.2};
+  \node[box, right=of a] (b) {$K$ passages\\ in parallel};
+  \node[box, right=of b] (c) {segment $+$\\ \texttt{IsRel}/\texttt{IsSup}/\texttt{IsUse}};
+  \node[box, right=of c] (d) {weighted score,\\ beam 2};
+  \draw[->] (a) to node[above]{\scriptsize yes} (b);
+  \draw[->] (b) to (c);
+  \draw[->] (c) to (d);
+  \draw[->] (d.south) to[out=-90, in=-90, looseness=0.4] node[below, pos=0.5]{\scriptsize next segment} (a.south);
+\end{tikzpicture}
+\end{center}
+
+Decoding is segment by segment. Retrieval fires when the probability of \texttt{Retrieve}=\texttt{yes} passes a threshold, set to 0.2 for most tasks. Passages are processed in parallel, each yielding a candidate segment with its own critique tokens; candidates are scored by segment log-likelihood plus a weighted sum, over critique groups, of the normalized probability of the desirable token in that group, with a beam of width 2. The group weights are inference-time hyperparameters, so one checkpoint can be pushed toward grounding by raising the \texttt{IsSup} weight.
+
+\subsection{What it reports}
+
+Gains are largest where parametric knowledge is weakest and where grounding is measured. Self-RAG 13B reaches 55.8 on PopQA against ChatGPT's 29.3, 80.2 Bio FactScore against 71.8, and 70.3 ASQA citation precision against retrieval-augmented ChatGPT's 65.1. The picture is not uniform: ChatGPT still leads on TriviaQA (74.3 against 69.3) and ARC-Challenge (75.3 against 73.1), and retrieval-augmented ChatGPT has higher ASQA citation recall (76.6 against 71.3). The critique therefore buys precision of attribution more than raw task accuracy, and reweighting groups at test time shifts behaviour along that same axis.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+This is the strongest published attack on Mytheus's uniform confidence gates. Self-RAG's trust signal is learned and per-segment; Mytheus hard-codes one triple (0.7 surface, 0.4 to 0.7 silent log, below 0.4 discard) across six agents whose outputs are not commensurable, since a \texttt{DecisionAgent} extraction confidence and a \texttt{PersonalListenerAgent} relevance score are different random variables. Build the calibration without the machinery: keep the model frozen behind LiteLLM, but have each extraction call return a structured self-critique (a relevance verdict and a three-level support verdict modelled on \texttt{IsRel} and \texttt{IsSup}) beside the candidate, then fit \emph{per-agent} thresholds on the golden set using the Brier score the CI harness already computes, and publish per-agent reliability curves. That turns 0.7/0.4 from a stipulation into a measured result. \texttt{IsSup} is also the natural upgrade to the \texttt{cite} stage, where support is currently binary provenance resolution. Do not transplant the training pipeline: distilling a shared critic from tenant utterances breaks per-tenant isolation, and segment beam search over $K$ parallel passages multiplies decode passes, which cannot fit \texttt{ContextGapAgent}'s p95 1.5 s peer round trip. Cite this as evidence that learned critique beats a fixed gate, and frame Mytheus's contribution as replacing decode-time re-ranking with a human confirmation gate.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+  \item Every task is single-turn static text QA over a frozen offline corpus. Nothing streams, so there is no mechanism for revising \texttt{IsSup} when evidence arrives after a segment was emitted, the normal case on a live diarized transcript.
+  \item \texttt{IsRel} depends only on passage and query. One output is produced for one anonymous asker with no role or audience conditioning, so nothing shows the critique transfers to per-participant relevance. The setting is also single-model: no agent consumes another agent's critique, so deadlines and peer requests are uncovered.
+  \item The method needs a GPT-4 distillation pass and a full fine-tune over roughly 150k examples. No baseline prompts a frozen instruction-following API model for the same tokens, leaving the method untested in the hosted, no-fine-tune shape a multi-tenant SaaS is confined to.
+  \item No wall-clock latency, throughput or cost figure appears anywhere, despite inference that multiplies forward passes by beam width times retrieved passages per segment, so there is no evidence about feasibility under any p95 budget.
+  \item The retrieval threshold (0.2) and critique weights are hand-set per task, with no calibration procedure, reliability diagram or domain-adaptation method. The paper shows the knobs matter but never how to choose them from data.
+\end{itemize}

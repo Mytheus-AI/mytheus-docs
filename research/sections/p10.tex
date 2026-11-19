@@ -1,0 +1,50 @@
+\section{LaMP: When Large Language Models Meet Personalization}
+\paperhead{LaMP: When Large Language Models Meet Personalization}{Alireza Salemi, Sheshera Mysore, Michael Bendersky, Hamed Zamani}{ACL 2024 (62nd Annual Meeting of the ACL, Volume 1: Long Papers), pp. 7370 to 7392}{https://arxiv.org/abs/2304.11406}{arXiv API id\_list=2304.11406, title match 1.00}
+
+\subsection{What the paper does}
+
+A language model maps an input to one output, so two people who ask the same thing get the same answer. Personalization research before this work clustered around dialogue personas and recommenders; no shared benchmark asked whether conditioning a general language model on an individual's own history changes measured quality on ordinary classification and generation tasks. The obvious fix, pasting an entire profile into the prompt, breaks on context limits and is costly even when it fits.
+
+LaMP reframes personalization as retrieval over the user. A profile $P_u$ is that user's historical input and output pairs, and for each test input the model is conditioned on $k$ items retrieved from that profile alone. The authors release seven tasks, three classification and four generation, with per-user profiles, two split protocols and evaluation scripts, so a personalization gain becomes a number against a matched non-personalized control rather than an anecdote.
+
+\subsection{How the method works}
+
+Each entry is a triple: input $x$, target $y$, profile $P_u = \{(x_{u1}, y_{u1}), \ldots\}$. A query function $\varphi_q$ turns the test input into a query (the paper simply reuses the input), a retriever $R(q, P_u, k)$ selects $k$ profile entries, and a prompt constructor $\varphi_p$ concatenates instruction, input and retrieved items: $\bar{x}_i = \varphi_p(x_i, R(\varphi_q(x_i), P_u, k))$.
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.3cm, >=Stealth,
+  bx/.style={draw, rounded corners=2pt, align=center, font=\scriptsize, inner sep=3pt, minimum height=8mm}]
+  \node[bx] (x) {test input $x_i$\\ query $\varphi_q(x_i)$};
+  \node[bx, right=of x] (r) {retriever $R$:\\ top $k$ of $P_u$};
+  \node[bx, below=0.5cm of r] (pu) {profile $P_u$\\ own past $(x,y)$};
+  \node[bx, above right=0.15cm and 1.1cm of r] (ipa) {IPA: one prompt,\\ no training};
+  \node[bx, below right=0.15cm and 1.1cm of r] (fid) {FiD: encode each\\ item, fuse in decoder};
+  \node[bx] (lm) at ($(ipa.east)!0.5!(fid.east) + (2.1cm,0)$) {FlanT5\\ output $y$};
+  \draw[->] (x) to (r);
+  \draw[->] (pu) to (r);
+  \draw[->] (r) to (ipa);
+  \draw[->] (r) to (fid);
+  \draw[->] (ipa) to (lm);
+  \draw[->] (fid) to (lm);
+\end{tikzpicture}
+\end{center}
+
+In-Prompt Augmentation (IPA) concatenates everything into one sequence, needs no training and works across architectures. Fusion-in-Decoder (FiD) builds one input $\bar{x}_{ij} = \varphi_p(x_i, d_{ij})$ per retrieved item, encodes each separately and fuses them in the decoder; it admits more items but requires fine-tuning an encoder-decoder model. Retrievers for $R$ are BM25, Contriever, Recency (time split only) and a Random profile selector, measured against a No-Retrieval control and a random item drawn from all users' profiles. The tasks are citation identification (binary), movie tagging (15 classes), product rating (5-point ordinal), news headline, scholarly title, email subject and tweet paraphrasing, each in a user-based split (LaMP-$i$U, disjoint users) and a time-based split (LaMP-$i$T, recent items as test, older ones as profile), scored by accuracy, F1, MAE and RMSE, or ROUGE-1 and ROUGE-L. FlanT5-base (250M) is fine-tuned for the main tables; FlanT5-XXL (11B) and GPT-3.5 run zero-shot, with FiD fixed at $k = 16$.
+
+\subsection{What it reports}
+
+Fine-tuning with this augmentation yields a relative average enhancement of 23.5\% across the benchmark; zero-shot use of an off-the-shelf model gives 12.2\%. The control structure matters most: in most cases even a random item from the correct user's profile beats a non-personalized prompt, yet choosing relevant or recent items produces the large gains. On user-based citation identification, accuracy rises from 0.518 (No-Retrieval) and 0.539 (random item from any profile) to 0.649 (BM25) and 0.688 (Contriever) at $k=1$, and to 0.734 (tuned IPA) and 0.754 (FiD). No retriever wins everywhere: Contriever leads most classification settings, BM25 leads scholarly title and email subject generation under the user split, recency leads news headlines under the time split, and the authors conclude there is no clear winner, calling for an ensemble of relevance and temporal signals. After tuning, FiD beats IPA on classification (except LaMP-1T) while IPA beats FiD on every generation task. Raising $k$ generally helps, though some tasks degrade. Zero-shot conditioning improves every dataset except tweet paraphrasing; GPT-3.5 emitted out-of-label predictions 2\% to 8\% of the time on classification, needing a BERTScore fallback onto valid labels.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+LaMP turns per-participant output from a product feature into a measurable claim, and dictates the shape of the golden-set eval. Build the \texttt{PersonalListenerAgent} evaluation as a LaMP-style table: the same 30-second window, labelled independently per participant role, scored against the two controls LaMP proves are mandatory, a No-Retrieval control (one shared relevance score for everyone, exactly what current meeting tools emit) and a random-profile control (score the window against a different participant's context). Without the second, a precision gain cannot be attributed to personalization at all. In the RAG expand stage, state the contrast explicitly: LaMP profiles are a user's own past input and output pairs, whereas \texttt{get\_user\_context} returns structured role, skills and team, so Mytheus tests whether organizational attributes personalize as well as interaction history, which LaMP never asks. Two constraints bite. FiD does not transfer, needing a fine-tuned encoder-decoder while Mytheus routes to hosted Haiku, Sonnet and Opus via LiteLLM; only the IPA branch is buildable, which LaMP's own result that IPA wins every generation task makes acceptable. Second, LaMP re-retrieves the full profile per input with zero latency accounting, so cache the profile at agent spawn and refresh only on change, or the p95 4 s agent budget and the 1.5 s \texttt{ContextGapAgent} round trip will not hold. Finally, cite LaMP's privacy note: retrieval augmentation is free of privacy concern only when the model is in-house or with a trusted third party, which is the argument for per-tenant Qdrant collections and PII redaction before LLM egress.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+  \item Every input belongs to exactly one user, so LaMP never measures several users consuming the \emph{same} document and receiving different outputs from it; the shared-transcript, divergent-output problem is structurally outside the benchmark.
+  \item Profiles carry no organizational structure, only past interaction items, so the paper cannot say whether role, team or skill attributes personalize better, worse or differently from raw history.
+  \item The setting is offline and static: profiles are fixed corpora, nothing arrives as a stream during inference, and no task involves speech, diarization or partial hypotheses that mutate before they are final.
+  \item No latency or cost is reported anywhere, results are single-run, and $k$ is tuned per dataset with no wall-clock or token-cost curve, so the accuracy-versus-budget tradeoff a tiered model cascade needs cannot be read off the paper.
+  \item Generation is scored only by ROUGE on short outputs, with no human judgement and no confidence calibration, so nothing supports thresholding personalized output at 0.7 or 0.4; the authors concede long-form personalized evaluation is unsolved.
+\end{itemize}

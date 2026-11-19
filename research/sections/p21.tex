@@ -1,0 +1,34 @@
+\section{Enabling Large Language Models to Generate Text with Citations}
+\paperhead{Enabling Large Language Models to Generate Text with Citations}{Tianyu Gao, Howard Yen, Jiatong Yu, Danqi Chen}{EMNLP 2023}{https://arxiv.org/abs/2305.14627}{arXiv API id\_list=2305.14627, title match 1.00}
+
+\subsection{What the paper does}
+
+Citations are the standard remedy for hallucination in information seeking systems, and products such as Bing Chat ship them. But the remedy is unmeasured: prior work evaluates attribution by hand against closed commercial search engines, so no two systems can be compared and no modelling choice credited with a gain.
+
+ALCE fixes the questions and the corpus and requires an end to end system to retrieve, generate and cite, scoring fluency, correctness and citation quality automatically. The load bearing move: citation quality is decided by an entailment model asking whether the cited passages support the sentence, not whether the citation dereferences.
+
+\subsection{How the method works}
+
+Given a query and corpus $\mathcal{D}$, a system returns statements $s_1 \dots s_n$, each with a citation set $\mathcal{C}_i \subseteq \mathcal{D}$, split at sentence boundaries, at most three citations each, over 100 word passages. ASQA (ambiguous factoid) and QAMPARI (list valued) use a 21M passage Wikipedia snapshot, ELI5 uses Sphere, a filtered Common Crawl of 899M passages; 1,000 development examples each, no training data.
+
+Fluency is MAUVE; correctness is exact match recall on ASQA, precision and recall-5 on QAMPARI, and claim recall on ELI5, where text-davinci-003 decomposes gold answers into sub-claims an NLI model checks. Citation quality reuses that model, TRUE, a T5-11B checkpoint fine tuned on an NLI mixture. Citation recall for $s_i$ is 1 exactly when $\mathcal{C}_i$ is non-empty and $\phi(\mathrm{concat}(\mathcal{C}_i), s_i) = 1$; precision is a leave one out test, where $c$ is ``irrelevant'' iff $\phi(c, s_i) = 0$ and $\phi(\mathrm{concat}(\mathcal{C}_i \setminus \{c\}), s_i) = 1$, credited only where recall is already 1. Retrievers are GTR, DPR and BM25; prompting spans VANILLA to CLOSEDBOOK, with RERANK and POSTCITE as post-edits.
+
+\subsection{What it reports}
+
+On ASQA with ChatGPT VANILLA, citation recall is 73.6 and precision 72.5; RERANK raises them to 84.8 and 81.6 while correctness stays flat. ELI5 is far harder at 51.1 and 50.0, and around 50\% of ChatGPT and GPT-4 generations are not fully supported by the passages they cite. Post-hoc citing fails: CLOSEDBOOK beats VANILLA on correctness for ELI5 and QAMPARI, yet POSTCITE leaves citation recall 47\% below VANILLA on ASQA. Cohen's kappa against annotators is 0.698 for citation recall.
+
+\subsection{How Mytheus uses this}
+\begin{takeaway}
+The golden-set harness asserts citations resolve 100 percent, a plumbing test: it proves \texttt{meeting\_id} and \texttt{chunk\_id} dereference, not that the passage supports the sentence. Replace it with ALCE citation recall and precision over the RAG \texttt{cite} output: split answers into sentences, concatenate each sentence's bound passages, and score entailment with a cross-encoder NLI head on Ray Serve. Report both per asker role, since \texttt{expand} personalises variants via \texttt{get\_user\_context} and ALCE defines no such split, which is the delta Mytheus can claim.
+
+None of it runs online: TRUE is an 11B pass per statement and RERANK needs four generations, far outside the 500 ms warm RAG p95 or ContextGapAgent's 1.5 s round trip. Keep it in CI and the canary; the live contract stays the drop-uncited rule plus the 0.7 gate. ALCE validity is purely semantic too, so a passage entailing the sentence from another tenant's collection still scores 1: conjoin it with an \texttt{org\_id} check.
+\end{takeaway}
+
+\subsection{Limitations and what it leaves open}
+\begin{itemize}\itemsep0pt\parskip0pt
+  \item Every corpus is a static offline snapshot, never streaming ASR: diarised speaker-attributed claims, mutable interim transcripts and live-window citations go untested.
+  \item One answer per question against one gold reference, with no asker role, so an answer grounded in evidence irrelevant to that reader scores perfectly.
+  \item No configuration is measured for latency or cost, so serveability is untested.
+  \item Abstention is never rewarded: an empty citation set simply scores recall 0.
+  \item The leave one out rule cannot express partial support, and multi-hop, mathematical and code questions are excluded.
+\end{itemize}
